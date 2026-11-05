@@ -1,12 +1,14 @@
 //! Moves of the annealer: translate on the grid inside the move box (a unit with in_box also keeps its courtyard in
 //! that box), turn by 90/180/270 degrees, swap the places of two units whose courtyard areas differ by at most swap_ratio.
+//! With soft clusters (`clustered`) a move can also take a whole group; without any, no move and no random draw changes.
 
+use super::cluster::{Group, groups};
 use crate::evaluator::{Evaluator, Move};
-use crate::geom::Rect;
+use crate::geom::{Rect, turn_point};
 use crate::model::Model;
 use crate::numeric::{PyRandom, hypot};
 use crate::params::Params;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub struct Mover {
     grid: f64,
@@ -21,6 +23,10 @@ pub struct Mover {
     region_limits: BTreeMap<usize, [Rect; 4]>,
     partners: Vec<Vec<usize>>,
     swappable: Vec<usize>,
+    groups: Vec<Group>,
+    p_group: f64,
+    /// The largest own step of a unit of a group, when it may move alone.
+    local: BTreeMap<usize, f64>,
 }
 
 fn region_limits(model: &Model, i: usize, region: Rect) -> [Rect; 4] {
@@ -60,7 +66,31 @@ impl Mover {
             swappable: movable.iter().copied().filter(|&i| !partners[i].is_empty()).collect(),
             partners,
             movable,
+            groups: Vec::new(),
+            p_group: 0.0,
+            local: BTreeMap::new(),
         }
+    }
+
+    /// The moves of a clustered search. Together: a unit of a group moves only with it. Else it also moves alone inside clu_local
+    /// mm. It never swaps: a swap would take it far from its pin.
+    pub fn clustered(model: &Model, p: &Params, together: bool) -> Self {
+        let mut mover = Self::new(model, p);
+        mover.groups = groups(model);
+        let grouped: BTreeSet<usize> = mover.groups.iter().flat_map(|g| g.units.iter().copied()).collect();
+        mover.partners.iter_mut().for_each(|row| row.retain(|i| !grouped.contains(i)));
+        let partners = std::mem::take(&mut mover.partners);
+        mover.swappable.retain(|i| !grouped.contains(i) && !partners[*i].is_empty());
+        mover.partners = partners;
+        if together {
+            mover.movable.retain(|i| !grouped.contains(i));
+            mover.turnable.retain(|i| !grouped.contains(i));
+        } else {
+            mover.local = grouped.iter().map(|&i| (i, p.clu_local)).collect();
+        }
+        let (groups, alone) = (mover.groups.len() as f64, mover.movable.len() as f64);
+        mover.p_group = groups / (groups + alone).max(1.0);   // Each thing to move is equally likely.
+        mover
     }
 
     pub fn has_movable_units(&self) -> bool {
@@ -77,7 +107,34 @@ impl Mover {
         self.snap(d).max((lo / g - 1e-9).ceil() * g).min((hi / g + 1e-9).floor() * g)
     }
 
+    /// One group moves or turns as a whole; a turn goes about its first unit. A turn that would leave the box is a translate.
+    fn group_move(&self, rng: &mut PyRandom, ev: &Evaluator, window: f64) -> Vec<Move> {
+        let g = &self.groups[rng.below(self.groups.len())];
+        let b = self.area;
+        if g.turn && rng.random() < self.p_rot {
+            let q = (rng.below(3) + 1) as u8;
+            let (cx, cy, _) = ev.place(g.units[0]);
+            let turned = |&i: &usize| {
+                let (x, y, r) = ev.place(i);
+                let (dx, dy) = turn_point((x - cx, y - cy), q);
+                (i, (cx + dx, cy + dy, (r + q) % 4))   // No snap: repeated turns must not deform the group.
+            };
+            let moves: Vec<Move> = g.units.iter().map(turned).collect();
+            if moves.iter().all(|(_, (x, y, _))| (b.x0..=b.x1).contains(x) && (b.y0..=b.y1).contains(y)) {
+                return moves;
+            }
+        }
+        let places: Vec<_> = g.units.iter().map(|&i| ev.place(i)).collect();
+        let edge = |pick: fn(&(f64, f64, u8)) -> f64, fold: fn(f64, f64) -> f64| places.iter().map(pick).reduce(fold).expect("a group has units");
+        let dx = self.offset(rng.uniform(-window, window), b.x0 - edge(|q| q.0, f64::min), b.x1 - edge(|q| q.0, f64::max));
+        let dy = self.offset(rng.uniform(-window, window), b.y0 - edge(|q| q.1, f64::min), b.y1 - edge(|q| q.1, f64::max));
+        g.units.iter().zip(&places).map(|(&i, &(x, y, r))| (i, (x + dx, y + dy, r))).collect()
+    }
+
     pub fn propose(&self, rng: &mut PyRandom, ev: &Evaluator, window: f64) -> Vec<Move> {
+        if !self.groups.is_empty() && rng.random() < self.p_group {
+            return self.group_move(rng, ev, window);
+        }
         let u = rng.random();
         if u < self.p_swap && !self.swappable.is_empty() {
             return self.swap(rng, ev);
@@ -109,6 +166,7 @@ impl Mover {
 
     fn translate(&self, rng: &mut PyRandom, ev: &Evaluator, window: f64) -> Vec<Move> {
         let i = rng.choice(&self.movable);
+        let window = self.local.get(&i).map_or(window, |&most| window.min(most));
         let (x, y, r) = ev.place(i);
         let b = self.allowed_box(i, r);
         let dx = self.offset(rng.uniform(-window, window), b.x0 - x, b.x1 - x);

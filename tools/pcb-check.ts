@@ -76,7 +76,7 @@ async function main(argv: string[]): Promise<number> {
   admitCandidate(operation, values);
   if (operation === 'placement' && (backend.length < 2 || backend[0] !== 'check')) throw new Error('placement requires check and a board ID');
   if (operation === 'placement' && backend.some(arg => /^--(root|output)(=|$)/.test(arg))) throw new Error('placement root and output are owned by the run supervisor');
-  if (operation === 'routing' && (backend.length < 2 || backend[0] !== 'diagnose')) throw new Error('routing requires diagnose and a board ID');
+  if (operation === 'routing' && (backend.length < 2 || !['diagnose', 'move'].includes(backend[0]!))) throw new Error('routing requires diagnose or move and a board ID');
   if (operation === 'routing' && backend.some(arg => /^--(root|output)(=|$)/.test(arg))) throw new Error('routing root and output are owned by the run supervisor');
   if (operation === 'parts' && (backend.length < 2 || !['status', 'inspect', 'selection', 'verify', 'stock'].includes(backend[0]!))) throw new Error('parts requires an action and subject');
   if (operation === 'parts' && backend.some(arg => /^--(root|output|cache)(=|$)/.test(arg))) throw new Error('parts root, output and cache are owned by the run supervisor');

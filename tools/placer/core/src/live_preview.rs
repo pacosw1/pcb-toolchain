@@ -100,6 +100,12 @@ impl LivePreview {
     }
     pub fn publish(&self,epoch:usize,epochs:usize,cost:f64,pose:&Pose) {
         let _=self.write(epoch,epochs,cost,pose);
+        if let Ok(mut stream)=self.stream.lock() { if let Some(out)=stream.as_mut() {
+            let frame=serde_json::json!({"kind":"checkpoint","data":{"label":format!("Epoch {epoch} complete"),"best":true}});
+            let result=(|| -> crate::Result<()> {let mut bytes=serde_json::to_vec(&frame)?;bytes.push(b'\n');out.write_all(&bytes)?;out.flush()?;Ok(())})();
+            if result.is_err() {*stream=None;}
+        }}
+
     }
     fn write(&self,epoch:usize,epochs:usize,cost:f64,pose:&Pose)->crate::Result<()> {
         if pose.len()!=self.units.len() || !cost.is_finite() || pose.iter().any(|(x,y,r)|!x.is_finite()||!y.is_finite()||*r>3) {return Err("invalid preview pose".into());}

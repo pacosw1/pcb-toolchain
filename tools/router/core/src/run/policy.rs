@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::io::Read;
 
 const SCHEMA: &str = "iot-lab.iotroute-policy.v1";
-const FIELDS: [&str; 7] = ["schema", "iters", "max_time_s", "keep", "return_exempt", "layers", "nets"];
+const FIELDS: [&str; 9] = ["schema", "iters", "max_time_s", "keep", "return_exempt", "layers", "nets", "reuse", "reuse_nets"];
 const DEFAULT_ITERS: u64 = 80;
 
 #[derive(Debug, PartialEq)]
@@ -19,6 +19,9 @@ pub struct Policy {
     /// The layers and nets of the route; empty is all of them.
     pub layers: Vec<String>,
     pub nets: Vec<String>,
+    /// The board of an earlier run to start from, and nets to route again with what it left open: `--reuse`, without the full fallback.
+    pub reuse: Option<String>,
+    pub reuse_nets: Vec<String>,
 }
 
 /// A list of distinct names, none by default.
@@ -34,7 +37,7 @@ fn names(object: &serde_json::Map<String, Value>, key: &str) -> Result<Vec<Strin
 
 /// The policy of a spec; None for the defaults.
 pub fn policy(spec: Option<&Value>) -> Result<Policy, String> {
-    let Some(spec) = spec else { return Ok(Policy { iters: DEFAULT_ITERS, max_time_s: None, keep_all: false, return_exempt: false, layers: Vec::new(), nets: Vec::new() }) };
+    let Some(spec) = spec else { return Ok(Policy { iters: DEFAULT_ITERS, max_time_s: None, keep_all: false, return_exempt: false, layers: Vec::new(), nets: Vec::new(), reuse: None, reuse_nets: Vec::new() }) };
     let object = spec.as_object().filter(|o| o.get("schema").and_then(Value::as_str) == Some(SCHEMA)).ok_or_else(|| format!("route --router iotroute requires a {SCHEMA} spec"))?;
     let unknown: Vec<&str> = object.keys().map(String::as_str).filter(|k| !FIELDS.contains(k)).collect();
     if !unknown.is_empty() {
@@ -51,7 +54,11 @@ pub fn policy(spec: Option<&Value>) -> Result<Policy, String> {
         _ => return Err("iotroute policy keep must be lock-nets or all".to_string()),
     };
     let return_exempt = object.get("return_exempt").map_or(Some(false), Value::as_bool).ok_or("iotroute policy return_exempt must be true or false")?;
-    Ok(Policy { iters, max_time_s, keep_all, return_exempt, layers: names(object, "layers")?, nets: names(object, "nets")? })
+    let reuse = match object.get("reuse") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.as_str().filter(|path| path.starts_with('/')).ok_or("iotroute policy reuse must be null or an absolute path")?.to_string()),
+    };
+    Ok(Policy { iters, max_time_s, keep_all, return_exempt, layers: names(object, "layers")?, nets: names(object, "nets")?, reuse, reuse_nets: names(object, "reuse_nets")? })
 }
 
 /// The run arguments of a policy on the candidate board.
@@ -68,6 +75,10 @@ pub fn policy_args(p: &Policy, candidate: &str) -> Vec<String> {
     }
     args.extend(p.layers.iter().flat_map(|layer| ["--layer".to_string(), layer.clone()]));
     args.extend(p.nets.iter().flat_map(|net| ["--net".to_string(), net.clone()]));
+    if let Some(reuse) = &p.reuse {
+        args.extend(["--reuse".to_string(), reuse.clone(), "--reuse-fallback".to_string(), "none".to_string()]);
+    }
+    args.extend(p.reuse_nets.iter().flat_map(|net| ["--reuse-net".to_string(), net.clone()]));
     args
 }
 
@@ -116,6 +127,13 @@ mod tests {
     fn a_spec_sets_its_fields() {
         let p = policy(Some(&json!({"schema": SCHEMA, "iters": 5, "max_time_s": 1.5, "keep": "all"}))).unwrap();
         assert_eq!(policy_args(&p, "c"), ["--iters", "5", "--max-time", "1.5"]);
+    }
+
+    #[test]
+    fn reuse_starts_from_an_earlier_board_without_the_full_fallback() {
+        let p = policy(Some(&json!({"schema": SCHEMA, "keep": "all", "reuse": "/run/B.kicad_pcb", "reuse_nets": ["/A"]}))).unwrap();
+        assert_eq!(policy_args(&p, "c"), ["--iters", "80", "--reuse", "/run/B.kicad_pcb", "--reuse-fallback", "none", "--reuse-net", "/A"]);
+        assert!(policy(Some(&json!({"schema": SCHEMA, "reuse": "B.kicad_pcb"}))).is_err());
     }
 
     #[test]

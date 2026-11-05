@@ -2,6 +2,7 @@
 //!
 //!   iotplace run PROB.json -o RES.json [--workers N --epochs 20 --steps 20000 --seed 1 --top 3] [--param k=v ...]
 //!                [--engineering-frozen-model-sha256 HEX]    a reviewed problem: the digest its producer verified
+//!                [--budget-s S] [--checkpoint FILE]    a sprint, and a checkpoint per epoch (search/sprint.rs)
 //!   iotplace scramble PROB.json -o OUT.json [--seed 1] [--sigma MM]
 //!   iotplace gplace PROB.json -o OUT.json [--param k=v ...]    the analytic stage alone: {pose, history}
 //!   iotplace count DRC.json [--nets NETS.txt]                  the open and error counts of a kicad-cli DRC report
@@ -21,8 +22,9 @@ use iotplace::problem::Problem;
 use iotplace::evaluator::Evaluator;
 use iotplace::model::Model;
 use iotplace::problem::Pose;
-use iotplace::search::{Candidate, Initial, Plan, SearchResult};
+use iotplace::search::{Candidate, Initial, Plan, SearchResult, Sprint};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -37,7 +39,7 @@ struct Args {
 
 /// The SHA-256 of a reviewed problem file that its producer verified against the original sources.
 const FROZEN_MODEL: &str = "--engineering-frozen-model-sha256";
-const VALUE_OPTIONS: [&str; 9] = ["--workers", "--epochs", "--steps", "--seed", "--top", "--sigma", "--nets", "--pose", FROZEN_MODEL];
+const VALUE_OPTIONS: [&str; 11] = ["--workers", "--epochs", "--steps", "--seed", "--top", "--sigma", "--nets", "--pose", "--budget-s", "--checkpoint", FROZEN_MODEL];
 
 fn parse_args(argv: &[String]) -> iotplace::Result<Args> {
     let mut a = Args::default();
@@ -94,6 +96,9 @@ fn report(initial: &Initial, res: &SearchResult) {
         println!("cand{k}     {} illegal {} {names}", summary(c.cost, &c.components), c.illegal.len());
     }
     println!("wall {:.0} s, {:.0} moves/s per worker", res.wall_s, res.moves_per_s_per_worker);
+    if let Some(s) = &res.sprint {
+        println!("stop {} after {} of {} epochs of {} steps, busy {:.1} s, idle {:.1} s, {} different poses {:.2} mm apart", s.stop, s.epochs_run, res.epochs, res.steps, s.busy_s, s.idle_s, s.unique, s.spread_mm);
+    }
     if res.candidates.iter().any(|c| c.timeout) {
         println!("LEGALIZE TIMEOUT: a candidate is not legal (legalizer time limit). Run more steps or raise legal_time.");
     }
@@ -109,10 +114,16 @@ fn run(a: &Args) -> iotplace::Result<ExitCode> {
     let mut pr: Problem = serde_json::from_slice(&input_bytes)?;
     pr.bind_engineering(&input_bytes, a.option(FROZEN_MODEL))?;
     pr.check_supported()?;
+    let budget_s = a.option("--budget-s").map(|_| a.number("--budget-s", 0.0)).transpose()?;
+    if budget_s.is_some_and(|s| s <= 0.0) {
+        return Err("--budget-s must be above 0".into());
+    }
+    let bind = Sha256::digest(&input_bytes).iter().map(|b| format!("{b:02x}")).collect();
+    let sprint = Sprint { budget_s, checkpoint: a.option("--checkpoint").map(PathBuf::from), bind };
     let plan = Plan {
         workers: a.number("--workers", default_workers())?,
         epochs: a.number("--epochs", 20)?,
-        steps: a.number("--steps", 20_000)?,
+        steps: a.number("--steps", if budget_s.is_some() { 0 } else { 20_000 })?,
         seed: a.number("--seed", 1)?,
         top: a.number("--top", 3)?,
     };
@@ -124,7 +135,7 @@ fn run(a: &Args) -> iotplace::Result<ExitCode> {
         if let Some(live) = live.as_ref() { live.sample(worker,epoch,step,accepted,rejected,cost,current,best_cost,best); }
     };
     let res = iotplace::search::optimize_observed(&mut pr, &params, plan, &|line| println!("{line}"),
-        &|epoch, epochs, cost, pose| { if let Some(live) = preview.as_ref() { live.publish(epoch, epochs, cost, pose); } }, if enabled { Some(&observer) } else { None })?;
+        &|epoch, epochs, cost, pose| { if let Some(live) = preview.as_ref() { live.publish(epoch, epochs, cost, pose); } }, if enabled { Some(&observer) } else { None }, &sprint)?;
     std::fs::write(output, serde_json::to_string(&res)?)?;
     report(&res.initial, &res);
     if res.candidates.first().is_none_or(|c| !is_legal(c)) {

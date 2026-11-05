@@ -4,6 +4,7 @@ import { currentAssessment } from './design-contract.ts';
 import { now } from './lean-clock.ts';
 import { runStage } from './lean-stage.ts';
 import { parentCandidate } from './pcb-candidate.ts';
+import { reviewedRules } from './pcb-candidate-screens.ts';
 import { type NextReaders } from './pcb-next.ts';
 import { status } from './pcb-runs.ts';
 import { sourceState } from './pcb-sources.ts';
@@ -14,6 +15,7 @@ export const nextReaders: NextReaders = {
   status: folder => JSON.parse(jsonDumps(status(folder))) as RunState,
   sourceState: (root, board, extra) => sourceState(root, board, extra as string[] | null | undefined),
   parentCandidate: (root, board, reference) => parentCandidate(root, board, reference),
+  reviewedRules,
   currentAssessment: (report: ObservationReport) => currentAssessment(report),
   runStage: async (command, options) => {
     const result = await runStage(command, {

@@ -157,6 +157,8 @@ pub struct ProblemOut {
     pub cu_nets: BTreeMap<String, (String, String)>,
     pub via_nets: Vec<i64>,
     pub plane_nets: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub clusters: Vec<crate::problem::Cluster>,
     /// A reviewed engineering contract, when the read had one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub engineering: Option<Value>,

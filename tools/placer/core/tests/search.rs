@@ -356,6 +356,7 @@ fn the_mains_check_without_route_rules_stops() {
 
 fn candidate(worker: usize, cost: f64, pose: Pose, illegal: &[&str], faults: &[&str]) -> Candidate {
     Candidate {
+        route_score: None,
         worker,
         prelegal_pose: pose.clone(),
         pose,
@@ -495,8 +496,19 @@ fn live_observer_preserves_search_and_distinguishes_current_from_best() {
         assert_eq!(current[0],(5.,5.,0));assert_eq!(best[0],(5.,5.,0));
         got.lock().unwrap().push((worker,epoch,step,current.clone(),best.clone()));
     };
-    let live=iotplace::search::optimize_observed(&mut pr,&p,plan,&|_|{},&|_,_,_,_|{},Some(&observe)).unwrap();
+    let live=iotplace::search::optimize_observed(&mut pr,&p,plan,&|_|{},&|_,_,_,_|{},Some(&observe), &iotplace::search::Sprint::default()).unwrap();
     assert!(frames.lock().unwrap().len()>=6);
     assert_eq!(serde_json::to_value(&plain.history).unwrap(),serde_json::to_value(&live.history).unwrap());
     for (a,b) in plain.candidates.iter().zip(&live.candidates) {assert_eq!(a.pose,b.pose);assert_eq!(a.cost,b.cost);assert_eq!(a.illegal,b.illegal);}
+}
+
+#[test]
+fn a_plain_run_counts_a_pad_inside_the_edge_clearance_the_raster_misses() {
+    // The top edge at 30.06 is off the 0.1 mm raster: its band starts at 29.1, the 1 mm clearance at 29.06. The pad box ends at 29.08.
+    let mut padded = unit("P", 5.0, 28.58, json!([[-0.5, -0.5, 0.5, 0.5, 0.1]]));
+    padded["pad_rects"] = json!([[-0.5, -0.5, 0.5, 0.5]]);
+    let board = json!({"outline": [[0, 0], [30, 0], [30, 30.06], [0, 30.06]], "keepouts": [], "edge_clearance": 1.0});
+    let res = run(problem_json(json!([padded]), json!([]), board), &Params::default(), 1, 1, 0, 1, 1);
+    assert_eq!(res.candidates[0].pose, vec![(5.0, 28.58, 0)], "the raster sees no fault, so the legalizer leaves it");
+    assert_eq!(res.candidates[0].illegal, ["edge:P"]);
 }

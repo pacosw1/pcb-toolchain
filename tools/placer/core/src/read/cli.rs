@@ -109,7 +109,8 @@ pub fn options(f: &Flags) -> crate::Result<Options> {
         tie: f.number("--tie", 0.0)?,
         rigid_nets: comma_list(f.one("--rigid-net")?, "*SW*"),
         rigid_groups: f.list("--rigid-group").iter().map(|group| group.split(',').map(String::from).collect()).collect(),
-        decap_tie: f.number("--decap-tie", 3.0)?,
+        // A cluster is soft: a cap near its IC becomes rigid with it only when the flag says so.
+        decap_tie: f.number("--decap-tie", if f.has("--auto-clusters") { 0.0 } else { 3.0 })?,
         keepout_zones: f.list("--keepout-zone"),
         edges: f.list("--edge").iter().map(|e| parse_edge(e)).collect::<crate::Result<_>>()?,
         zone_refs: f.list("--zone-ref").iter().map(zone_ref).collect::<Result<_, _>>()?,
@@ -121,6 +122,7 @@ pub fn options(f: &Flags) -> crate::Result<Options> {
         tp_pins: f.has("--tp-pins"),
         in_boxes: f.list("--in-box").iter().map(|b| parse_in_box(b)).collect::<crate::Result<_>>()?,
         near: f.list("--near").iter().map(|n| parse_near(n)).collect::<crate::Result<_>>()?,
+        auto_clusters: f.has("--auto-clusters").then(|| f.number("--w-clu", 1.0)).transpose()?,
         ..Options::default()
     })
 }
@@ -134,10 +136,14 @@ fn summary(pr: &ProblemOut) {
     }
     let far: Vec<String> = pr.decaps.iter().filter(|d| d.2 > 1.0).map(|d| format!("{}-{} {:.2}", d.0, d.1, d.2)).collect();
     println!("decaps {} tied, {} over 1.0 mm (D-040): {}", pr.decaps.len(), far.len(), far.join(" "));
+    for c in &pr.clusters {
+        let ties: Vec<String> = c.ties.iter().map(|t| format!("{}: {}", t.rule, t.why)).collect();
+        println!("cluster {}: {}", c.name, ties.join("; "));
+    }
 }
 
 pub fn run(argv: &[String]) -> crate::Result<()> {
-    let flags = Flags::parse(argv, &["--tp-pins"]);
+    let flags = Flags::parse(argv, &["--tp-pins", "--auto-clusters"]);
     let [board_file] = &flags.positional[..] else { return Err("usage: iotplace read BOARD.kicad_pcb --board-json DOC.json -o PROB.json".into()) };
     let board = load_board(&flags.path("--board-json")?)?;
     let output = flags.path("-o")?;

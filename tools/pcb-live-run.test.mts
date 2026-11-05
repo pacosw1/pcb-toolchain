@@ -34,6 +34,7 @@ test("worker records native events and retries the same sequence after lost ackn
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "live-worker-"));
   fs.writeFileSync(path.join(dir, "board.kicad_pcb"), board);
   fs.writeFileSync(path.join(dir, "token"), "a".repeat(64));
+  fs.writeFileSync(path.join(dir, 'model.json'), JSON.stringify({pcb:path.join(dir,'board.kicad_pcb')}));
   let lost = false;
   const events = new Map<number, LiveEvent>();
   let requests = 0;
@@ -88,7 +89,7 @@ test("worker records native events and retries the same sequence after lost ackn
     });
   try {
     await run(
-      ["--board", path.join(dir, "board.kicad_pcb"), "--operation", "routing"],
+      ["--board", path.join(dir, "board.kicad_pcb"), "--model", path.join(dir,"model.json"), "--operation", "routing"],
       ["--", process.execPath, producer],
     );
     assert.ok(requests >= 2);

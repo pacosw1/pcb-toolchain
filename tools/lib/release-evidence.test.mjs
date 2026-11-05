@@ -13,6 +13,8 @@ import {gateInputs,fingerprint} from './gate-inputs.mjs';
 // The release recipes of the shipping boards, from their gate.json (the fixture copies them).
 const repo=fileURLToPath(new URL('../..',import.meta.url));
 const RECIPES=Object.fromEntries(['BASE-PWR','ENV-SENSE'].map(b=>[b,releaseRecipe(repo,b)]));
+const ENV_VARIANTS=JSON.parse(readFileSync(join(repo,'hardware-design/boards/ENV-SENSE/variants.json'),'utf8')).variants;
+assert.deepEqual(RECIPES['ENV-SENSE'].variants,ENV_VARIANTS,'release recipe must cover the declared ENV populations');
 function fixture(t,board='BASE-PWR') {
  const root=mkdtempSync(join(tmpdir(),'release-evidence-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  const put=(path,value)=>{mkdirSync(join(root,path,'..'),{recursive:true});writeFileSync(join(root,path),typeof value==='string'?value:JSON.stringify(value));};
@@ -122,9 +124,9 @@ test('stock requires original exact-source responses, candidate identity, quanti
 });
 test('supplier orientation requires every population/reference and hashed review evidence',t=>{
  const f=fixture(t,'ENV-SENSE'),manifest=f.finish();f.put('review/preview.png','review evidence');
- const review={schema_version:1,board:f.board,revision:'A',candidate_sha256:sha256(readFileSync(join(f.candidate,'release-manifest.json'))),reviewer:'Reviewer',reviewed_at_utc:'2026-10-15T12:00:00Z',placements:['VIB','AIR','ALL'].map(population=>({population,reference:'R1',lcsc:'C123',orientation_verified:true,evidence:'preview.png',evidence_sha256:sha256('review evidence')}))};
+ const review={schema_version:1,board:f.board,revision:'A',candidate_sha256:sha256(readFileSync(join(f.candidate,'release-manifest.json'))),reviewer:'Reviewer',reviewed_at_utc:'2026-10-15T12:00:00Z',placements:ENV_VARIANTS.map(population=>({population,reference:'R1',lcsc:'C123',orientation_verified:true,evidence:'preview.png',evidence_sha256:sha256('review evidence')}))};
  f.put('review/orientation.json',review);const path=join(f.root,'review/orientation.json');
- assert.equal(inspectOrientation(f.candidate,manifest,path).placements,3);
+ assert.equal(inspectOrientation(f.candidate,manifest,path).placements,ENV_VARIANTS.length);
  review.placements.pop();f.put('review/orientation.json',review);assert.throws(()=>inspectOrientation(f.candidate,manifest,path),/every fitted/);
 });
 test('complete assembly availability cannot omit required harness, contact or battery scope',t=>{
@@ -161,19 +163,29 @@ test('atomic publication refuses an existing empty destination without nesting o
  assert.ok(readFileSync(join(f.candidate,'gate/result.json')));rmSync(destination,{recursive:true});
  const passed=spawnSync(process.execPath,[command,f.candidate,destination],{encoding:'utf8'});assert.equal(passed.status,0,passed.stderr);assert.ok(readFileSync(join(destination,'gate/result.json')));
 });
-test('BASE exporter honors staged output and the chosen KiCad executable without replacing canonical files',t=>{
- const f=fixture(t),tools=join(f.root,'tools');mkdirSync(tools,{recursive:true});
- writeFileSync(join(tools,'make-base-pwr-fab.sh'),readFileSync(new URL('../make-base-pwr-fab.sh',import.meta.url)));
- for(const file of ['pack-fab.ts','lib/zip-write.ts','lib/zip-read.mjs','lib/cli.ts','lib/py-compat.mjs']) {
+test('ENV exporter honors staged output and the chosen KiCad executable without replacing canonical files',t=>{
+ const f=fixture(t,'ENV-SENSE'),tools=join(f.root,'tools');mkdirSync(tools,{recursive:true});
+ writeFileSync(join(tools,'make-env-fab.sh'),readFileSync(new URL('../make-env-fab.sh',import.meta.url)));
+ for(const file of ['env_fab_variants.py','pack-fab.ts','lib/zip-write.ts','lib/zip-read.mjs','lib/cli.ts','lib/py-compat.mjs']) {
   mkdirSync(join(tools,file,'..'),{recursive:true});
   writeFileSync(join(tools,file),readFileSync(new URL('../'+file,import.meta.url)));
  }
  f.put(f.prefix+'/cad/fab/keep','canonical artifact');
- const fake=join(f.root,'fake-kicad');writeFileSync(fake,'#!/usr/bin/env python3\nimport pathlib,sys\na=sys.argv[1:];p=pathlib.Path(a[a.index("-o")+1])\nif str(p).endswith("gerber"):\n p.mkdir(exist_ok=True);(p/"fixture.gbr").write_text("fixture")\nelse:\n p.parent.mkdir(parents=True,exist_ok=True);p.write_text("Ref,Val,Package,PosX,PosY,Rot,Side\\nR1,10R,0603,10,-20,-90,top\\n")\n',{mode:0o755});
+ const fake=join(f.root,'fake-kicad');writeFileSync(fake,`#!/usr/bin/env node
+const fs=require('node:fs'),path=require('node:path'),a=process.argv.slice(2),p=a[a.indexOf('-o')+1];
+if(a[2]==='gerbers'||a[2]==='drill'){
+ fs.mkdirSync(p,{recursive:true});fs.writeFileSync(path.join(p,a[2]==='gerbers'?'fixture.gbr':'fixture.drl'),'fixture');
+}else{
+ fs.mkdirSync(path.dirname(p),{recursive:true});
+ const data=a[0]==='sch'?'Comment,Designator,Footprint,LCSC Part #\\n10R,R1,iot-lab:C123,C123\\n':a[2]==='pos'?'Ref,Val,Package,PosX,PosY,Rot,Side\\nR1,10R,0603,10,-20,-90,top\\n':'render';
+ fs.writeFileSync(p,data);
+}
+`,{mode:0o755});
  const out=join(f.root,'new-fab'),render=join(f.root,'new-renders'),env={...process.env,FAB_OUT:out,RENDER_OUT:render,KICAD_CLI:fake};
- const result=spawnSync('sh',[join(tools,'make-base-pwr-fab.sh')],{env,encoding:'utf8'});assert.equal(result.status,0,result.stderr);
+ const result=spawnSync('sh',[join(tools,'make-env-fab.sh')],{env,encoding:'utf8'});assert.equal(result.status,0,result.stderr);
  assert.equal(readFileSync(join(f.root,f.prefix,'cad/fab/keep'),'utf8'),'canonical artifact');assert.ok(readFileSync(join(out,'EXPLORATORY')));
- const before=fileHashes(out),again=spawnSync('sh',[join(tools,'make-base-pwr-fab.sh')],{env,encoding:'utf8'});assert.notEqual(again.status,0);assert.deepEqual(fileHashes(out),before);
+ for(const population of ENV_VARIANTS)for(const kind of ['BOM','CPL'])assert.ok(readFileSync(join(out,`ENV-SENSE-${population}-${kind}-JLC.csv`)));
+ const before=fileHashes(out),again=spawnSync('sh',[join(tools,'make-env-fab.sh')],{env,encoding:'utf8'});assert.notEqual(again.status,0);assert.deepEqual(fileHashes(out),before);
 });
 test('fabrication packaging is deterministic and never overwrites existing archives',t=>{
  const root=mkdtempSync(join(tmpdir(),'release-packaging-'));t.after(()=>rmSync(root,{recursive:true,force:true}));

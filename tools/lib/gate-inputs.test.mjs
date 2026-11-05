@@ -111,13 +111,34 @@ test('hierarchical sheets outside the project folder remain dependencies',t=>{
  assert.notEqual(fingerprint(r,gateInputs(r,'X').files).input_sha256,before);
 });
 // D-129: only the tools the gate executes are inputs. A viewer or test change must not re-gate a board.
+// Reviewed BASE gate entry points, their loaded TS/MJS modules and runtime data.
+// Keep an explicit closure instead of a pre-port file-count budget: extra unrelated
+// imports and missing production dependencies must both fail this project integration test.
+const EXPECTED_BASE_GATE_TOOLS=[
+ 'driver-edges.json','edge-rates.json','gate.mjs','kicad_happy_gate.ts',
+ 'lib/board-edit.ts','lib/board-hit.ts','lib/board-items.ts','lib/board-json.ts',
+ 'lib/board-obstacles.ts','lib/board-types.ts','lib/check-cache.mjs','lib/cli.ts',
+ 'lib/copper-current.ts','lib/copper-gap.ts','lib/copper-graph.ts','lib/daemon-job.ts',
+ 'lib/drc-run.ts','lib/drc-summary.ts','lib/env-paths.mjs','lib/env.mjs','lib/fnmatch.ts',
+ 'lib/footprint-move.ts','lib/gate-core.mjs','lib/gate-findings.mjs','lib/gate-inputs.mjs',
+ 'lib/gate-runtime.mjs','lib/grid-search.ts','lib/happy-tar.mjs','lib/iotroute-bin.ts',
+ 'lib/json-file.ts','lib/kicad-happy-board.ts','lib/kicad-happy-findings.ts',
+ 'lib/kicad-happy-phases.ts','lib/min-heap.ts','lib/net-islands.ts','lib/pcbtool-cli.ts',
+ 'lib/pcbtool-corridor.ts','lib/pcbtool-read.ts','lib/pcbtool-suggest.ts','lib/pcbtool-write.ts',
+ 'lib/pin-ratings.ts','lib/power-graph.ts','lib/power-paths.ts','lib/project-root.mjs',
+ 'lib/py-compat.mjs','lib/py-math.ts','lib/py-numbers.ts','lib/reference-planes.ts',
+ 'lib/rf-lines.ts','lib/route-grid.ts','lib/route-spec.ts','lib/seigaiha.ts','lib/sexpr.ts',
+ 'lib/si-native.ts','lib/stackup-colors.ts','lib/suggest-verify.ts','lib/supply-nets.ts',
+ 'lib/thermal-spokes.ts','lib/through-vias.ts','lib/via-pads.ts',
+ 'pcbtool.ts','pin-ratings.json','port_labels.ts','rf_lines.ts','si_pairs.ts','si_planes.ts',
+].map(name=>'tools/'+name).sort();
 test('a real board fingerprints the executed gate tools and no tests, viewers or routers',()=>{
  const root=fileURLToPath(new URL('../..',import.meta.url)).replace(/\/$/,'');
  const paths=fingerprint(root,gateInputs(root,'BASE-PWR').files).inputs.map(i=>i.path);
  for(const p of ['tools/gate.mjs','tools/lib/gate-core.mjs','tools/si_planes.ts','tools/lib/si-native.ts','tools/pcbtool.ts','tools/edge-rates.json']) assert.ok(paths.includes(p),p);
  for(const p of ['tools/route-features.json','tools/hooks/pre-commit','tools/lib/staged-gates.mjs']) assert.ok(!paths.includes(p),p);
- assert.deepEqual(paths.filter(p=>/(^|\/)test_[^/]*\.py$|\.test\.mjs$|\/test-/.test(p)),[]);
- assert.ok(paths.filter(p=>p.startsWith('tools/')).length<40,'tools inputs stay a short executed closure');
+ assert.deepEqual(paths.filter(p=>/(^|\/)test_[^/]*\.py$|\.test\.(mjs|ts)$|\/test-/.test(p)),[]);
+ assert.deepEqual(paths.filter(p=>p.startsWith('tools/')).sort(),EXPECTED_BASE_GATE_TOOLS);
 });
 test('external checker rules and their nested JSON and schematic dependencies invalidate evidence',t=>{
  const r=mkdtempSync(join(tmpdir(),'gate-rules-'));t.after(()=>rmSync(r,{recursive:true,force:true}));

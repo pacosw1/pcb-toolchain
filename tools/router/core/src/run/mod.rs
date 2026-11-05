@@ -1,5 +1,5 @@
 //! `iotroute run BOARD OUT.kicad_pcb [--pcb IN.kicad_pcb] [--iters N] [--max-time S] [--lock-from SRC.kicad_pcb]
-//!               [--reuse PREV.kicad_pcb [--reuse-fallback full|none]] [--seed N] [--stall-passes N] [--checkpoint]
+//!               [--reuse PREV.kicad_pcb [--reuse-fallback full|none] [--reuse-net NET]...] [--seed N] [--stall-passes N] [--checkpoint]
 //!               [--congestion] [--return-exempt] [--diagnose] [--plane-net NET]... [--layer L]... [--net NET]... [--tools DIR] [--json]`
 //!
 //! One entry point for the in-house router: model, route, board copy, KiCad DRC (tools/router/DESIGN.md). BOARD is the board ID
@@ -14,16 +14,18 @@
 //!  3. OUT gets the board and the project files of the input; the input's .kicad_pro goes back if a save rewrote it.
 //!  4. KiCad DRC with --schematic-parity on OUT, on the saved fill.
 //!  5. --diagnose: when OUT has opens, why, for the compaction (diagnose.rs). It never changes the verdict.
+//!  6. When OUT is not clean, the short report of that in OUT.iotroute/stuck.json (crate::stuck), against the report of --reuse PREV
+//!     when it has one. Without --diagnose it has the DRC and the search but no triage.
 //!
-//! --reuse PREV (partial re-route, DESIGN.md 5c): the seed is PREV's route, the parts moved since and the nets PREV left open or in
-//! a DRC error. --reuse-fallback full (default): when the reuse result is not PASS, the full route of the same input runs too and
+//! --reuse PREV (partial re-route, DESIGN.md 5c): the seed is PREV's route, the parts moved since, the nets PREV left open or in
+//! a DRC error, and each --reuse-net. --reuse-fallback full (default): when the reuse result is not PASS, the full route of the same input runs too and
 //! the better one is kept; a tie keeps the full route. none: the reuse result is the result.
 //!
 //! The router's own counts are never the verdict; the DRC on OUT is. Output, one line:
 //! PASS|FAIL <drc errors> <unconnected> <parity> <tracks> <vias> <seconds>, or ERROR <seconds> <cause> when a step did not
 //! complete; with --json the record on the next line. The record is also in OUT.iotroute/result.json. Exit: 0 PASS, 1 FAIL, 2 no
 //! verdict.
-mod diagnose;
+pub mod diagnose;
 pub mod guard;
 pub mod lock;
 pub mod measure;
@@ -49,7 +51,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use steps::{Steps, last_line, sources_sha};
 
-const USAGE: &str = "usage: iotroute run BOARD OUT.kicad_pcb [--pcb IN] [--iters N] [--max-time S] [--lock-from SRC] [--reuse PREV] [--reuse-fallback full|none] [--congestion] [--return-exempt] [--diagnose] [--plane-net NET]... [--layer L]... [--net NET]... [--seed N] [--stall-passes N] [--checkpoint] [--tools DIR] [--json]";
+const USAGE: &str = "usage: iotroute run BOARD OUT.kicad_pcb [--pcb IN] [--iters N] [--max-time S] [--lock-from SRC] [--reuse PREV] [--reuse-fallback full|none] [--reuse-net NET]... [--congestion] [--return-exempt] [--diagnose] [--plane-net NET]... [--layer L]... [--net NET]... [--seed N] [--stall-passes N] [--checkpoint] [--tools DIR] [--json]";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Args {
@@ -61,6 +63,7 @@ pub struct Args {
     pub lock_from: Option<String>,
     pub reuse: Option<String>,
     pub reuse_fallback: String,
+    pub reuse_nets: Vec<String>,
     pub congestion: bool,
     pub return_exempt: bool,
     pub diagnose: bool,
@@ -81,7 +84,7 @@ fn value<T: std::str::FromStr>(flag: &str, text: Option<&String>) -> Result<T, S
 
 pub fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut a = Args {
-        board: String::new(), out: String::new(), pcb: None, iters: 80, max_time: None, lock_from: None, reuse: None, reuse_fallback: "full".to_string(),
+        board: String::new(), out: String::new(), pcb: None, iters: 80, max_time: None, lock_from: None, reuse: None, reuse_fallback: "full".to_string(), reuse_nets: Vec::new(),
         congestion: std::env::var("IOTROUTE_CONGESTION").is_ok_and(|v| v == "1"), return_exempt: false, diagnose: false, plane_nets: Vec::new(), layers: Vec::new(), nets: Vec::new(), seed: None, stall_passes: None, checkpoint: false, tools: PathBuf::from("tools"), json: false,
     };
     let mut positional = Vec::new();
@@ -94,6 +97,7 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--lock-from" => a.lock_from = Some(value(arg, it.next())?),
             "--reuse" => a.reuse = Some(value(arg, it.next())?),
             "--reuse-fallback" => a.reuse_fallback = value(arg, it.next())?,
+            "--reuse-net" => a.reuse_nets.push(value(arg, it.next())?),
             "--seed" => a.seed = Some(value(arg, it.next())?),
             "--stall-passes" => a.stall_passes = Some(value(arg, it.next())?),
             "--tools" => a.tools = PathBuf::from(value::<String>(arg, it.next())?),
@@ -181,7 +185,7 @@ impl Run<'_> {
     /// the chosen one's files go to work and its board to OUT. -> its stages and whether the project file went back.
     fn reuse_attempts(&self, previous: &str, out: &Path, work: &Path, rec: &mut Record) -> Result<(AttemptStages, bool), String> {
         let seed = work.join("seed.json");
-        let mut record = reuse_seed(&absolute(previous)?, &self.route_in, &seed, &self.a.reuse_fallback)?;
+        let mut record = reuse_seed(&absolute(previous)?, &self.route_in, &seed, &self.a.reuse_fallback, &self.a.reuse_nets)?;
         let tries: Vec<(&str, Vec<String>)> = std::iter::once(("reuse", vec!["--reuse".to_string(), seed.display().to_string()])).chain((self.a.reuse_fallback == "full").then(|| ("full", Vec::new()))).collect();
         let mut chosen: Option<&str> = None;
         for (name, extra) in &tries {
@@ -212,7 +216,7 @@ impl Run<'_> {
         let chosen = chosen.expect("at least one attempt");
         record.chosen = Some(chosen.to_string());
         let folder = work.join(format!("a-{chosen}"));
-        self.copy_results(&folder, work, &["route.json", "route.log", "write.log", "congestion.json"])?;
+        self.copy_results(&folder, work, &["route.json", "route.log", "write.log", "congestion.json", "checkpoint.json"])?;
         let stages = record.attempts[chosen].stages.clone();
         rec.reuse = Some(record);
         fs::copy(folder.join(out.file_name().expect("OUT has a name")), out).map_err(|e| format!("{}: {e}", out.display()))?;
@@ -410,6 +414,13 @@ fn run(a: &Args, rec: &mut Record, out: &Path, work: &Path) -> Result<(), String
     let drc = finish(rec, out, work)?;
     if a.diagnose && drc.unconnected > 0 {
         rec.diagnosis = Some(diagnose::diagnose(&diagnose_in, out, work, &diagnose_model));
+    }
+    if !drc.clean() {
+        let previous = a.reuse.as_ref().map(|prev| PathBuf::from(format!("{prev}.iotroute/stuck.json"))).filter(|path| path.is_file());
+        let line = crate::stuck::write(work, rec.board.as_deref().unwrap_or(""), previous.as_deref()).map_or_else(|error| format!("STUCK failed: {error}"), |report| report.line());
+        if a.diagnose {
+            rec.diagnosis.get_or_insert_default().push(line);
+        }
     }
     Ok(())
 }

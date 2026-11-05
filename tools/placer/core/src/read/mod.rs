@@ -7,6 +7,7 @@
 //! the movable units do count as used room; locked copper is fixed copper.
 
 pub mod cli;
+pub mod clusters;
 pub mod extras;
 pub mod grouping;
 pub mod options;
@@ -220,6 +221,9 @@ pub fn read_problem(path: &Path, board: &Board, options: &Options) -> crate::Res
     if let Some(members) = &options.blocks {
         nets.extend(cohesion_nets(&units, &unit_of, members, options));
     }
+    let proposal = options.auto_clusters.map(|weight| clusters::propose(board, &units, &unit_of, &nets, weight));
+    let (proposed, ties) = proposal.map_or((Vec::new(), Vec::new()), |p| (p.clusters, p.nets));
+    nets.extend(ties);
     let moving: BTreeSet<&str> = units.iter().flat_map(|u| u.locked_cu.iter().map(String::as_str)).collect();
     let fixed: Vec<&&Copper> = locked.iter().filter(|t| !moving.contains(t.id())).collect();
     let rules = &project.rules;
@@ -248,6 +252,7 @@ pub fn read_problem(path: &Path, board: &Board, options: &Options) -> crate::Res
         cu_nets: cu_nets(&units, &codes, board),
         via_nets: matching_codes(&codes, &options.via_nets),
         plane_nets: plane_nets.into_iter().collect(),
+        clusters: proposed,
         units,
         engineering: None,
     })

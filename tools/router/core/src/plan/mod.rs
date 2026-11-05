@@ -22,7 +22,9 @@
 //!             "clearance_mm": 0.3, "thermal_gap_mm": 0.4, "spoke_mm": 1.0}],
 //!  "widths": [{"name", "box": [x0, y0, x1, y1], "layers": [...], "width_mm"}],   after the route, before the pours:
 //!                                                   a track whose midpoint is in the box gets width_mm (never wider)
-//!  "features": {"via_off_small_pads": true}}        tools/route-features.json switches; job/route_run/iotroute.rs says which iotroute takes
+//!  "features": {"via_off_small_pads": true},        tools/route-features.json switches; job/route_run/iotroute.rs says which iotroute takes
+//!  "reuse": {"from": "/abs/OUTDIR", "nets": [...]}} iotroute only: each stage starts from the copper of that run's stage of the same name
+//!                                                   and routes again what it left open, and `nets`
 //! ```
 //!
 //! Boxes are in mm, board coordinates. "around" pours cover the pads and copper of the net grown by grow_mm.
@@ -148,4 +150,12 @@ pub struct Plan {
     pub pours: Vec<Pour>,
     pub widths: Vec<WidthRule>,
     pub features: BTreeMap<String, bool>,
+    pub reuse: Option<Reuse>,
+}
+
+/// The earlier run a plan starts from.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Reuse {
+    pub from: String,
+    pub nets: Vec<String>,
 }

@@ -1,7 +1,9 @@
 // Block placement on a board: the problem, the search and the candidate boards.
 //
 //   place.ts read  BOARD -o prob.json [flags of `iotplace read`] [--engineering-manifest M --engineering-board ID --engineering-root DIR]
+//         --auto-clusters [--w-clu 1]: propose soft clusters (README "Automatic clusters").
 //   place.ts run   prob.json -o result.json [--workers 16 --epochs 20 --steps 20000 --seed 1 --top 3] [--param w_ov=20 ...]
+//         --budget-s S: a sprint, one independent seed per worker; --checkpoint FILE: a checkpoint per epoch (README "Sprints").
 //   place.ts write BOARD prob.json result.json --outdir DIR [--initial]
 //         DIR/candK/ = a copy of the board folder with candidate K placed (DIR/initial/ with --initial).
 //   place.ts drc   DIR/candK/NAME.kicad_pcb ...
@@ -59,12 +61,12 @@ function cmdRead(given: string[]): number {
   return 0;
 }
 
-interface Candidate { pose: Pose; illegal: string[]; mains: unknown[]; cost: Num; worker: Num; engineering?: Screen }
+interface Candidate { pose: Pose; illegal: string[]; mains: unknown[]; cost: Num; worker: Num; route_score?: Num; engineering?: Screen }
 interface Result { candidates: Candidate[]; engineering_source_verification?: string }
 
-/** Final candidate order: legal first, then no mains path faults, then the lower cost. */
+/** Final candidate order: legal first, then no mains path faults, then a sprint's route score, then the lower cost. */
 const finalOrder = (a: Candidate, b: Candidate): number => a.illegal.length - b.illegal.length || a.mains.length - b.mains.length
-  || number(a.cost) - number(b.cost) || number(a.worker) - number(b.worker);
+  || number(a.route_score ?? 0) - number(b.route_score ?? 0) || number(a.cost) - number(b.cost) || number(a.worker) - number(b.worker);
 
 async function search(prob: string, output: string, workers: number, flags: readonly string[]): Promise<number> {
   const command = [iotplaceBin(), 'run', prob, '-o', output, '--workers', String(workers), ...flags];
@@ -79,11 +81,15 @@ export interface RunServices { review: ReviewServices; search: typeof search }
 export async function cmdRun(argv: string[], { review, search: start }: RunServices = { review: reviewServices, search }): Promise<number> {
   const a = parseOptions(argv, {
     '-o': 'text', '--workers': 'int', '--epochs': 'int', '--steps': 'int', '--seed': 'int', '--top': 'int', '--param': 'words', [FROZEN]: 'text',
+    '--budget-s': 'float', '--checkpoint': 'text',
   }, 'usage: place.ts run prob.json -o result.json [--workers N ...]');
   const [prob] = a.positionals, output = a.text('-o');
   if (!prob || !output) throw new UsageError('usage: place.ts run prob.json -o result.json');
-  const flags = ['--epochs', String(a.int('--epochs') ?? 20), '--steps', String(a.int('--steps') ?? 20000), '--seed', String(a.int('--seed') ?? 1),
-    '--top', String(a.int('--top') ?? 3), ...(a.words('--param').length ? ['--param', ...a.words('--param')] : [])];
+  const budget = a.float('--budget-s'), checkpoint = a.text('--checkpoint');
+  const steps = a.int('--steps') ?? (budget === undefined ? 20000 : undefined);   // A sprint sizes its steps to its budget.
+  const flags = ['--epochs', String(a.int('--epochs') ?? 20), ...(steps === undefined ? [] : ['--steps', String(steps)]), '--seed', String(a.int('--seed') ?? 1),
+    '--top', String(a.int('--top') ?? 3), ...(budget === undefined ? [] : ['--budget-s', String(budget)]), ...(checkpoint ? ['--checkpoint', checkpoint] : []),
+    ...(a.words('--param').length ? ['--param', ...a.words('--param')] : [])];
   const workers = a.int('--workers') ?? defaultCpu();
   const payload = readFileSync(prob);
   const problem = parseTyped<ReviewedProblem>(payload.toString('utf8'));

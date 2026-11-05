@@ -284,6 +284,11 @@ impl Contract {
         at.part.locked && (at.origin() != at.part.origin || at.quarter() != at.part.quarter)
     }
 
+    /// True when a rule of the contract names unit i.
+    pub fn binds(&self, i: usize) -> bool {
+        !self.unit_rules[i].is_empty()
+    }
+
     /// The miss of the rules that unit i takes part in, at a pose, plus 1 for each locked part those rules touch that moved.
     pub fn miss(&self, i: usize, pose: &Pose) -> f64 {
         let rules: Vec<&Rule> = self.unit_rules[i].iter().map(|&k| &self.doc.rules[k]).collect();

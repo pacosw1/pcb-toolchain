@@ -4,7 +4,7 @@ Studio's **Live solver** tab follows actual native search activity. It is read-o
 
 ## Start an observed run
 
-Use Node 22.13 or newer, the matching instrumented native binaries, and a coordinator running `apps/job-daemon` from this revision. Set `JOBD_URL` and `JOBD_TOKEN_FILE` in both the worker and Studio engine environments. Keep the token file private; the renderer never receives it.
+Run from a full toolchain checkout. Use Node 22.13 or newer, the matching instrumented native binaries, and a coordinator running `apps/job-daemon` from this revision. Set `JOBD_URL` and `JOBD_TOKEN_FILE` in both the worker and Studio engine environments. Keep the token file private; the renderer never receives it.
 
 ```sh
 node --experimental-strip-types --no-warnings tools/pcb-live-run.mts \
@@ -14,7 +14,7 @@ node --experimental-strip-types --no-warnings tools/pcb-live-run.mts \
   --workers 2 --epochs 20 --steps 20000
 
 node --experimental-strip-types --no-warnings tools/pcb-live-run.mts \
-  --board /scratch/placed/ENV-SENSE.kicad_pcb \
+  --board /scratch/placed/ENV-SENSE.kicad_pcb --model /scratch/route-model.json \
   --operation routing --project ENV-SENSE --spool /scratch/route-observation \
   -- iotroute /scratch/route-model.json /scratch/route-result.json --iters 40
 ```

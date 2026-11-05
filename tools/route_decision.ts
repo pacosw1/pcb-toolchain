@@ -8,21 +8,25 @@ import { projectRoot } from './lib/project-root.mjs';
 import { atomicJson } from './lib/json-file.ts';
 import { resolvePath } from './lib/py-path.ts';
 import { applyPlan, diagnoseEvidence, generateEscape, SCHEMA } from './lib/route-decision.ts';
+import { checkMove } from './lib/route-moves.ts';
 import { repairSnapshot } from './lib/route-decision-cli.ts';
 import { deadlineAfter, remaining } from './lib/lean-workflow.ts';
 export * from './lib/route-decision.ts';
-const USAGE = 'usage: tools/route_decision.ts diagnose|repair|escape BOARD [--root DIR] [--json] [--evidence FILE|--plan FILE] [--output PATH] [--timeout S]';
+const USAGE = 'usage: tools/route_decision.ts diagnose|repair|escape|move BOARD [--root DIR] [--json] [--evidence FILE|--plan FILE] [--move JSON] [--output PATH] [--timeout S]';
 export function main(argv: string[]): number {
   const { values: options, positionals } = parseFlags(argv, { root: { type: 'string' }, json: { type: 'boolean' }, output: { type: 'string' },
-    evidence: { type: 'string' }, plan: { type: 'string' }, timeout: { type: 'string' } }, USAGE);
+    evidence: { type: 'string' }, plan: { type: 'string' }, move: { type: 'string' }, timeout: { type: 'string' } }, USAGE);
   const [mode, board, ...extra] = positionals;
-  if (!board || extra.length || !['diagnose', 'repair', 'escape'].includes(mode ?? '') || mode === 'diagnose' && !options.evidence || mode === 'repair' && !options.plan) throw new UsageError(USAGE);
+  if (!board || extra.length || !['diagnose', 'repair', 'escape', 'move'].includes(mode ?? '') || mode === 'diagnose' && !options.evidence || mode === 'repair' && !options.plan || mode === 'move' && !(options.evidence && options.move && options.output)) throw new UsageError(USAGE);
   const root = projectRoot(options.root), output = options.output ? resolvePath(options.output) : undefined;
   try {
     let result: object, code = 0;
     if (mode === 'diagnose') {
       const decision = diagnoseEvidence(root, board, options.evidence!, output); result = decision;
       if (output) { if (existsSync(output)) throw new Error('decision output already exists'); atomicJson(output, decision); }
+    } else if (mode === 'move') {
+      const checked = checkMove(root, board, options.evidence!, options.move!, output!); result = checked; code = checked.status === 'rejected' ? 1 : 0;
+      atomicJson(output!, checked);
     } else {
       if (!output) throw new Error('--output evidence path required');
       const timeout = Number(options.timeout ?? (mode === 'repair' ? 120 : 30));

@@ -10,7 +10,7 @@ import { verifyManifest } from './part-review.ts';
 import { type Emit, measuredStage, type Row } from './pcb-operation-log.ts';
 import { boardConfig } from './pcb-workflow.ts';
 import { jsonDumps } from './py-compat.mjs';
-import { isRelativeTo, resolvePath, withSuffix } from './py-path.ts';
+import { isFile, isRelativeTo, resolvePath, withSuffix } from './py-path.ts';
 import { EscapeStageReceipts, verifyEscapeEvidence } from './route-decision-escape.ts';
 import type { Dict } from './py-values.ts';
 
@@ -26,6 +26,12 @@ const review: ReviewServices = {
   verifyManifest: (root, board, path) => plain(verifyManifest(root, board, path)) as Dict,
   verifyEscapeEvidence: (contract, candidate, evidence) => verifyEscapeEvidence(plain(contract) as never, candidate, evidence) as unknown as Dict[],
 };
+
+/** The rules of the board's verified part review; none when it has no review. A review that does not verify stops here. */
+export function reviewedRules(root: string, board: string): unknown[] {
+  const manifest = join(root, 'hardware-design/registry/part-reviews', `${board}.json`);
+  return isFile(manifest) ? reviewedContract(root, board, manifest, review).rules : [];
+}
 
 /** A routed board needs its placement screened first. */
 export const routesCopper = (manifest: OperationManifest): boolean =>

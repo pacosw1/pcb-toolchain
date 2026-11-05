@@ -51,6 +51,28 @@ pub struct Problem {
     /// Rules of the pcb_search placer only (see `check_supported`).
     #[serde(default)]
     part_rules: Value,
+    /// Proposed soft clusters (read/clusters.rs).
+    #[serde(default)]
+    pub clusters: Vec<Cluster>,
+}
+
+/// Units the search may move as one. The ties say why. Soft: a rule always wins.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Cluster {
+    pub name: String,
+    pub units: Vec<usize>,
+    pub ties: Vec<Tie>,
+}
+
+/// Local point `at` of `unit` belongs next to local point `target` of `to`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Tie {
+    pub unit: usize,
+    pub at: Point,
+    pub to: usize,
+    pub target: Point,
+    pub rule: String,
+    pub why: String,
 }
 
 #[derive(Debug, Deserialize)]

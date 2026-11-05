@@ -60,6 +60,8 @@ pub struct Options {
     pub tp_pins: bool,
     pub in_boxes: Vec<(String, [f64; 4])>,
     pub near: Vec<Near>,
+    /// Propose soft clusters (clusters.rs), with this weight per tie.
+    pub auto_clusters: Option<f64>,
 }
 
 impl Default for Options {
@@ -90,6 +92,7 @@ impl Default for Options {
             tp_pins: false,
             in_boxes: Vec::new(),
             near: Vec::new(),
+            auto_clusters: None,
         }
     }
 }

@@ -221,6 +221,18 @@ test('an iotroute DRC failure is a failed route with a cause, and the board stay
   assert.equal(readFileSync(join(folder, 'workspace/hardware-design/boards/X/cad/X.kicad_pcb'), 'utf8'), BOARD);
 });
 
+test('a failed iotroute route keeps its stuck report, and the cause says what is stuck', needsBinary, async t => {
+  const root = project(t);
+  iotroute(root, `if (!args.includes('--diagnose') || !args.includes('--checkpoint')) throw new Error('no diagnosis asked for');
+writeFileSync(record + '/drc.json', '{}');
+writeFileSync(record + '/stuck.json', JSON.stringify({ work: record, summary: ['1 nets open'], open_nets: ['/A'] }));
+writeFileSync(record + '/result.json', JSON.stringify({ status: 'FAIL', drc_errors: 0, unconnected: 1, parity: 0 })); process.exitCode = 1;`);
+  const { folder, result } = await run(root, 'route', 'X', '--router', 'iotroute');
+  assert.equal(result.status, 'failed');
+  assert.equal(result.cause, 'route stuck: 1 nets open');
+  assert.deepEqual((JSON.parse(readFileSync(join(folder, 'operation/stuck.json'), 'utf8')) as Row).open_nets, ['/A']);
+});
+
 test('iotroute success without a PASS record fails closed', needsBinary, async t => {
   const root = project(t);
   iotroute(root, `writeFileSync(record + '/result.json', JSON.stringify({ status: 'FAIL' }));`);

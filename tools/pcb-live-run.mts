@@ -88,13 +88,18 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     );
   if (!get("run")) {
     if (
-      !v.board ||
+      !v.board || !v.model ||
       !["placement", "routing"].includes(v.operation ?? "") ||
       !command.length
     )
       throw new Error(
-        "--board, --operation placement|routing and -- solver command are required",
+        "--board, --model, --operation placement|routing and -- solver command are required",
       );
+    const modelBytes = fs.readFileSync(v.model!);
+    const model = JSON.parse(modelBytes.toString('utf8'));
+    const declaredBoard = v.operation === 'placement' ? model.board_file : model.pcb;
+    if (typeof declaredBoard !== 'string' || fs.realpathSync(declaredBoard) !== fs.realpathSync(v.board))
+      throw new Error('Observation board does not match the native model source');
     const bytes = fs.readFileSync(v.board);
     if (bytes.length > 128 * 1024 * 1024)
       throw new Error("Board exceeds limit");
@@ -103,6 +108,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     db.exec("BEGIN IMMEDIATE");
     put("run", run);
     put("base", hash(bytes));
+    put("model", hash(modelBytes));
     put("operation", v.operation!);
     put("board", path.resolve(v.board));
     put("offset", "0");

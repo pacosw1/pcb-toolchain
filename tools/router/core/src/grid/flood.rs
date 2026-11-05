@@ -65,35 +65,37 @@ impl Tally {
     }
 }
 
-/// How a blocking item is named in the report.
-fn blocker_name(grid: &GridBoard, k: usize) -> String {
-    let item = &grid.items[k];
-    format!("{} {}", if item.net.is_empty() { "(no net)" } else { &item.net }, item.owner)
+/// What walls a region in, most cells first.
+#[derive(Debug, PartialEq)]
+pub struct Blockers {
+    pub nets: Vec<String>,
+    pub parts: Vec<String>,
+    pub keepouts: Vec<String>,
 }
 
-/// The obstacles on the edge of a reached region, as nets and parts, most cells first. An empty edge means an empty region: the
-/// obstacles over the end itself.
-pub fn blockers(grid: &GridBoard, reached: &[Mask], owners: &[Vec<i32>], top: usize) -> (Vec<String>, Vec<String>) {
-    let mut cells = Tally::default();
+/// The obstacles on the edge of a reached region. An empty edge means an empty region: the obstacles over the end itself.
+pub fn blockers(grid: &GridBoard, reached: &[Mask], owners: &[Vec<i32>], top: usize) -> Blockers {
+    let (mut nets, mut parts, mut keepouts) = (Tally::default(), Tally::default(), Tally::default());
     for (region, own) in reached.iter().zip(owners) {
         let mut edge = region.dilated();
         edge.cells.iter_mut().zip(&region.cells).for_each(|(e, r)| *e = *e && !*r);
         let picked = if edge.any() { &edge } else { region };
         for (at, _) in picked.cells.iter().enumerate().filter(|(_, c)| **c) {
-            if own[at] >= 0 {
-                cells.add(&blocker_name(grid, own[at] as usize), 1);
+            if own[at] < 0 {
+                continue;
+            }
+            let item = &grid.items[own[at] as usize];
+            if !item.net.is_empty() {
+                nets.add(&item.net, 1);
+            }
+            if let Some(name) = item.owner.strip_prefix("keepout:") {
+                keepouts.add(name, 1);
+            } else if item.owner.contains('.') {
+                parts.add(item.reference(), 1);
             }
         }
     }
-    let (mut nets, mut parts) = (Tally::default(), Tally::default());
-    for (key, count) in cells.entries() {
-        let (net, owner) = key.split_once(' ').unwrap_or((key, ""));
-        nets.add(net, *count);
-        if let Some((part, _)) = owner.split_once('.') {
-            parts.add(part, *count);
-        }
-    }
-    (nets.most_common(top), parts.most_common(top))
+    Blockers { nets: nets.most_common(top), parts: parts.most_common(top), keepouts: keepouts.most_common(top) }
 }
 
 #[cfg(test)]

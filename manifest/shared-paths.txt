@@ -325,6 +325,10 @@ tools/lib/route-decision-escape.ts
 tools/lib/route-decision-evidence.ts
 tools/lib/route-decision.test.ts
 tools/lib/route-decision.ts
+tools/lib/route-moves.test.ts
+tools/lib/route-moves.ts
+tools/lib/route-stuck.test.ts
+tools/lib/route-stuck.ts
 tools/lib/route-dispatch.test.mjs
 tools/lib/route-features.test.ts
 tools/lib/route-features.ts
@@ -476,6 +480,7 @@ tools/placer/core/src/pinswap/board.rs
 tools/placer/core/src/pinswap/cli.rs
 tools/placer/core/src/problem.rs
 tools/placer/core/src/read/cli.rs
+tools/placer/core/src/read/clusters.rs
 tools/placer/core/src/read/extras.rs
 tools/placer/core/src/read/grouping.rs
 tools/placer/core/src/read/mod.rs
@@ -494,9 +499,11 @@ tools/placer/core/src/repair/search.rs
 tools/placer/core/src/rows.rs
 tools/placer/core/src/rudy.rs
 tools/placer/core/src/search/anneal.rs
+tools/placer/core/src/search/cluster.rs
 tools/placer/core/src/search/legalize.rs
 tools/placer/core/src/search/mod.rs
 tools/placer/core/src/search/mover.rs
+tools/placer/core/src/search/sprint.rs
 tools/placer/core/src/spacing.rs
 tools/placer/core/src/via.rs
 tools/placer/core/src/wirelen.rs
@@ -509,6 +516,7 @@ tools/placer/core/tests/common/board.rs
 tools/placer/core/tests/common/mod.rs
 tools/placer/core/tests/congest.rs
 tools/placer/core/tests/cost_cli.rs
+tools/placer/core/tests/clusters.rs
 tools/placer/core/tests/crossing.rs
 tools/placer/core/tests/domain.rs
 tools/placer/core/tests/drc_count.rs
@@ -536,6 +544,7 @@ tools/placer/core/tests/rows.rs
 tools/placer/core/tests/rudy.rs
 tools/placer/core/tests/search.rs
 tools/placer/core/tests/spacing.rs
+tools/placer/core/tests/sprint.rs
 tools/placer/core/tests/strip.rs
 tools/placer/core/tests/via.rs
 tools/placer/core/tests/wirelen.rs
@@ -701,6 +710,7 @@ tools/router/core/src/kicad/sexpr.rs
 tools/router/core/src/kicad/shape.rs
 tools/router/core/src/layers.rs
 tools/router/core/src/lib.rs
+tools/router/core/src/live.rs
 tools/router/core/src/main.rs
 tools/router/core/src/model/build.rs
 tools/router/core/src/model/cli.rs
@@ -814,6 +824,7 @@ tools/router/core/src/si/planes/tests/detour.rs
 tools/router/core/src/si/planes/tests/evidence.rs
 tools/router/core/src/si/planes/tests/native.rs
 tools/router/core/src/si/planes/tests/projection.rs
+tools/router/core/src/stuck.rs
 tools/router/core/src/tests_congestion.rs
 tools/router/core/src/tests_iso.rs
 tools/router/core/src/tests_layers.rs

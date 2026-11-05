@@ -146,9 +146,9 @@ export function routing(folder: string, root: string, board: string, reference: 
   const backendRoot = reference ? join(reference.folder, 'workspace') : root;
   const dependencies = reference ? parentCandidate(root, board, reference).dependencies : {};
   const path = join(folder, 'operation/report.json'), report = readObject<Row>(path);
-  if (report.schema !== 'iot-lab.route-decision.v1' || report.qualified !== false
-      || (code === 0 && (!['repairable', 'decision'].includes(String(report.status)) || report.board !== board))
-      || (code !== 0 && report.status !== 'blocked')) throw new Error('routing report type, identity, or verdict disagrees');
+  if (!['iot-lab.route-decision.v1', 'iot-lab.route-move.v1'].includes(String(report.schema)) || report.qualified !== false
+      || (code === 0 && (!['repairable', 'decision', 'accepted', 'proposal', 'ask_user'].includes(String(report.status)) || report.board !== board))
+      || (code !== 0 && !['blocked', 'rejected'].includes(String(report.status)))) throw new Error('routing report type, identity, or verdict disagrees');
   const inputs: Record<string, string> = { ...binding, ...dependencies };
   for (const name of ['inputs', 'native_inputs', 'source_inputs', 'evidence_sha256', 'implementation_sha256']) {
     const entries = report[name] ?? {};
