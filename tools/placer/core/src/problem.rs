@@ -291,6 +291,18 @@ impl Problem {
         let refs = problem.units.iter().map(|u| u.refs.clone()).collect::<Vec<_>>();
         let origins = problem.units.iter().map(|u| (u.x, u.y)).collect::<Vec<_>>();
         crate::engineering::ReviewedGeometry::compile(&problem.engineering, &refs, &origins)?;
+        let rules = problem.engineering["rules"].as_array().ok_or("reviewed rules missing")?;
+        for rule in rules {
+            if rule["kind"] == "fixed" || rule["retained_internal_copper"] == true {
+                let targets = rule["refs"].as_array().ok_or("reviewed fixed references missing")?;
+                for target in targets {
+                    let name = target.as_str().ok_or("invalid reviewed fixed reference")?;
+                    let unit = problem.units.iter().find(|u| u.refs.iter().any(|r| r == name))
+                        .ok_or("reviewed fixed reference not mapped")?;
+                    if !unit.fixed { return Err("reviewed fixed or retained-copper unit is movable".into()); }
+                }
+            }
+        }
         Ok(problem)
     }
 

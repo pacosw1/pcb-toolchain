@@ -246,6 +246,13 @@ fn producer_verified_cli_binds_bytes_and_rejects_unsupported_rules() {
     assert!(!run(None).status.success());
     assert!(!run(Some(&"0".repeat(64))).status.success());
     assert!(run(Some(&digest)).status.success());
+    let mut fixed = problem.clone();
+    fixed["engineering"]["geometry"]["refs"]["U1"]["origin"] = json!([10.0,10.0]);
+    fixed["engineering"]["rules"] = json!([{"id":"fixed","kind":"fixed","refs":["U1"]}]);
+    let bytes = serde_json::to_vec(&fixed).unwrap();
+    std::fs::write(&input, &bytes).unwrap();
+    let fixed_digest = format!("{:x}", Sha256::digest(&bytes));
+    assert!(!run(Some(&fixed_digest)).status.success());
     let mut bad = problem;
     bad["engineering"]["rules"][0]["kind"] = json!("escape");
     let bytes = serde_json::to_vec(&bad).unwrap();
