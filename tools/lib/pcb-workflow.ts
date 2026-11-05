@@ -1,11 +1,12 @@
 // Repository-derived board context and deterministic workflow plans. tools/pcb_workflow.py is the Python twin while
 // Python modules import it. Native CAD, gate.json and the board registry stay the sources of truth: this module holds
 // command adapters, not a second part or design database.
-import { readdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { lstatSync, readdirSync } from 'node:fs';
+import { dirname, extname } from 'node:path';
 import { sha256File } from './json-file.ts';
 import { get, item, osError, PyError, sorted, truthy } from './py-compat.mjs';
 import { caught, isFile, isInside, isRelativeTo, joinPath, jsonOf, pathExists, relativeTo, resolvePath, textOf, withSuffix } from './py-path.ts';
+import { SNAPSHOT_IGNORED, SNAPSHOT_NOT_SOURCE } from './pcb-source-policy.ts';
 
 // JavaScript's $ also matches before a final newline; require the actual end, like Python fullmatch.
 const BOARD_ID = /^[A-Z0-9][A-Z0-9-]*$(?![\s\S])/;
@@ -72,7 +73,33 @@ export function pipeline(root: string, board: string): string | null {
   const path = joinPath(root, BOARDS, board, 'gate.json');
   if (!BOARD_ID.test(board) || !isFile(path)) return null;
   const name = get(jsonOf(path), 'pipeline');
-  return typeof name === 'string' && name && isFile(joinPath(root, name)) ? name : null;
+  if (typeof name !== 'string' || !name) return null;
+  const parts = name.split('/');
+  if (name.startsWith('/') || name.includes('\\') || name.includes('\0') || parts.some(part => !part || part === '.' || part === '..')) {
+    throw new PyError('ValueError', `build pipeline must be a repository-relative path: ${name}`);
+  }
+  if (parts.some(part => SNAPSHOT_IGNORED.has(part) || part.endsWith('.3dshapes') || part.startsWith('.pcb-adopt-')) || SNAPSHOT_NOT_SOURCE.has(extname(name))) {
+    throw new PyError('ValueError', `build pipeline is excluded from candidate snapshots: ${name}`);
+  }
+  const resolvedRoot = resolvePath(root);
+  const { project } = boardConfig(resolvedRoot, board);
+  const boardRoot = joinPath(resolvedRoot, BOARDS);
+  const owner = relativeTo(project, boardRoot).split('/')[0]!;
+  const selected = resolvePath(joinPath(resolvedRoot, name));
+  if (!isInside(selected, joinPath(resolvedRoot, 'tools')) && !isInside(selected, joinPath(boardRoot, owner))) {
+    throw new PyError('ValueError', `build pipeline is outside the board's candidate snapshot: ${name}`);
+  }
+  let current = resolvedRoot;
+  for (const part of parts) {
+    current = joinPath(current, part);
+    let stat;
+    try { stat = lstatSync(current); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw osError(error, current);
+    }
+    if (stat.isSymbolicLink()) throw new PyError('ValueError', `build pipeline may not contain symlinks: ${name}`);
+  }
+  return isFile(selected) ? name : null;
 }
 
 const after = (text: string, marker: string): string => {

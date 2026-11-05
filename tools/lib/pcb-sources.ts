@@ -5,14 +5,12 @@ import { chmodSync, copyFileSync, lstatSync, mkdirSync, readdirSync, statSync } 
 import { basename, dirname, extname } from 'node:path';
 import { sha256Text } from './fingerprint.ts';
 import { boardConfig, sha } from './pcb-workflow.ts';
+import { SNAPSHOT_IGNORED, SNAPSHOT_NOT_SOURCE } from './pcb-source-policy.ts';
 import { compare, jsonDumps, PyError } from './py-compat.mjs';
 import { isFile, isRelativeTo, joinPath, pathExists, relativeTo, resolvePath, textOf, withSuffix } from './py-path.ts';
 import { sameValue } from './py-values.ts';
 import { forms, type SExpr, type SList } from './sexpr.ts';
 
-const IGNORED = new Set(['.git', '.gate', '.claude', '.bench', '__pycache__', 'node_modules', 'fab', 'render', 'renders', 'reports',
-  'target']);   // target: cargo build output, not a source
-const NOT_SOURCE = new Set(['.pyc', '.step', '.stp', '.wrl', '.mp4', '.gif']);
 const REGISTRY_EVIDENCE = new Set(['evidence', 'datasheets']);
 const PROJECT_FILES = ['FOCUS.md', 'AGENTS.md', 'CLAUDE.md'];
 const SNAPSHOT_PROBE_MS = 20_000;
@@ -36,11 +34,11 @@ function walkSources(folder: string, root: string, board: string | null | undefi
   const names = readdirSync(folder).sort(compare);
   const folders = names.filter(name => isDirectoryEntry(joinPath(folder, name)));
   const registry = board && folder === joinPath(root, 'hardware-design/registry');
-  const kept = folders.filter(name => !IGNORED.has(name) && !name.endsWith('.3dshapes') && !(registry && REGISTRY_EVIDENCE.has(name)));
+  const kept = folders.filter(name => !SNAPSHOT_IGNORED.has(name) && !name.endsWith('.3dshapes') && !(registry && REGISTRY_EVIDENCE.has(name)));
   if (kept.some(name => isSymlink(joinPath(folder, name)))) throw new PyError('ValueError', `directory symlinks need an explicit snapshot dependency: ${folder}`);
   for (const name of names) {
     const path = joinPath(folder, name);
-    if (folders.includes(name) || name.startsWith('.pcb-adopt-') || NOT_SOURCE.has(extname(name)) || !isFile(path)) continue;
+    if (folders.includes(name) || name.startsWith('.pcb-adopt-') || SNAPSHOT_NOT_SOURCE.has(extname(name)) || !isFile(path)) continue;
     found.push(path);
   }
   for (const name of kept) walkSources(joinPath(folder, name), root, board, found);

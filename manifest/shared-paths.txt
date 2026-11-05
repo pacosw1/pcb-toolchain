@@ -250,6 +250,7 @@ tools/lib/pcb-routing-admission.test.ts
 tools/lib/pcb-routing-admission.ts
 tools/lib/pcb-runs.test.ts
 tools/lib/pcb-runs.ts
+tools/lib/pcb-source-policy.ts
 tools/lib/pcb-observe-cli.test.ts
 tools/lib/pcb-workflow.test.ts
 tools/lib/pcb-workflow.ts

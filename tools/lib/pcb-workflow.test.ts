@@ -162,6 +162,44 @@ test('pipeline needs a real script; operationCommand plans build, edit and route
   assert.throws(() => operationCommand(root, 'X', 'other'), /unknown candidate operation: other/);
 });
 
+test('build pipeline must be a source-bound regular script in a snapshotted tree', () => {
+  const outside = mkdtempSync(join(tmpdir(), 'pcb-build-outside-'));
+  try {
+    const external = join(outside, 'external.sh'); writeFileSync(external, 'echo outside');
+    put('tools/real.sh', 'echo inside');
+    put('tools/nested/real.sh', 'echo inside');
+    symlinkSync(external, join(root, 'tools/external.sh'));
+    symlinkSync(join(root, 'tools/real.sh'), join(root, 'tools/linked.sh'));
+    symlinkSync(join(root, 'tools/nested'), join(root, 'tools/linked-dir'));
+    for (const name of [external, '../outside.sh', 'tools/../outside.sh', 'tools\\outside.sh']) {
+      gate({ pipeline: name });
+      assert.throws(() => operationCommand(root, 'X', 'build'), /repository-relative/);
+    }
+    for (const name of ['tools/external.sh', 'tools/linked.sh', 'tools/linked-dir/real.sh']) {
+      gate({ pipeline: name });
+      assert.throws(() => operationCommand(root, 'X', 'build'), /symlink|outside the board/);
+    }
+    put('tools/node_modules/build.sh', 'echo excluded');
+    put('tools/target/build.sh', 'echo excluded');
+    put('tools/build.pyc', 'echo excluded');
+    for (const name of ['tools/node_modules/build.sh', 'tools/target/build.sh', 'tools/build.pyc']) {
+      gate({ pipeline: name });
+      assert.throws(() => operationCommand(root, 'X', 'build'), /excluded from candidate snapshots/);
+    }
+    put('scripts/build.sh', 'echo not snapshotted');
+    gate({ pipeline: 'scripts/build.sh' });
+    assert.throws(() => operationCommand(root, 'X', 'build'), /outside the board.*snapshot/);
+  } finally { rmSync(outside, { recursive: true, force: true }); }
+});
+
+test('a registered sibling revision may use the owning board source tree', () => {
+  put('hardware-design/registry/boards.json', JSON.stringify({ boards: [{ id: 'X', directory: 'X', revisions: [{ revision: 'B', gate: 'X-B', project: 'cad/X-B/X-B' }] }] }));
+  put('hardware-design/boards/X-B/gate.json', JSON.stringify({ project: '../X/cad/X-B/X-B', stage: 'G3', checks: { erc: true }, pipeline: 'hardware-design/boards/X/build-revision.sh' }));
+  put('hardware-design/boards/X/build-revision.sh', 'echo source-bound');
+  assert.equal(pipeline(root, 'X-B'), 'hardware-design/boards/X/build-revision.sh');
+  assert.deepEqual(operationCommand(root, 'X-B', 'build'), ['sh', 'hardware-design/boards/X/build-revision.sh']);
+});
+
 test('pythonNative prefers KICAD_PYTHON, then KICAD_PY', () => {
   assert.equal(pythonNative({ KICAD_PYTHON: 'a', KICAD_PY: 'b' }), 'a');
   assert.equal(pythonNative({ KICAD_PY: 'b' }), 'b');
