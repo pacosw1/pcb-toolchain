@@ -538,7 +538,6 @@ tools/pq_cadlib.py
 tools/project_root.py
 tools/publish-release.mjs
 tools/real_board_regression.py
-tools/refresh_courtyards.py
 tools/refresh_courtyards.ts
 tools/release-native.Dockerfile
 tools/release-recipe.mjs
@@ -547,7 +546,6 @@ tools/remote-route-fr241.Dockerfile
 tools/remote-route-nightly.Dockerfile
 tools/remote-route.Dockerfile
 tools/remote.sh
-tools/render_with_plugs.py
 tools/render_with_plugs.ts
 tools/requirements-gerbercheck.txt
 tools/rf_lines.ts
@@ -880,8 +878,6 @@ tools/test_pin_escape_flow.py
 tools/test_placement_outcomes.py
 tools/test_project_root.py
 tools/test_real_board_regression.py
-tools/test_refresh_courtyards.py
-tools/test_render_with_plugs.py
 tools/test_route_decision.py
 tools/test_route_hole_coverage.py
 tools/test_route_native_thermals.py
