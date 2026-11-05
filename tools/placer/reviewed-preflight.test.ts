@@ -42,7 +42,14 @@ test('staged producer checks population and never treats preflight as approval',
  put('model.json',JSON.stringify({units,board:{outline},board_file:core.native,engineering}));
  const bin=join(root,'stub');writeFileSync(bin,'#!/bin/sh\nexit 3\n');chmodSync(bin,0o700);
  assert.equal(preflightSnapshot(root,project,join(root,'model.json'),bin),3);
- if (process.env.IOTPLACE_BIN) assert.equal(preflightSnapshot(root,project,join(root,'model.json'),process.env.IOTPLACE_BIN),3);
+ if (process.env.IOTPLACE_BIN) {
+   assert.equal(preflightSnapshot(root,project,join(root,'model.json'),process.env.IOTPLACE_BIN),3);
+   if (process.env.IOTPLACE_TEST_PDFINFO) {
+     const tool=process.env.IOTPLACE_TEST_PDFINFO;
+     assert.throws(()=>preflightSnapshot(root,project,join(root,'model.json'),process.env.IOTPLACE_BIN!,
+       {path:tool,sha256:sha256(readFileSync(tool))}),/native preflight rejected/);
+   }
+ }
  const model=JSON.parse(readFileSync(join(root,'model.json'),'utf8'));
  model.engineering.geometry.refs.U1.origin=[999,999];
  put('model.json',JSON.stringify(model));

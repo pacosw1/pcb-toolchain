@@ -31,7 +31,7 @@ struct Args {
     params: Vec<String>,
 }
 
-const VALUE_OPTIONS: [&str; 11] = ["--workers", "--epochs", "--steps", "--seed", "--top", "--sigma", "--nets", "--pose", "--engineering-frozen-model-sha256", "--native-population", "--snapshot-root"];
+const VALUE_OPTIONS: [&str; 13] = ["--workers", "--epochs", "--steps", "--seed", "--top", "--sigma", "--nets", "--pose", "--engineering-frozen-model-sha256", "--native-population", "--snapshot-root", "--pdfinfo", "--pdfinfo-sha256"];
 
 fn parse_args(argv: &[String]) -> iotplace::Result<Args> {
     let mut a = Args::default();
@@ -200,7 +200,16 @@ fn dispatch(argv: &[String]) -> iotplace::Result<ExitCode> {
             let population: Option<Value> = args.options.iter().rev().find(|(f,_)| f == "--native-population")
                 .map(|(_, path)| -> iotplace::Result<Value> { Ok(serde_json::from_slice(&std::fs::read(path)?)?) }).transpose()?;
             if let Some((_, root)) = args.options.iter().rev().find(|(f,_)| f == "--snapshot-root") {
-                iotplace::source_preflight::preflight_snapshot(&problem, Path::new(root), population.as_ref())?;
+                let tool = args.options.iter().rev().find(|(f,_)| f == "--pdfinfo").map(|(_,v)| v.as_str());
+                let hash = args.options.iter().rev().find(|(f,_)| f == "--pdfinfo-sha256").map(|(_,v)| v.as_str());
+                let inspector = match (tool,hash) {
+                    (Some(t),Some(h)) => Some((Path::new(t),h)),
+                    (None,None) => None,
+                    _ => return Err("--pdfinfo and --pdfinfo-sha256 must be supplied together".into()),
+                };
+                iotplace::source_preflight::preflight_snapshot_with_pdf(&problem, Path::new(root), population.as_ref(), inspector)?;
+            } else if args.options.iter().any(|(f,_)| f == "--pdfinfo" || f == "--pdfinfo-sha256") {
+                return Err("PDF inspection requires --snapshot-root".into());
             } else if let Some(population) = &population {
                 iotplace::source_preflight::preflight_with_native(&problem, population)?;
             } else {

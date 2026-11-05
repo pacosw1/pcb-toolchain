@@ -15,7 +15,8 @@ function inside(root: string, file: string): string {
   return path;
 }
 /** Rust's status 3 means partial checks passed; it is never an approval. */
-export function preflightSnapshot(snapshotArg: string, project: string, modelArg: string, rustBin: string): number {
+export function preflightSnapshot(snapshotArg: string, project: string, modelArg: string, rustBin: string,
+  inspector?: {path:string; sha256:string}): number {
   const snapshot = realpathSync(snapshotArg);
   const modelPath = inside(snapshot,modelArg);
   const model = JSON.parse(readFileSync(modelPath,'utf8'));
@@ -52,7 +53,9 @@ export function preflightSnapshot(snapshotArg: string, project: string, modelArg
   try {
     const nativeFile=join(scratch,'population.json');
     writeFileSync(nativeFile,JSON.stringify(native));
-    const run=spawnSync(rustBin,['review-preflight',modelPath,'--snapshot-root',snapshot,'--native-population',nativeFile],{stdio:'inherit'});
+    const args=['review-preflight',modelPath,'--snapshot-root',snapshot,'--native-population',nativeFile];
+    if (inspector) args.push('--pdfinfo',inspector.path,'--pdfinfo-sha256',inspector.sha256);
+    const run=spawnSync(rustBin,args,{stdio:'inherit'});
     if (run.error) throw run.error;
     if (run.status !== 3) throw new Error('native preflight rejected or did not report incomplete verification');
     return 3;
@@ -60,9 +63,10 @@ export function preflightSnapshot(snapshotArg: string, project: string, modelArg
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const [snapshot,project,model,bin] = process.argv.slice(2);
+  const [snapshot,project,model,bin,pdfinfo,pdfinfoHash] = process.argv.slice(2);
   try {
     if (!snapshot || !project || !model || !bin) throw new Error('usage: reviewed-preflight SNAPSHOT PROJECT MODEL IOTPLACE');
-    process.exitCode=preflightSnapshot(snapshot,project,model,bin);
+    if (!!pdfinfo !== !!pdfinfoHash) throw new Error('PDF inspector path and hash must be supplied together');
+    process.exitCode=preflightSnapshot(snapshot,project,model,bin,pdfinfo ? {path:pdfinfo,sha256:pdfinfoHash} : undefined);
   } catch (error) {console.error(`reviewed preflight: ${error instanceof Error ? error.message : String(error)}`); process.exitCode=1;}
 }

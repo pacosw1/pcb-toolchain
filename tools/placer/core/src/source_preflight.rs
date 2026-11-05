@@ -289,10 +289,10 @@ mod rating_tests {
 /// The caller must treat success as partial evidence only.
 pub fn preflight(problem: &Value) -> crate::Result<()> {
     check_payload_bindings(problem)?;
-    preflight_relocated(problem)
+    preflight_relocated(problem, None)
 }
 
-fn preflight_relocated(problem: &Value) -> crate::Result<()> {
+fn preflight_relocated(problem: &Value, inspector: Option<(&Path, &str)>) -> crate::Result<()> {
     let contract = problem.get("engineering").ok_or("reviewed contract missing")?;
     if contract.get("schema").and_then(Value::as_str) != Some("iot-lab.engineering-constraints.v1") {
         return Err("unsupported reviewed contract schema".into());
@@ -307,7 +307,7 @@ fn preflight_relocated(problem: &Value) -> crate::Result<()> {
     let path = owned(&root, contract["manifest"].as_str().ok_or("reviewed manifest missing")?)?;
     let manifest: Value = serde_json::from_slice(&std::fs::read(path)?)?;
     check_rating_ranges(&manifest)?;
-    check_manifest_sources(contract, &manifest)?;
+    check_manifest_sources(contract, &manifest, inspector)?;
     check_rule_sources(contract, &manifest)?;
     // Recheck after evaluation to catch changed source files.
     check_inputs(contract)?;
@@ -533,6 +533,12 @@ pub fn preflight_with_native(problem: &Value, population: &Value) -> crate::Resu
 /// Check a relocated immutable snapshot while retaining fingerprint validation against
 /// the original model bytes. Snapshot source authenticity remains the caller's responsibility.
 pub fn preflight_snapshot(problem: &Value, snapshot_root: &Path, population: Option<&Value>) -> crate::Result<()> {
+    preflight_snapshot_with_pdf(problem, snapshot_root, population, None)
+}
+
+/// Like `preflight_snapshot`, additionally checks actual pages with a pinned inspector.
+pub fn preflight_snapshot_with_pdf(problem: &Value, snapshot_root: &Path, population: Option<&Value>,
+    inspector: Option<(&Path, &str)>) -> crate::Result<()> {
     use std::path::Component;
     check_payload_bindings(problem)?;
     let root = problem["engineering"]["root"].as_str().ok_or("reviewed root missing")?;
@@ -563,7 +569,7 @@ pub fn preflight_snapshot(problem: &Value, snapshot_root: &Path, population: Opt
     relocated["engineering"]["native"] = native.into();
     relocated["engineering"]["manifest"] = manifest.into();
     relocated["engineering"]["inputs"] = Value::Object(inputs);
-    preflight_relocated(&relocated)?;
+    preflight_relocated(&relocated, inspector)?;
     if let Some(population) = population {
         let contract = &relocated["engineering"];
         let manifest_path = owned(&snapshot, contract["manifest"].as_str().ok_or("manifest missing")?)?;
@@ -576,7 +582,7 @@ pub fn preflight_snapshot(problem: &Value, snapshot_root: &Path, population: Opt
 
 /// Verify manifest evidence references are owned, present in the bound input set,
 /// and unchanged. PDF page existence and native facts still require separate checks.
-fn check_manifest_sources(contract: &Value, manifest: &Value) -> crate::Result<()> {
+fn check_manifest_sources(contract: &Value, manifest: &Value, inspector: Option<(&Path, &str)>) -> crate::Result<()> {
     let root = Path::new(contract["root"].as_str().ok_or("reviewed root missing")?).canonicalize()?;
     let inputs = contract["inputs"].as_object().ok_or("reviewed inputs missing")?;
     let mut sources = std::collections::BTreeMap::new();
@@ -593,7 +599,8 @@ fn check_manifest_sources(contract: &Value, manifest: &Value) -> crate::Result<(
         }
         let is_pdf = pdf || path.extension().and_then(|s| s.to_str()).is_some_and(|s| s.eq_ignore_ascii_case("pdf"));
         if is_pdf {
-            if v["page"].as_u64().is_none_or(|p| p == 0) { return Err("PDF page locator missing".into()); }
+            let page = v["page"].as_u64().filter(|p| *p != 0).ok_or("PDF page locator missing")?;
+            if let Some((tool,hash)) = inspector { verify_pdf_page(&path, page, tool, hash)?; }
         } else if v["section"].as_str().is_none_or(|s| s.trim().is_empty()) {
             return Err("evidence section locator missing".into());
         }
@@ -638,6 +645,15 @@ fn check_manifest_sources(contract: &Value, manifest: &Value) -> crate::Result<(
         }
         for dep in part["assembly_dependencies"].as_array().ok_or("assembly dependencies missing")? {source(&dep["source"],false)?;}
     }
+    if let Some((tool,hash)) = inspector {
+        for rule in contract["rules"].as_array().ok_or("reviewed rules missing")? {
+            let source = &rule["source"];
+            let path = owned(&root, source["path"].as_str().ok_or("rule source missing")?)?;
+            if path.extension().and_then(|s| s.to_str()).is_some_and(|s| s.eq_ignore_ascii_case("pdf")) {
+                verify_pdf_page(&path, source["page"].as_u64().ok_or("rule page missing")?, tool, hash)?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -661,9 +677,14 @@ mod evidence_source_tests {
         let manifest = json!({"spec":spec,"review":{"evidence":review},"parts":[{"datasheets":[doc.clone()],
             "ratings":[{"limit":{"source":doc},"required":{"source":spec},"conditions":[]}],"assembly_dependencies":[]}]});
         let contract = json!({"root":root,"board":"X","inputs":{"hardware-design/boards/X/spec.md":h(b"spec"),"review.md":h(b"review"),"doc.pdf":h(b"pdf")}});
-        assert!(check_manifest_sources(&contract,&manifest).is_ok());
+        assert!(check_manifest_sources(&contract,&manifest,None).is_ok());
+        if let Ok(tool) = std::env::var("IOTPLACE_TEST_PDFINFO") {
+            let tool = Path::new(&tool).canonicalize().unwrap();
+            let hash = format!("{:x}",Sha256::digest(std::fs::read(&tool).unwrap()));
+            assert!(check_manifest_sources(&contract,&manifest,Some((&tool,&hash))).is_err());
+        }
         std::fs::write(root.join("doc.pdf"),b"changed").unwrap();
-        assert!(check_manifest_sources(&contract,&manifest).is_err());
+        assert!(check_manifest_sources(&contract,&manifest,None).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 }
