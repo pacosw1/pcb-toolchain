@@ -4,7 +4,7 @@
 small model and scores new source inputs. It shares the CLI supervisor, run IDs,
 streamed events, timeouts, cleanup and artifact seals. All outputs are advisory.
 Training and prediction do not change CAD, enable the old CNN surrogate or
-authorise model adoption. Numeric work uses Python's standard library; collecting
+authorise model adoption. Numeric work is plain TypeScript with no dependencies; collecting
 native/router observations still requires the normal controlled toolchain.
 
 ## Run the complete path
@@ -258,7 +258,7 @@ Models are JSON, contain their training lineage and bind logical implementation
 hashes. Deploying a model needs current matching code and new feature sources;
 the original training directory and Python executable path need not exist.
 
-`pcb_ml_data.py` and `pcb_ml_models.py` also expose the reusable numeric contract
+`pcb_ml_data.ts` and `pcb_ml_models.ts` also expose the reusable numeric contract
 for another narrowly scoped, evidence-backed adapter. Add its pre-decision
 features, source verifier and meaningful labels before adding model complexity.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Host-side advisory ML artifacts. The Python entry point stays until its callers move; this path never invokes Python.
+// Host-side advisory ML artifacts. Runs under the owned supervisor: tools/pcb ml.
 import { lstatSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';

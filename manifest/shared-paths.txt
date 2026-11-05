@@ -243,6 +243,7 @@ tools/lib/pcb-check-durable.ts
 tools/lib/pcb-check-start.ts
 tools/lib/pcb-check-supervisor.test.ts
 tools/lib/pcb-identity.ts
+tools/lib/pcb-ml-supervisor.test.ts
 tools/lib/pcb-next.test.ts
 tools/lib/pcb-next.ts
 tools/lib/pcb-next-readers.ts
@@ -336,20 +337,15 @@ tools/pcb_benchmark.py
 tools/pcb_cli.py
 tools/pcb_cycle.py
 tools/pcb_evidence.py
-tools/pcb_ml.py
 tools/pcb_ml.ts
-tools/pcb_ml_adapters.py
 tools/pcb_ml_adapters.test.ts
 tools/pcb_ml_adapters.ts
 tools/pcb_ml_baseline.fixture.json
-tools/pcb_ml_data.py
 tools/pcb_ml_data.test.ts
 tools/pcb_ml_data.ts
-tools/pcb_ml_features.py
 tools/pcb_ml_features.test.ts
 tools/pcb_ml_features.ts
 tools/pcb_ml_json.ts
-tools/pcb_ml_models.py
 tools/pcb_ml_models.test.ts
 tools/pcb_ml_models.ts
 tools/pcb_ml_numeric.ts
@@ -420,7 +416,6 @@ tools/pdftext.swift
 tools/pin-ratings.json
 tools/pin_escape_flow.py
 tools/pixel-art.py
-tools/placement_outcomes.py
 tools/placement_outcomes.ts
 tools/placer/README.md
 tools/placer/__init__.py
@@ -866,11 +861,6 @@ tools/test_pcb_cycle.py
 tools/test_pcb_engineering.py
 tools/test_pcb_iotroute.py
 tools/test_pcb_lifecycle.py
-tools/test_pcb_ml_adapters.py
-tools/test_pcb_ml_backend.py
-tools/test_pcb_ml_cli.py
-tools/test_pcb_ml_data.py
-tools/test_pcb_ml_models.py
 tools/test_pcb_next.py
 tools/test_pcb_search_block_bindings.py
 tools/test_pcb_search_native.py
@@ -883,7 +873,6 @@ tools/test_pcb_workflow.py
 tools/test_pcbtool.py
 tools/test_physical_current.py
 tools/test_pin_escape_flow.py
-tools/test_placement_outcomes.py
 tools/test_project_root.py
 tools/test_real_board_regression.py
 tools/test_route_decision.py

@@ -12,7 +12,7 @@ import { gateOutcome, type Finding } from './lib/pcb-gate-outcome.ts';
 import { CheckJournal, type Row } from './lib/pcb-check-journal.ts';
 import { sha } from './lib/pcb-workflow.ts';
 import { MeasuredSpan } from './lib/timing.ts';
-import { producer, outcome as outcomeEvidence, schematic as schematicEvidence, design as designEvidence, parts as partsEvidence, routing as routingEvidence, placement as placementEvidence, placementRequested } from './lib/pcb-outcomes-binding.ts';
+import { observationEvidence, OBSERVATIONS, producer, requestedInputs, type Requested } from './lib/pcb-outcomes-binding.ts';
 
 interface Manifest extends Row { root: string; board: string; command: string[]; timeout_s: number; heartbeat_s: number; created_at: string; operation: string; gate_config_sha256: string }
 type Preliminary = Row & { status: string; exit_code: number; cause: string };
@@ -20,7 +20,7 @@ const nothing = (): Cleanup => ({ complete: true, errors: [], child_reaped: true
 
 async function worker(folderPath: string): Promise<number> {
   const folder = resolve(folderPath), manifest = readObject<Manifest>(join(folder, 'run.json'));
-  if (!['check', 'doctor', 'readiness', 'blocks', 'outcomes', 'schematic', 'design', 'parts', 'routing', 'placement'].includes(manifest.operation) || !Array.isArray(manifest.command) || manifest.command.length === 0
+  if ((!['check', 'doctor', 'readiness', 'blocks'].includes(manifest.operation) && !OBSERVATIONS.has(manifest.operation)) || !Array.isArray(manifest.command) || manifest.command.length === 0
       || !Number.isFinite(manifest.timeout_s) || manifest.timeout_s <= 0 || !Number.isFinite(manifest.heartbeat_s) || manifest.heartbeat_s <= 0)
     throw new Error('invalid check manifest');
   if (process.env.IOT_PCB_WORKER_LOCK !== join(folder, 'worker.lock') || !process.env.IOT_LEAN_STAGE_HANDLE)
@@ -54,7 +54,7 @@ async function worker(folderPath: string): Promise<number> {
       if (rows.length < 1000) break;
     }
   };
-  let requestedPlacement: ReturnType<typeof placementRequested> | undefined;
+  let requested: Requested | undefined;
   let log = -1;
   let outcomeBinding: Record<string, string> | undefined;
   try {
@@ -66,8 +66,10 @@ async function worker(folderPath: string): Promise<number> {
         throw new Error('configured gate changed after check admission');
       if (manifest.operation !== 'check') mkdirSync(join(folder, 'operation'), { recursive: true });
       log = openSync(join(folder, manifest.operation !== 'check' ? `operation/${manifest.operation}.log` : 'gate.log'), 'w');
-      if ((manifest.operation === 'outcomes' || manifest.operation === 'schematic' || manifest.operation === 'design' || manifest.operation === 'parts' || manifest.operation === 'routing' || manifest.operation === 'placement')) outcomeBinding = producer(manifest.root, process.execPath);
-      if (manifest.operation === 'placement') requestedPlacement = placementRequested(manifest.root, manifest.arguments as string[]);
+      if (OBSERVATIONS.has(manifest.operation)) {
+        outcomeBinding = producer(manifest.root, process.execPath);
+        requested = await requestedInputs(manifest.operation, manifest.root, manifest.arguments as string[]);
+      }
       const env = { ...process.env, IOT_LEAN_DEADLINE: encodeDeadline(deadline) };
       proc = startOwned(manifest.command, { cwd: manifest.root, env, stdin: 'ignore', stdout: log, stderr: log });
       let heartbeat = now();
@@ -91,7 +93,7 @@ async function worker(folderPath: string): Promise<number> {
             drain(); result = { ...gateOutcome(folder, outcome.returncode, gateEnded, findings) };
           } else {
             const code = outcome.returncode;
-            result = manifest.operation === 'placement' ? placementEvidence(folder, manifest.root, manifest.board, manifest.arguments as string[], manifest.from_run as { folder: string; result_sha256: string } | undefined, code, outcomeBinding!, requestedPlacement!) as Preliminary : manifest.operation === 'routing' ? routingEvidence(folder, manifest.root, manifest.board, manifest.from_run as { folder: string; result_sha256: string } | undefined, code, outcomeBinding!) as Preliminary : manifest.operation === 'parts' ? partsEvidence(folder, manifest.root, manifest.board, manifest.arguments as string[], manifest.from_run as { folder: string; result_sha256: string } | undefined, code, outcomeBinding!) as Preliminary : manifest.operation === 'design' ? designEvidence(folder, manifest.root, String(manifest.design_id), String(manifest.design_stage), manifest.design_contract as { path: string; sha256: string }, code, outcomeBinding!) as Preliminary : manifest.operation === 'schematic' ? schematicEvidence(folder, manifest.root, manifest.board, code, outcomeBinding!) as Preliminary : manifest.operation === 'outcomes' ? outcomeEvidence(folder, manifest.root, String((manifest.arguments as string[])[1]), code, outcomeBinding!) as Preliminary : { status: code === 0 ? 'passed' : code === 2 ? 'error' : 'failed', exit_code: code === 0 ? 0 : code === 2 ? 2 : 1,
+            result = OBSERVATIONS.has(manifest.operation) ? observationEvidence(folder, manifest, code, outcomeBinding!, requested) as Preliminary : { status: code === 0 ? 'passed' : code === 2 ? 'error' : 'failed', exit_code: code === 0 ? 0 : code === 2 ? 2 : 1,
               cause: manifest.operation + (code === 0 ? ' completed' : ' failed; inspect original tool evidence'), scope: manifest.operation === 'doctor' ? 'environment' : manifest.operation === 'blocks' ? 'block_evidence' : 'assembly_readiness', operation: manifest.operation, tool_exit: code, artifact_directory: null };
             atomicJson(join(folder, 'operation/result.json'), result);
           }

@@ -27,7 +27,6 @@ OBSERVATION_BACKENDS = {
     'design': ('design_contract.py', 'design_assessment'),
     'schematic': ('schematic_contract.py', 'schematic_function'),
     'outcomes': ('placement_outcomes.py', 'placement_outcomes'),
-    'ml': ('pcb_ml.py', 'ml_observation'),
 }
 
 
@@ -360,34 +359,11 @@ def run(folder):
         output = folder / 'operation/report.json'
         from pcb_observation_inputs import collect, current
         python_command = os.environ.get('PYTHON_MODERN', 'python3')
-        if operation == 'ml' and manifest['arguments'][0].startswith('engine-'):
-            python_command = os.environ.get('PCB_ENGINE_ML_PYTHON', python_command)
         policy_operation = operation + '-from-run' if manifest.get('from_run') else operation
         implementation = collect(root, policy_operation, manifest['arguments'], python_command=python_command)
         observed_inputs = dict(implementation['files'])
         absent = list(implementation['absent'])
         ml_absent = set()
-        if operation == 'ml':
-            from pcb_ml import dependencies
-            declared = dependencies(backend_root, manifest['arguments'])
-            if not isinstance(declared, dict):
-                raise ValueError('ML dependency collector must return a file/hash mapping')
-            for name, digest in declared.items():
-                path = (backend_root / name).absolute()
-                if digest is None:
-                    if path.exists() or path.is_symlink():
-                        raise ValueError('declared absent ML input appeared: ' + str(path))
-                    ml_absent.add(str(path))
-                    absent.append(str(path))
-                else:
-                    resolved = str(path.resolve())
-                    if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
-                        raise ValueError('ML dependency collector returned an invalid input hash')
-                    if not path.is_file() or sha(path) != digest:
-                        raise ValueError('ML input changed before backend execution: ' + str(path))
-                    if resolved in observed_inputs and observed_inputs[resolved] != digest:
-                        raise ValueError('ML input differs from its implementation binding: ' + str(path))
-                    observed_inputs[resolved] = digest
         for key in ('design_contract',):
             if manifest.get(key):
                 binding = manifest[key]
@@ -417,26 +393,6 @@ def run(folder):
                 raise ValueError('schematic assessment belongs to another board')
             if operation == 'outcomes' and report.get('study_id') != manifest['arguments'][1]:
                 raise ValueError('outcome assessment belongs to another study')
-            if operation == 'ml':
-                if (report.get('action'), report.get('id')) != tuple(manifest['arguments'][:2]):
-                    raise ValueError('ML assessment belongs to another action or ID')
-                if report.get('adopt_model') is not False or code not in (0, 1, 2):
-                    raise ValueError('ML assessment must remain non-adopting with a valid exit')
-                if report['status'] == 'passed' and ml_absent:
-                    raise ValueError('ML assessment passed with an absent requested input')
-                for key in ('inputs', 'tool_inputs', 'artifacts'):
-                    if not isinstance(report.get(key), dict) or any(
-                            not isinstance(value, str) or not re.fullmatch(r'[0-9a-f]{64}', value)
-                            for value in report[key].values()):
-                        raise ValueError('ML assessment has an invalid ' + key + ' inventory')
-                if report['status'] == 'passed' and not report['artifacts']:
-                    raise ValueError('passed ML assessment has no owned output artifact')
-                for name, digest in report['artifacts'].items():
-                    path = (output.parent / name).absolute()
-                    if (path.is_symlink() or not path.resolve().is_relative_to(output.parent.resolve())
-                            or path.resolve() in (output.resolve(), (output.parent / 'result.json').resolve())
-                            or not path.is_file() or sha(path) != digest):
-                        raise ValueError('ML artifact is missing, changed or outside its owned operation: ' + name)
         for key in ('inputs', 'native_inputs', 'tool_inputs', 'source_inputs', 'implementation_sha256', 'evidence_sha256'):
             for name, digest in report.get(key, {}).items():
                 if isinstance(digest, str) and len(digest) == 64:
@@ -466,9 +422,6 @@ def run(folder):
                       engineering_status=(report or {}).get('status'), engineering_inputs=observed_inputs,
                       engineering_absent_inputs=sorted(set(absent)), engineering_policy=implementation['policy'],
                       qualified=False, release_approved=False)
-        if operation == 'ml':
-            result.update(adopt_model=False, ml_action=report['action'], ml_id=report['id'],
-                          artifacts=report['artifacts'])
         lean.atomic_json(folder / 'operation/result.json', result)
         return result['exit_code']
     if operation in ('doctor', 'release', 'blocks', 'readiness'):

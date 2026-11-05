@@ -30,7 +30,7 @@ import project_root
 ROOT = project_root.root().resolve()
 TERMINAL = {'passed', 'failed', 'error', 'cancelled', 'timeout'}
 RUN_ID = re.compile(r'run-[A-Za-z0-9_-]+\Z')
-OBSERVATIONS = ('parts', 'placement', 'routing', 'design', 'schematic', 'outcomes', 'ml')
+OBSERVATIONS = ('parts', 'placement', 'routing', 'design', 'schematic', 'outcomes')
 # route-dispatch's bound on a job daemon queue wait, its reason there; PCB_QUEUE_WAIT_S tunes both.
 QUEUE_WAIT_S = 300
 QUEUE_CLOCK = 'operation/queue-wait.json'

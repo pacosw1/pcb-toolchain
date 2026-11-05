@@ -13,7 +13,7 @@ import { parentCandidate } from './pcb-candidate.ts';
 import { verify } from './pcb-evidence.ts';
 import { holdLock } from './file-lock.ts';
 
-export interface CheckOptions { root: string; base: string; board: string; operation?: 'check' | 'doctor' | 'readiness' | 'blocks' | 'outcomes' | 'schematic' | 'design' | 'parts' | 'routing' | 'placement'; fromRun?: string; arguments?: string[]; timeout: number; heartbeat: number; changed?: boolean; fresh?: boolean; baseline?: string; cycle?: string }
+export interface CheckOptions { root: string; base: string; board: string; operation?: 'check' | 'doctor' | 'readiness' | 'blocks' | 'outcomes' | 'schematic' | 'design' | 'parts' | 'routing' | 'placement' | 'ml'; fromRun?: string; arguments?: string[]; timeout: number; heartbeat: number; changed?: boolean; fresh?: boolean; baseline?: string; cycle?: string }
 
 function readDesign(args: string[]) {
   const option = (name: string) => { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : args.find(item => item.startsWith(name + '='))?.slice(name.length + 1); };
@@ -54,7 +54,7 @@ export async function startCheck(options: CheckOptions): Promise<string> {
   if (!node) throw new Error('Node.js is required to run the existing gate');
   mkdirSync(base, { recursive: true });
   const folder = mkdtempSync(join(base, 'run-'));
-  const board = operation === 'doctor' || operation === 'blocks' || operation === 'outcomes' || (operation === 'parts' && action === 'inspect') ? (cycleFolder ? read(join(cycleFolder, 'cycle.json')).board : operation === 'doctor' ? 'ENVIRONMENT' : operation === 'blocks' ? 'BLOCKS' : operation === 'parts' ? 'PARTS' : options.board)
+  const board = operation === 'doctor' || operation === 'blocks' || operation === 'outcomes' || operation === 'ml' || (operation === 'parts' && action === 'inspect') ? (cycleFolder ? read(join(cycleFolder, 'cycle.json')).board : operation === 'doctor' ? 'ENVIRONMENT' : operation === 'blocks' ? 'BLOCKS' : operation === 'parts' ? 'PARTS' : options.board)
     : operation === 'readiness' && !cycleFolder ? 'ASSEMBLY' : actualBoard;
   const designArgs = (options.arguments ?? []).map((arg, index, all) => design && all[index - 1] === '--contract' ? design.path : design && arg.startsWith('--contract=') ? '--contract=' + design.path : arg);
   const backendRoot = fromRun ? join(fromRun.folder, 'workspace') : root;
@@ -67,6 +67,7 @@ export async function startCheck(options: CheckOptions): Promise<string> {
     : operation === 'design' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/design_contract.ts'), ...designArgs, '--root', root, '--json', '--output', join(folder, 'operation/report.json')]
     : operation === 'schematic' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/schematic_contract.ts'), ...(options.arguments ?? []), '--root', root, '--json', '--output', join(folder, 'operation/report.json')]
     : operation === 'outcomes' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/placement_outcomes.ts'), ...(options.arguments ?? []), '--root', root, '--json', '--output', join(folder, 'operation/report.json')]
+    : operation === 'ml' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/pcb_ml.ts'), ...(options.arguments ?? []), '--root', root, '--json', '--output', join(folder, 'operation/report.json')]
     : [node, join(root, 'tools/gate.mjs'), board, '--evidence-dir', join(folder, 'gate')];
   if (options.changed) command.push('--changed');
   if (options.fresh) command.push('--fresh');
@@ -76,12 +77,12 @@ export async function startCheck(options: CheckOptions): Promise<string> {
     ...(design ? { design_id: design.id, design_stage: design.stage, design_contract: { path: design.path, sha256: design.hash, content: design.content } } : {}),
     ...(fromRun ? { from_run: fromRun } : {}),
     operation, node, gate_config_sha256: config ? sha(config) : null,
-    ...(['readiness', 'blocks', 'outcomes', 'schematic', 'design', 'parts', 'routing', 'placement'].includes(operation) ? { arguments: options.arguments ?? [] } : {}), ...(cycleFolder ? { cycle: basename(cycleFolder) } : {}) };
+    ...(['readiness', 'blocks', 'outcomes', 'schematic', 'design', 'parts', 'routing', 'placement', 'ml'].includes(operation) ? { arguments: options.arguments ?? [] } : {}), ...(cycleFolder ? { cycle: basename(cycleFolder) } : {}) };
   atomicJson(join(folder, 'run.json'), manifest);
   if (cycleFolder) await attach(cycleFolder, folder, { withLock: async (path, work) => {
     const lock = await holdLock(path, { waitS: 30 });
     try { return work(); } finally { await lock.release(); }
-  } }, operation === 'parts' && action === 'inspect' ? 'datasheets' : undefined);
+  } }, operation === 'parts' && action === 'inspect' ? 'datasheets' : operation === 'ml' ? 'verification' : undefined);
   atomicJson(join(folder, 'state.json'), { schema_version: 1, run_id: basename(folder), board,
     status: 'starting', seq: 0, updated_unix: Date.now() / 1000, elapsed_s: 0, active_stages: [] });
   const worker = fileURLToPath(new URL('../pcb-check-worker.ts', import.meta.url));

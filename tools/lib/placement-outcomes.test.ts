@@ -1,5 +1,5 @@
 // Evidence mutations, honest unknowns and controlled partition checks; no CAD jobs. The thermal services here are fakes:
-// tests that need the real native thermal proof stay in test_placement_outcomes.py until the routing family lands it.
+// the real proof is the route-coverage binary, tested with tools/route-coverage.
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
