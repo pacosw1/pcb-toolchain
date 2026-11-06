@@ -339,17 +339,42 @@ fn cancels_a_nested_helper(levels: usize, captured: bool, paused: bool) {
     }
 }
 
-/// True at end of file: no writer is left. Nonblocking, so a pipe still open fails the test instead of hanging it.
-fn closed(mut pipe: impl Read + AsRawFd) -> bool {
+/// True at end of file: no writer is left. A killed process can read as gone before the kernel closes its descriptors, so wait for the event.
+fn closed(pipe: impl Read + AsRawFd) -> bool {
+    closed_within(pipe, Duration::from_secs(10))
+}
+
+/// The limit makes a pipe still open fail the test instead of hanging it.
+fn closed_within(mut pipe: impl Read + AsRawFd, limit: Duration) -> bool {
     proto::native::set_nonblocking(pipe.as_raw_fd()).unwrap();
+    let deadline = Instant::now() + limit;
     let mut buffer = [0; 4096];
     loop {
+        let mut ready = libc::pollfd { fd: pipe.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+        let left = deadline.saturating_duration_since(Instant::now()).as_millis() as libc::c_int;
+        if unsafe { libc::poll(&mut ready, 1, left) } <= 0 {
+            return false;
+        }
         match pipe.read(&mut buffer) {
             Ok(0) => return true,
             Ok(_) => {}
             Err(_) => return false,
         }
     }
+}
+
+#[test]
+fn a_pipe_check_waits_for_a_writer_that_is_still_exiting() {
+    let (read, write) = proto::native::pipe().unwrap();
+    let mut writer = Command::new("/bin/sleep").arg("0.2").stdout(Stdio::from(write)).spawn().unwrap();
+    assert!(closed(fs::File::from(read)), "the last writer exits, so the pipe reaches end of file");
+    writer.wait().unwrap();
+}
+
+#[test]
+fn a_pipe_check_fails_while_a_writer_stays() {
+    let (read, _write) = proto::native::pipe().unwrap();
+    assert!(!closed_within(fs::File::from(read), Duration::ZERO));
 }
 
 #[test]
