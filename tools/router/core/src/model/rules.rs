@@ -57,11 +57,13 @@ fn reach(condition: &Selector, nets: &BTreeMap<String, Net>) -> Reach {
 
 /// Why the router cannot keep all of a rule that reaches a net, or None. A net has one width and one limit of each kind, so
 /// `applied` must not mean that part of the rule was thrown away.
-fn dropped_value(con: &Constraint, layer: Option<&str>) -> Option<String> {
+fn dropped_value(con: &Constraint, layer: Option<&str>, tune: bool) -> Option<String> {
     let kept: &[&str] = match con.kind.as_str() {
         "track_width" => return dropped_width(con, layer),
         "disallow" => return con.items.iter().find(|item| !DISALLOW_ITEMS.contains(&item.as_str())).map(|item| format!("disallow {item}: not an item type the router knows")),
         "hole_size" | "via_diameter" | "annular_width" => &["min"],
+        // the tuning stage (iotroute run --tune) lengthens a net short of the min; the route keeps the max
+        "length" if tune => &["min", "max"],
         "length" | "via_count" => &["max"],
         _ => return None,
     };
@@ -88,6 +90,7 @@ struct Context<'a> {
     nets: &'a mut BTreeMap<String, Net>,
     pair_nets: &'a BTreeSet<String>,
     plane_layers: &'a BTreeSet<String>,
+    tune: bool,
     out: RuleOutcome,
 }
 
@@ -124,7 +127,7 @@ impl Context<'_> {
     }
 
     fn via_rule(&mut self, rule: &Rule, con: &Constraint, reached: &Reach) -> Result<(), String> {
-        let lost = (!reached.hits.is_empty() || reached.unknown).then(|| dropped_value(con, rule.layer.as_deref())).flatten().or(reached.unknown.then(|| NOT_EVERY_NET.to_string()));
+        let lost = (!reached.hits.is_empty() || reached.unknown).then(|| dropped_value(con, rule.layer.as_deref(), self.tune)).flatten().or(reached.unknown.then(|| NOT_EVERY_NET.to_string()));
         for name in &reached.hits {
             let via = self.nets.get_mut(name).expect("a reached net").via.get_or_insert_with(NetVia::default);
             if let Some(min) = con.value("min") {
@@ -144,7 +147,7 @@ impl Context<'_> {
                 for name in &reached.hits {
                     self.keep_value(rule, con, name)?;
                 }
-                let lost = (!reached.hits.is_empty()).then(|| dropped_value(con, rule.layer.as_deref())).flatten().or(reached.unknown.then(|| NOT_EVERY_NET.to_string()));
+                let lost = (!reached.hits.is_empty()).then(|| dropped_value(con, rule.layer.as_deref(), self.tune)).flatten().or(reached.unknown.then(|| NOT_EVERY_NET.to_string()));
                 lost.map_or((RuleState::Applied, String::new()), |w| (RuleState::Unknown, w))
             }
             // The pair stage and the pair table answer for these; what reaches no net asks nothing of the router.
@@ -202,7 +205,10 @@ impl Context<'_> {
                 }
             }
             "via_count" => net.limits.via_count = value("max")?.or(net.limits.via_count),
-            "length" => net.limits.length = value("max")?.or(net.limits.length),
+            "length" => {
+                if self.tune { value("min")?; }
+                net.limits.length = value("max")?.or(net.limits.length);
+            }
             "disallow" => disallow(net, con, rule.layer.as_deref()),
             _ => {}
         }
@@ -241,7 +247,12 @@ fn disallow(net: &mut Net, con: &Constraint, layer: Option<&str>) {
 }
 
 pub fn apply_rules(rules: &[Rule], nets: &mut BTreeMap<String, Net>, pair_nets: &BTreeSet<String>, plane_layers: &BTreeSet<String>) -> Result<RuleOutcome, String> {
-    let mut context = Context { nets, pair_nets, plane_layers, out: RuleOutcome::default() };
+    apply_rules_with(rules, nets, pair_nets, plane_layers, false)
+}
+
+/// tune: a `length (min ...)` is applied for its max and left to the tuning stage for its min.
+pub fn apply_rules_with(rules: &[Rule], nets: &mut BTreeMap<String, Net>, pair_nets: &BTreeSet<String>, plane_layers: &BTreeSet<String>, tune: bool) -> Result<RuleOutcome, String> {
+    let mut context = Context { nets, pair_nets, plane_layers, tune, out: RuleOutcome::default() };
     for rule in rules {
         for con in &rule.constraints {
             context.apply(rule, con)?;
@@ -280,6 +291,25 @@ mod tests {
         assert_stops(r#"(rule "l" (condition "A.NetClass == 'ISO'") (constraint length (min 20mm) (max 30mm)))"#, "min");
         assert_stops(r#"(rule "c" (condition "A.NetClass == 'ISO'") (constraint via_count (min 1) (max 3)))"#, "min");
         assert_stops(r#"(rule "v" (condition "A.NetClass == 'ISO'") (constraint via_diameter (min 0.5mm) (max 0.7mm)))"#, "max");
+    }
+
+    #[test]
+    fn a_tuning_length_min_must_be_a_valid_distance() {
+        for min in ["bad", "-1mm", "12seconds"] {
+            let rules = parse_rules(&format!("(version 1) (rule l (constraint length (min {min}) (max 30mm)))")).unwrap();
+            let error = apply_rules_with(&rules, &mut nets(), &BTreeSet::new(), &BTreeSet::new(), true).err().expect("bad min must stop the model");
+            assert!(error.contains(min), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_length_min_is_admitted_only_for_the_tuning_stage() {
+        let rules = parse_rules(r#"(version 1)
+(rule "l" (condition "A.NetClass == 'ISO'") (constraint length (min 20mm) (max 30mm)))"#).unwrap();
+        let mut n = nets();
+        let out = apply_rules_with(&rules, &mut n, &BTreeSet::new(), &BTreeSet::new(), true).unwrap();
+        assert_eq!(out.report[0].state, RuleState::Applied);
+        assert_eq!(n["ISO1"].limits.length, Some(30.0));
     }
 
     #[test]

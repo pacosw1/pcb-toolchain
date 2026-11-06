@@ -1,4 +1,5 @@
-//! `iotroute model BOARD_DIR [--pcb FILE] [--out FILE] [--tools DIR] [--return-exempt]`: the route model of a board.
+//! `iotroute model BOARD_DIR [--pcb FILE] [--out FILE] [--tools DIR] [--return-exempt] [--tune]`: the route model of a board.
+//! --tune: a DRU `length (min ...)` is admitted for the tuning stage of `iotroute run --tune` (the router keeps the max).
 //!
 //! BOARD_DIR is hardware-design/boards/<BOARD>; gate.json or gate.pending.json names the project. The board comes through the
 //! pinned KiCad's API. The fill comes from a copy that KiCad 10 refilled, read the same way: fill stays on KiCad 10. The RP-001
@@ -21,13 +22,14 @@ struct Args {
     out: Option<PathBuf>,
     tools: PathBuf,
     return_exempt: bool,
+    tune: bool,
 }
 
 fn parse_args(args: &[String]) -> Result<Args, String> {
-    let usage = || "usage: iotroute model BOARD_DIR [--pcb FILE] [--out FILE] [--tools DIR] [--return-exempt]".to_string();
+    let usage = || "usage: iotroute model BOARD_DIR [--pcb FILE] [--out FILE] [--tools DIR] [--return-exempt] [--tune]".to_string();
     let mut it = args.iter();
     let board_dir = it.next().ok_or_else(usage)?.into();
-    let mut parsed = Args { board_dir, pcb: None, out: None, tools: PathBuf::from("tools"), return_exempt: false };
+    let mut parsed = Args { board_dir, pcb: None, out: None, tools: PathBuf::from("tools"), return_exempt: false, tune: false };
     while let Some(flag) = it.next() {
         let mut value = || it.next().map(PathBuf::from).ok_or_else(usage);
         match flag.as_str() {
@@ -35,6 +37,7 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
             "--out" => parsed.out = Some(value()?),
             "--tools" => parsed.tools = value()?,
             "--return-exempt" => parsed.return_exempt = true,
+            "--tune" => parsed.tune = true,
             _ => return Err(usage()),
         }
     }
@@ -99,7 +102,7 @@ fn run(args: &Args) -> Result<i32, String> {
     let fresh = if files.planes.adjacent.is_empty() { None } else { Some(refilled(&pcb, &files.project_base())?) };
     let nets: Vec<&String> = board.nets.keys().filter(|n| !n.starts_with("unconnected-(")).collect();
     let scope = files.gate.checks.happy_settings().map(|_| rp_scope(&project_pcb, &nets)).transpose()?;
-    let mut model = build(Inputs { board: &board, filled: fresh.as_ref().unwrap_or(&board), files: &files, ratings: &ratings, rp_scope: scope, return_exempt: args.return_exempt })?;
+    let mut model = build(Inputs { board: &board, filled: fresh.as_ref().unwrap_or(&board), files: &files, ratings: &ratings, rp_scope: scope, return_exempt: args.return_exempt, tune: args.tune })?;
     check_board(&mut model, &board, &fs::read_to_string(&pcb).map_err(|e| format!("{}: {e}", pcb.display()))?)?;
     let out = args.out.clone().unwrap_or_else(|| folder.join(".router/model.json"));
     if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) {

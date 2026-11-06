@@ -20,6 +20,8 @@ pub struct Constraint {
     pub values: BTreeMap<String, String>,
     /// The bare words after the kind: the item types of `disallow`.
     pub items: Vec<String>,
+    /// Options written as a one-word list: `(within_diff_pairs)` of `skew`.
+    pub flags: Vec<String>,
 }
 
 impl Constraint {
@@ -106,6 +108,10 @@ fn read_constraint(form: &Node) -> Result<Constraint, String> {
             _ => None,
         }).collect(),
         items: rest.iter().filter_map(Node::atom).map(str::to_string).collect(),
+        flags: rest.iter().filter_map(|n| match n.items() {
+            [Node::Atom(k)] => Some(k.clone()),
+            _ => None,
+        }).collect(),
     })
 }
 
@@ -146,6 +152,8 @@ mod tests {
         assert_eq!(rules[0].constraints[1].value("opt"), Some(Ok(0.2)));
         assert_eq!(rules[1].condition.text, "True");
         assert_eq!(rules[1].constraints[0].items, ["track", "via"]);
+        let skew = parse_rules("(version 1)\n(rule s (constraint skew (max 1mm) (within_diff_pairs)))").unwrap();
+        assert_eq!((skew[0].constraints[0].flags.as_slice(), skew[0].constraints[0].value("max")), (["within_diff_pairs".to_string()].as_slice(), Some(Ok(1.0))));
     }
 
     #[test]
