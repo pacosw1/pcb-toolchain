@@ -362,4 +362,6 @@ pub struct RefFill {
     pub via_allow: Num,
     pub layers: BTreeMap<String, RefLayer>,
     pub anchors: Vec<Anchor>,
+    /// The actual ground and eligible alternate references contributing to each domain.
+    pub references: BTreeMap<String, Vec<String>>,
 }

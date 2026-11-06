@@ -1,0 +1,107 @@
+{
+  "schema": "pcb.reachability-diagnosis-1433.v1",
+  "baseline_source": "558c6975765389ea1a2f4899bdbc4686ef489b67",
+  "scope": "solver/model regression and preserved-model pad access only",
+  "native_board_run": false,
+  "accepted_candidate": false,
+  "board_mutated": false,
+  "rules_or_thresholds_changed": false,
+  "grid_mm": 0.05,
+  "solver_epsilon_mm": 0.002,
+  "models": {
+    "pq": {
+      "original_sha256": "122defb8add4a8ae79c9241b674dab5d673fc2a78e7dba11d98dbecce4cbc659",
+      "reference_spec_sha256": "1423c8f8b92841da3817007c91b9d575479a3c7426bc8923a13a7855f3b7de1d",
+      "derived_sha256": "3a722b2baefd052fd9abbbc4e70bc2cf7756e28c78ac0370038653dd427cd3b9",
+      "changed_fields": [
+        "ref_fill.references"
+      ],
+      "references": {
+        "GND": [
+          "GND"
+        ]
+      },
+      "scope": "read-only pad-access diagnosis, not a routing or native board acceptance run"
+    },
+    "aio": {
+      "original_sha256": "9c4431cc321f5e1d99de03351a2ac524e2d81eef4a0c15df21baa6cfe85723c0",
+      "reference_spec_sha256": "52659ef28af453651832d3146da71c56853c17a8e899c7fadee47bea16a76001",
+      "derived_sha256": "7d10fab6b663cb0b5bc3c59190a855d8781121304e4de49c35595fde41adb5a8",
+      "changed_fields": [
+        "ref_fill.references"
+      ],
+      "references": {
+        "FIELD_0V": [
+          "FIELD_0V",
+          "AVSS",
+          "AVDD"
+        ],
+        "GND": [
+          "GND",
+          "SLOT_3V3"
+        ]
+      },
+      "scope": "read-only pad-access diagnosis, not a routing or native board acceptance run"
+    }
+  },
+  "pads": [
+    {
+      "board": "AIO",
+      "pad": "U8.3",
+      "net": "/DAC_ALARM",
+      "widths_mm": [
+        0.2
+      ],
+      "cells": 172,
+      "before_free": 0,
+      "after_free": 163
+    },
+    {
+      "board": "AIO",
+      "pad": "U8.7",
+      "net": "/LATCH",
+      "widths_mm": [
+        0.2
+      ],
+      "cells": 177,
+      "before_free": 0,
+      "after_free": 177
+    },
+    {
+      "board": "AIO",
+      "pad": "Q32.1",
+      "net": "/WD_OK",
+      "widths_mm": [
+        0.2
+      ],
+      "cells": 194,
+      "before_free": 0,
+      "after_free": 144
+    },
+    {
+      "board": "PQ",
+      "pad": "L2.2",
+      "net": "/BST_SW",
+      "widths_mm": [
+        0.5,
+        0.35
+      ],
+      "cells": 2502,
+      "before_free": 0,
+      "after_free": 2502
+    },
+    {
+      "board": "PQ",
+      "pad": "U12.5",
+      "net": "/BST_SW",
+      "widths_mm": [
+        0.5,
+        0.35
+      ],
+      "cells": 56,
+      "before_free": 0,
+      "after_free": 0
+    }
+  ],
+  "remaining": "PQ U12.5 still has zero legal cells and no escape stub under unchanged rules; no complete board route or native acceptance claimed"
+}

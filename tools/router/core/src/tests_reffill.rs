@@ -286,3 +286,87 @@ fn own_pour_sites_respect_keepout_holes_and_conservative_legacy_models() {
     let bd = load(&m, 0.28);
     assert!(!bd.in_plane(id(&bd,"GND"), 5., 10.), "explicit empty geometry must not fall back");
 }
+
+/// A zone's high-voltage rule belongs to that via net, not every low-voltage via.
+#[test]
+fn reference_via_clearance_is_scoped_to_the_via_net_in_both_insertion_orders() {
+    let mut m = model(true);
+    m["nets"]["HV"] = serde_json::json!({"class":"Default","layers":["F.Cu","B.Cu"],"clearance":0.15});
+    m["classes"]["UNRELATED"] = serde_json::json!({"clearance":9.0});
+    m["zones"] = serde_json::json!([{ "net":"GND","layer":"In1.Cu","clearance":0.2,"thermal_gap":0.3,"min_thickness":0.2,
+        "net_clearance":{"HV":{"via":8.0}} }]);
+    let mut bd = load(&m,0.28);
+    let (sig,low,high)=(id(&bd,"SIG"),id(&bd,"OTH"),id(&bd,"HV"));
+    let domain=bd.rfill.dom[sig];
+    assert!((bd.rfill.via_clearance_for(0,domain,Some(low))-0.5).abs()<1e-9);
+    assert!((bd.rfill.via_clearance_for(0,domain,Some(high))-8.2).abs()<1e-9);
+    for (via_net,blocked) in [(low,false),(high,true)] {
+        let v=bd.add(Shape {net:via_net as i32,geo:Geo::Circ(5.0,5.0,0.3),clr:bd.nets[via_net].clr,layers:0b111,
+            drill:0.3,kind:Kind::Via,owner:-1,alive:true,grp:0});
+        assert_eq!(bd.track_cost(sig,0,6.0,5.0,0.075,0.25,None)<0,blocked,"fixed via net {}",bd.nets[via_net].name);
+        bd.shapes[v].alive=false;
+        let v=bd.add(Shape {net:via_net as i32,geo:Geo::Circ(5.0,5.0,0.3),clr:bd.nets[via_net].clr,layers:0b111,
+            drill:0.3,kind:Kind::Via,owner:via_net as i32,alive:true,grp:0});
+        assert_eq!(bd.track_cost(sig,0,6.0,5.0,0.075,0.25,None)>0,blocked,"routed via net {}",bd.nets[via_net].name);
+        bd.shapes[v].alive=false;
+    }
+    bd.compact();
+    bd.add(Shape {net:sig as i32,geo:Geo::Seg(6.0,4.5,6.0,5.5,0.075),clr:0.15,layers:1,
+        drill:0.0,kind:Kind::Track,owner:-1,alive:true,grp:0});
+    // Both candidates share the same isolation/cache profile. Its conservative
+    // maximum must be rechecked for the low-voltage candidate, never cached as free for HV.
+    let cached=bd.via_fixed_code(5.0,5.0,0.6,0.3,0.15,0.45,true,bd.iv(low as i32));
+    assert!(blocks(cached,low as i32));
+    assert!(!bd.via_code_blocks(cached,low,5.0,5.0,0.6,0.3,0.45));
+    assert!(bd.via_code_blocks(cached,high,5.0,5.0,0.6,0.3,0.45));
+    assert_eq!(bd.via_cost(low,5.0,5.0,0.6,0.3,0.45,None),0);
+    assert!(bd.via_cost(high,5.0,5.0,0.6,0.3,0.45,None)<0);
+}
+
+#[test]
+fn mixed_reference_domains_do_not_share_unrelated_zone_via_rules() {
+    let mut m=model(true);
+    m["nets"]["FIELD_0V"]=serde_json::json!({"class":"Default","layers":["F.Cu","B.Cu"],"plane":true});
+    m["nets"]["SIG2"]["ref_domain"]=serde_json::json!("FIELD_0V");
+    m["ref_fill"]["layers"]["F.Cu"]["domains"]["FIELD_0V"]=m["ref_fill"]["layers"]["F.Cu"]["domains"]["GND"].clone();
+    m["ref_fill"]["references"]=serde_json::json!({"GND":["GND"],"FIELD_0V":["FIELD_0V"]});
+    m["zones"]=serde_json::json!([
+        {"net":"GND","layer":"In1.Cu","clearance":0.2,"thermal_gap":0.3,"min_thickness":0.2,"net_clearance":{"OTH":{"via":4.0}}},
+        {"net":"FIELD_0V","layer":"In1.Cu","clearance":0.2,"thermal_gap":0.3,"min_thickness":0.2,"net_clearance":{"GND":{"via":4.0}}}
+    ]);
+    let mut bd=load(&m,0.28);
+    let (host,field,other)=(id(&bd,"SIG"),id(&bd,"SIG2"),id(&bd,"OTH"));
+    assert!((bd.rfill.via_clearance_for(0,bd.rfill.dom[host],Some(other))-4.2).abs()<1e-9);
+    assert!((bd.rfill.via_clearance_for(0,bd.rfill.dom[field],Some(other))-0.5).abs()<1e-9);
+    bd.add(Shape {net:other as i32,geo:Geo::Circ(5.0,5.0,0.3),clr:0.15,layers:0b111,
+        drill:0.3,kind:Kind::Via,owner:-1,alive:true,grp:0});
+    assert!(bd.track_cost(host,0,6.0,5.0,0.075,0.25,None)<0);
+    assert_eq!(bd.track_cost(field,0,6.0,5.0,0.075,0.25,None),0);
+    assert_ne!(bd.pflags(host),bd.pflags(field),"fixed-copper memo profiles retain domain identity");
+    // Missing membership in an old model remains conservative rather than
+    // guessing alternate-reference eligibility or dropping an applicable rule.
+    m["ref_fill"].as_object_mut().unwrap().remove("references");
+    let legacy=load(&m,0.28);
+    assert!((legacy.rfill.via_clearance_for(0,legacy.rfill.dom[field],Some(other))-4.2).abs()<1e-9);
+}
+
+#[test]
+fn unrelated_zone_rule_does_not_make_a_selected_net_unreachable() {
+    let mut m=model(true);
+    m["pads"]=serde_json::json!([]);
+    m["zones"]=serde_json::json!([{ "net":"GND","layer":"In1.Cu","clearance":0.2,"thermal_gap":0.3,"min_thickness":0.2,
+        "net_clearance":{"SIG2":{"via":8.0}} }]);
+    let mut bd=load(&m,0.28);
+    let (sig,other)=(id(&bd,"SIG"),id(&bd,"OTH"));
+    bd.nets[sig].layers=1;
+    for x in [2.0,8.0] {bd.add(Shape {net:sig as i32,geo:Geo::Rect(x-0.3,4.8,x+0.3,5.2),clr:0.15,layers:1,
+        drill:0.0,kind:Kind::Pad,owner:-1,alive:true,grp:0});}
+    bd.add(Shape {net:other as i32,geo:Geo::Circ(5.0,7.0,0.3),clr:0.15,layers:0b111,
+        drill:0.3,kind:Kind::Via,owner:-1,alive:true,grp:0});
+    let o=super::tests_v6::opts();
+    let mut ctx=super::tests_v6::ctx_of(&mut bd,&o);
+    assert!(route_net(&mut ctx,sig).hard_fail.is_none(),"an unrelated 8 mm via rule must not wall in this selected net");
+    assert!(ctx.bd.shapes.iter().any(|s|s.alive&&s.kind==Kind::Track&&s.owner==sig as i32));
+    let audit=ctx.audit(0.0);
+    assert_eq!((audit.pairs,audit.hard),(0,0),"the route still obeys all modeled rules");
+}

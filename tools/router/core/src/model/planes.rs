@@ -212,6 +212,10 @@ pub fn reference_fill(board: &Board, filled: &Board, nets: &mut BTreeMap<String,
         return Ok(None);
     }
     let domains = assign_domains(board, nets, files);
+    let references = domains.iter().map(|(key, exempt)| {
+        let ground = exempt.as_ref().map_or(key.as_str(), |(ground, _)| ground.as_str());
+        (key.clone(), members(ground, planes).into_iter().map(str::to_string).collect())
+    }).collect();
     let mut layers = BTreeMap::new();
     for (outer, plane) in &planes.adjacent {
         let mut per = BTreeMap::new();
@@ -222,7 +226,7 @@ pub fn reference_fill(board: &Board, filled: &Board, nets: &mut BTreeMap<String,
         }
         layers.insert(outer.clone(), RefLayer { plane: plane.clone(), domains: per });
     }
-    Ok(Some(RefFill { source: SOURCE, via_allow: planes.via_allow_mm.unwrap_or(DEFAULT_VIA_ALLOW_MM), layers, anchors: anchors(board, nets) }))
+    Ok(Some(RefFill { source: SOURCE, via_allow: planes.via_allow_mm.unwrap_or(DEFAULT_VIA_ALLOW_MM), layers, anchors: anchors(board, nets), references }))
 }
 
 #[cfg(test)]
@@ -310,5 +314,25 @@ mod tests {
         let boxes = vec![[Num::Int(10), Num::Int(0), Num::Int(20), Num::Int(10)]];
         let merged = domain_fill(&filled, "In1.Cu", "GND", Some(&boxes), &spec()).unwrap();
         assert_eq!((merged.len(), merged[0].outline.len()), (1, 4));
+    }
+
+    #[test]
+    fn reference_fill_exports_only_the_sources_of_each_domain_including_exempt_domains() {
+        let board = Board { path: String::new(), copper_layers: Vec::new(), stackup: Vec::new(), nets: BTreeMap::new(),
+            footprints: Vec::new(), copper: Vec::new(), zones: Vec::new(), graphics: Vec::new(), texts: Vec::new(),
+            groups: Vec::new(), constraints: Default::default(), edges_bbox: crate::kicad::geom::Rect::around(Pt::default()), outlines: Vec::new() };
+        let mut planes = spec();
+        planes.adjacent.insert("F.Cu".into(), "In1.Cu".into());
+        planes.domains.insert("GND".into(), vec!["SIG".into()]);
+        planes.alt_refs.insert("SLOW".into(), AltRef { domain: "GND".into(), cap_mm: None, slow_only: true });
+        planes.exempt.areas.push(ExemptArea { bounds: [Num::Int(1),Num::Int(2),Num::Int(3),Num::Int(4)], nets: vec!["SIG".into()] });
+        let files = BoardFiles { folder: Default::default(), gate: Default::default(),
+            project: serde_json::from_value(serde_json::json!({"net_settings":{"classes":[]},"board":{"design_settings":{"rules":{}}}})).unwrap(),
+            rules: Vec::new(), planes, fast: Vec::new(), pairs: Vec::new(), paths: Default::default(), thermal: Default::default(),
+            fast_top: Vec::new(), fast_mixed: Vec::new() };
+        let mut nets = BTreeMap::from([("SIG".to_string(), Net { plane_ref: true, ..Default::default() })]);
+        let fill = reference_fill(&board,&board,&mut nets,&files).unwrap().unwrap();
+        assert_eq!(fill.references["GND+exempt:1,2,3,4"], ["GND","VBAT"]);
+        assert_eq!(fill.references.len(),1,"unrelated domains do not enter the emitted model");
     }
 }

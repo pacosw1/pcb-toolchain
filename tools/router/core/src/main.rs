@@ -533,7 +533,8 @@ impl Board {
         let (s_fast, plane_clr) = if s.kind == Kind::Track && s.net >= 0 {
             let l = (0..8).find(|&l| s.layers & (1 << l) != 0).unwrap_or(0);
             let pf = self.pflags(s.net as usize);
-            (self.plane_rule(pf, l) && !net.is_some_and(|n| self.rfill.same_reference_net(l, n as i32)), self.plane_clr.max(self.reference_via_clearance(pf, l)))
+            (self.plane_rule(pf, l) && !net.is_some_and(|n| self.rfill.same_reference_net(l, n as i32)),
+             self.plane_clr.max(self.reference_via_clearance(pf, l, net)))
         } else { (false, self.plane_clr) };
         let web = if self.web_hard && sig && s.net >= 0 && !self.nets[s.net as usize].plane { self.web } else { 0.0 };
         let h = via_hit(s, x, y, vr, drill, clr, hth, s_fast, plane_clr, self.hole_clr, self.eps, web, self.pc(g, s));
@@ -718,8 +719,10 @@ impl Board {
     fn plane_rule(&self, pf: u32, l: usize) -> bool {
         pf & 1 != 0 || (pf & 2 != 0 && self.adj & (1 << l) != 0)
     }
-    fn reference_via_clearance(&self, pf: u32, l: usize) -> f64 {
-        if pf & 0x7c != 0 && self.adj & (1 << l) != 0 { self.rfill.via_clearance(l) } else { 0.0 }
+    fn reference_via_clearance(&self, pf: u32, l: usize, via_net: Option<usize>) -> f64 {
+        if pf & 0x7c != 0 && self.adj & (1 << l) != 0 {
+            self.rfill.via_clearance_for(l, ((pf >> 2) & 0x1f) as u8, via_net)
+        } else { 0.0 }
     }
     /// Fixed-copper verdict (FREE / MULTI / n) of a track centre for the profile (hw, clr, plane flags pf).
     fn track_fixed_code(&self, l: usize, x: f64, y: f64, hw: f64, clr: f64, pf: u32, plane_clr: f64) -> i32 {
@@ -727,7 +730,7 @@ impl Board {
             return MULTI;
         }
         let fast = self.plane_rule(pf, l);
-        let via_clr = self.reference_via_clearance(pf, l);
+        let via_clr = self.reference_via_clearance(pf, l, None);
         // a net under the plane rule keeps out of the plane voids that rule areas make: an area that forbids pour on a
         // plane layer (isolation work, INPUT-4D2A gate planes 3: unknown-driver runs over the H1 / H2 screw-hole voids)
         let reference_plane = self.rfill.adjacent_plane_mask(l).unwrap_or_else(|| self.plane_mask());
@@ -746,7 +749,7 @@ impl Board {
         }
         let g = self.grp_at(pf >> 8, false, (x, y), (x, y), hw);
         self.near_iso(false, g, l, x, y, self.track_r(hw, plane_clr.max(via_clr)), hw, &mut |_, s| {
-            let pc = plane_clr.max(if s.kind == Kind::Via { via_clr } else { 0.0 });
+            let pc = plane_clr.max(if s.kind == Kind::Via { self.reference_via_clearance(pf, l, usize::try_from(s.net).ok()) } else { 0.0 });
             let plane_hole = fast && !(s.kind == Kind::Via && self.rfill.same_reference_net(l, s.net));
             if !track_hit(s, x, y, hw, clr, plane_hole, pc, self.hole_clr, self.eps, self.pc(g, s)) {
                 return false;
@@ -763,11 +766,12 @@ impl Board {
     /// Number of distinct routed items of other nets that a track centre conflicts with; `hits` collects their ids.
     fn track_soft(&self, net: usize, l: usize, x: f64, y: f64, hw: f64, plane_clr: f64, hits: Option<&mut Vec<u32>>) -> i32 {
         let (clr, fast) = (self.nets[net].clr, self.plane_rule(self.pflags(net), l));
-        let via_clr = self.reference_via_clearance(self.pflags(net), l);
+        let pf = self.pflags(net);
+        let via_clr = self.reference_via_clearance(pf, l, None);
         let g = self.grp_at(self.iv(net as i32), false, (x, y), (x, y), hw);
         let mut seen: Vec<u32> = Vec::new();
         self.near_iso(true, g, l, x, y, self.track_r(hw, plane_clr.max(via_clr)), hw, &mut |id, s| {
-            let pc = plane_clr.max(if s.kind == Kind::Via { via_clr } else { 0.0 });
+            let pc = plane_clr.max(if s.kind == Kind::Via { self.reference_via_clearance(pf, l, usize::try_from(s.net).ok()) } else { 0.0 });
             let plane_hole = fast && !(s.kind == Kind::Via && self.rfill.same_reference_net(l, s.net));
             if s.net != net as i32 && !seen.contains(&id) && track_hit(s, x, y, hw, clr, plane_hole, pc, self.hole_clr, self.eps, self.pc(g, s)) {
                 seen.push(id);
@@ -850,8 +854,9 @@ impl Board {
     }
     fn via_code_blocks(&self, code: i32, net: usize, x: f64, y: f64, d: f64, drill: f64, hth: f64) -> bool {
         // The shared fixed-code cache deliberately remains conservative and net-independent. Recheck a blocked
-        // reference-net via with its actual net instead of caching its exemption for other nets.
-        if code == COMPUTE || (blocks(code, net as i32) && self.rfill.is_reference_net(net)) {
+        // actual via net instead of caching a domain exemption or another net's
+        // larger zone-to-via clearance for every net sharing the same profile.
+        if code == COMPUTE || (blocks(code, net as i32) && self.rfill.needs_via_recheck(net)) {
             let (vr, clr, r, sig) = (d / 2.0, self.nets[net].clr, self.via_r(d, hth), !self.nets[net].plane);
             if !self.inside(x, y, vr) || self.keep_hit(None, x, y, vr) { return true; }
             let g = self.grp_at(self.iv(net as i32), true, (x, y), (x, y), vr);
