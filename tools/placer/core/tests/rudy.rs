@@ -284,3 +284,12 @@ fn cong_soft_incremental_equals_full() {
         within(ev.cost(), Evaluator::new(&m, &p, &ev.pose()).cost(), 5e-6);
     }
 }
+
+#[test]
+fn cong_soft_off_gives_the_clipped_overflow_bit_for_bit_even_with_a_zero_threshold() {
+    let pr = two_pads(3.0, 4.0);
+    let m = model(&pr, &small_params(&["limit=0", "tracks=1"]));
+    let s = NetState::new(&m, &Layout::new(&m, &pr.initial_pose()));
+    assert!(s.overflow(&m) > 0.0, "{}", s.overflow(&m));
+    assert_eq!(s.congestion(&m).to_bits(), s.overflow(&m).to_bits());
+}

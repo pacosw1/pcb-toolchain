@@ -197,7 +197,8 @@ impl NetState {
         for j in s.j0..s.j1 {
             for c in j * nx + s.i0..j * nx + s.i1 {
                 let d = self.demand[c];
-                let over = (d - model.threshold).max(0.0) + soft * d * d / model.threshold;
+                let clipped = (d - model.threshold).max(0.0);
+                let over = if soft == 0.0 { clipped } else { clipped + soft * d * d / model.threshold };
                 cells.push(model.cell_weights.as_ref().map_or(over, |w| over * w[c]));
             }
         }
