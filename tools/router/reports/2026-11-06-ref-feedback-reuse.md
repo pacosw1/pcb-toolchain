@@ -50,6 +50,12 @@ wall/CPU reductions are not an adoption result because preservation failed.
 This is one pair on a shared host with AIO/CI overlap and no cache flushing,
 not a general speedup estimate.
 
+Late-received host context (task comment 5928): release 0.2.13 Linux builds used
+2 CPUs / 4 GiB, one at a time from about 00:59 UTC, followed by an approximately
+five-minute smoke at 8 CPUs / 16 GiB. This is additional overlap beyond the AIO
+and merge-queue activity. Its exact interference was not measured; the sealed
+raw outcomes stay unchanged and do not become a controlled-host comparison.
+
 The full control's first separate gate had four checker-execution errors from
 a missing project-root binary alias in the test launcher. Null metrics remain
 errors. After repairing that alias, one gate-only check on identical board bytes
