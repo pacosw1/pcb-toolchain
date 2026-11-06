@@ -59,6 +59,8 @@ pub struct Options {
     pub w_comp: f64,
     pub tp_pins: bool,
     pub in_boxes: Vec<(String, [f64; 4])>,
+    /// Opt-in domain regions (`--domain-regions FILE`). Empty = off.
+    pub domain_regions: Vec<DomainRegion>,
     pub near: Vec<Near>,
     /// Propose soft clusters (clusters.rs), with this weight per tie.
     pub auto_clusters: Option<f64>,
@@ -91,10 +93,31 @@ impl Default for Options {
             w_comp: 0.0,
             tp_pins: false,
             in_boxes: Vec::new(),
+            domain_regions: Vec::new(),
             near: Vec::new(),
             auto_clusters: None,
         }
     }
+}
+
+/// One domain region of `--domain-regions`. Members (a part listed in `parts`, or a part with a pad of a net class in
+/// `classes`) keep their courtyards in the box; every other part keeps out of the box grown by `clearance`.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DomainRegion {
+    pub name: String,
+    #[serde(default)]
+    pub classes: Vec<String>,
+    #[serde(default)]
+    pub parts: Vec<String>,
+    /// x0, y0, x1, y1. Absent: the bounding box of the members' courtyards as read, grown by `margin`.
+    #[serde(rename = "box", default)]
+    pub bounds: Option<[f64; 4]>,
+    #[serde(default)]
+    pub margin: f64,
+    /// Absent: the largest .kicad_dru gap of a domain that matches one of `classes`, else 0.
+    #[serde(default)]
+    pub clearance: Option<f64>,
 }
 
 /// 'MAINS_K*:8:3': pads of these net classes keep 8 mm to all other nets and 3 mm to another class of the domain.

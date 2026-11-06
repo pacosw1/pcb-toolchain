@@ -214,3 +214,41 @@ fn a_cohesion_net_costs_its_group_box_with_no_rudy_demand() {
     ev.propose(&[(1, (2.0, 6.0, 0))]); // B toward A: the group box shrinks
     near(ev.terms().hpwl - hpwl, -2.0 * 8.0);
 }
+
+/// TP1 must stay out of the box 10..14 x 10..14 (a domain region of another part): R1 has none.
+fn out_box(x: f64, y: f64) -> Problem {
+    let mut u = unit("TP1", x, y, json!([[-1, -1, 1, 1, 0.3]]));
+    u["out_boxes"] = json!([[10.0, 10.0, 14.0, 14.0]]);
+    problem(json!([u, unit("R1", 5.0, 5.0, json!([[-1, -1, 1, 1, 0.5]]))]), json!([]), square_board(20.0, 0.5))
+}
+
+#[test]
+fn a_courtyard_in_an_out_box_counts_the_shortest_push_that_frees_it() {
+    let oob = |x: f64, y: f64| start_terms(&out_box(x, y), &small_params(&[])).oob;
+    near(oob(5.0, 5.0), 0.0);
+    near(oob(9.0, 5.0), 0.0); // disjoint on y
+    near(oob(9.0, 12.0), 0.0); // touching the side is not a violation: right side x 10
+    near(oob(12.0, 12.0), 3.0); // contained: 3 mm to leave the box
+    near(oob(11.0, 11.0), 2.0); // courtyard 10..12: 2 mm left or up frees it
+}
+
+#[test]
+fn the_legal_penalty_in_an_out_box_goes_to_zero_after_a_move_out() {
+    let pr = out_box(12.0, 12.0);
+    let p = small_params(&[]);
+    let m = model(&pr, &p);
+    let mut ev = Evaluator::new(&m, &p, &pr.initial_pose());
+    assert!(ev.legal_penalty(0) > 0.0);
+    near(ev.legal_penalty_at(0, (5.0, 15.0, 0)), 0.0);
+}
+
+#[test]
+fn out_boxes_reject_inverted_or_empty_rectangles() {
+    for b in [[14.0, 10.0, 10.0, 14.0], [10.0, 14.0, 14.0, 10.0], [10.0, 10.0, 10.0, 14.0], [10.0, 10.0, 14.0, 10.0]] {
+        let mut u = unit("TP1", 5.0, 5.0, json!([[-1, -1, 1, 1, 0.3]]));
+        u["out_boxes"] = json!([b]);
+        let v = problem_json(json!([u]), json!([]), square_board(20.0, 0.5));
+        let error = serde_json::from_value::<Problem>(v).err().expect("invalid out_boxes must fail").to_string();
+        assert!(error.contains("out_boxes") && error.contains("x0 < x1"), "{error}");
+    }
+}

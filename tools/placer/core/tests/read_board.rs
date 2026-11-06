@@ -10,7 +10,7 @@ use iotplace::kicad::doc::{Board, Copper, Geometry, Graphic, Pad, PadKind};
 use iotplace::model::Model;
 use iotplace::params::Params;
 use iotplace::read::extras::net_codes;
-use iotplace::read::options::Options;
+use iotplace::read::options::{DomainRegion, Options};
 use iotplace::read::out::ProblemOut;
 use iotplace::read::parts::{fp_rect, pad_gap};
 use iotplace::read::project::{DomainClasses, keepout_gaps};
@@ -576,4 +576,118 @@ fn the_board_as_read_is_legal_to_the_evaluator() {
     let pr = fx.read(&plain());
     let bad: Vec<&str> = pr.units.iter().enumerate().filter(|(i, u)| !u.fixed && model_penalty(&pr, &fx, *i) > 0.0).map(|(_, u)| u.name.as_str()).collect();
     assert!(bad.is_empty(), "{bad:?}");
+}
+
+fn region(name: &str, classes: &[&str], parts: &[&str], bounds: Option<[f64; 4]>, clearance: Option<f64>) -> DomainRegion {
+    DomainRegion { name: name.to_string(), classes: classes.iter().map(|c| c.to_string()).collect(), parts: parts.iter().map(|c| c.to_string()).collect(), bounds, margin: 0.0, clearance }
+}
+
+#[test]
+fn a_domain_region_boxes_its_members_and_keeps_every_other_part_out_of_the_grown_box() {
+    let fx = Fixture::new(buck());
+    let off = fx.read(&plain());
+    assert!(off.units.iter().all(|u| u.in_box.is_none() && u.out_boxes.is_empty()), "off by default");
+    let off_json = serde_json::to_value(&off).unwrap();
+    assert!(off_json["units"].as_array().unwrap().iter().all(|u| u.get("out_boxes").is_none()), "the default output has no new fields");
+    let r = region("mains", &[], &["L1"], Some([138.0, 116.0, 146.0, 124.0]), Some(1.0));
+    let pr = fx.read(&Options { domain_regions: vec![r], ..plain() });
+    let l1 = &pr.units[unit_of(&pr, "L1")];
+    assert_eq!(l1.in_box, Some([138.0, 116.0, 146.0, 124.0]));
+    assert!(l1.out_boxes.is_empty());
+    let r2 = &pr.units[unit_of(&pr, "R2")];
+    assert!(r2.in_box.is_none());
+    assert_eq!(r2.out_boxes, vec![[137.0, 115.0, 147.0, 125.0]]);
+}
+
+#[test]
+fn members_come_from_the_net_class_of_their_pads_and_the_box_from_the_members_as_read() {
+    let fx = Fixture::new(buck());
+    let r = region("power", &["POWER"], &[], None, None);
+    let pr = fx.read(&Options { domain_regions: vec![r], ..plain() });
+    let members: Vec<&str> = pr.units.iter().filter(|u| u.in_box.is_some()).flat_map(|u| u.refs.iter().map(String::as_str)).collect();
+    for m in ["L1", "R2"] {
+        assert!(members.contains(&m), "{m} has a POWER pad");
+    }
+    assert!(!members.contains(&"C1"));
+    let b = pr.units[unit_of(&pr, "L1")].in_box.unwrap();
+    assert!(b[0] <= 127.0 && b[2] >= 144.5 && b[1] <= 118.5 && b[3] >= 129.0, "box {b:?} spans the members");
+}
+
+#[test]
+fn a_domain_region_without_members_or_with_a_box_that_is_too_small_is_an_error() {
+    let fx = Fixture::new(buck());
+    let none = region("x", &["NOPE"], &[], Some([0.0, 0.0, 9.0, 9.0]), None);
+    assert!(fx.read_error(&Options { domain_regions: vec![none], ..plain() }).contains("no part is a member"));
+    let small = region("x", &[], &["L1"], Some([138.0, 116.0, 139.0, 124.0]), None);
+    assert!(fx.read_error(&Options { domain_regions: vec![small], ..plain() }).contains("does not fit"));
+}
+
+#[test]
+fn cli_read_takes_a_domain_regions_file_and_rejects_unknown_keys() {
+    let fx = Fixture::new(buck());
+    let file = fx.folder().join("regions.json");
+    std::fs::write(&file, r#"[{"name":"mains","parts":["U1"],"clearance":0.5}]"#).unwrap();
+    let v = cli_read(&fx, &["--domain-regions", file.to_str().unwrap()]).expect("read succeeds");
+    assert!(v["units"].as_array().unwrap().iter().any(|u| u.get("out_boxes").is_some()));
+    std::fs::write(&file, r#"[{"name":"mains","parts":["L1"],"bogus":1}]"#).unwrap();
+    assert!(cli_read(&fx, &["--domain-regions", file.to_str().unwrap()]).is_none());
+}
+
+#[test]
+fn domain_regions_reject_invalid_distances_and_nonfinite_boxes() {
+    let fx = Fixture::new(buck());
+    for value in [-1.0, f64::NAN, f64::INFINITY] {
+        for field in ["margin", "clearance"] {
+            let mut r = region("power", &[], &["L1"], Some([138.0, 116.0, 146.0, 124.0]), Some(0.0));
+            if field == "margin" { r.margin = value } else { r.clearance = Some(value) }
+            let error = fx.read_error(&Options { domain_regions: vec![r], ..plain() });
+            assert!(error.contains(field) && error.contains("finite and non-negative"), "{error}");
+        }
+    }
+    for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let r = region("power", &[], &["L1"], Some([value, 110.0, 150.0, 130.0]), Some(0.0));
+        assert!(fx.read_error(&Options { domain_regions: vec![r], ..plain() }).contains("finite"));
+    }
+    let file = fx.folder().join("regions.json");
+    for field in ["margin", "clearance"] {
+        std::fs::write(&file, format!(r#"[{{"name":"power","parts":["L1"],"{field}":-1}}]"#)).unwrap();
+        assert!(cli_read(&fx, &["--domain-regions", file.to_str().unwrap()]).is_none(), "negative {field}");
+    }
+}
+
+#[test]
+fn a_fixed_domain_member_must_already_be_inside_its_box() {
+    let fx = Fixture::new(buck());
+    let fixed = vec!["L1".to_string()];
+    let r = region("power", &[], &["L1"], Some([110.0, 105.0, 120.0, 115.0]), Some(0.0));
+    let error = fx.read_error(&Options { fix: fixed.clone(), domain_regions: vec![r], ..plain() });
+    assert!(error.contains("fixed part L1") && error.contains("outside"), "{error}");
+    let r = region("power", &[], &["L1"], Some([138.0, 116.0, 146.0, 124.0]), Some(0.0));
+    let pr = fx.read(&Options { fix: fixed, domain_regions: vec![r], ..plain() });
+    assert!(pr.units[unit_of(&pr, "L1")].fixed);
+}
+
+#[test]
+fn a_region_infers_clearance_from_classes_matching_both_patterns() {
+    let fx = Fixture::new(buck());
+    let r = region("power", &["P[O]WER"], &[], None, None);
+    let pr = fx.read(&Options { domains: Some(vec![("PO[W]ER".to_string(), 0.5, 0.3)]), domain_regions: vec![r], ..plain() });
+    let b = pr.units[unit_of(&pr, "L1")].in_box.unwrap();
+    let out = &pr.units[unit_of(&pr, "C1")].out_boxes;
+    assert_eq!(out, &vec![[b[0] - 0.5, b[1] - 0.5, b[2] + 0.5, b[3] + 0.5]]);
+}
+
+#[test]
+fn a_domain_member_can_fit_its_box_after_a_quarter_turn() {
+    let fx = Fixture::new(buck());
+    let r = region("power", &[], &["L1"], Some([140.0, 117.0, 144.0, 123.0]), Some(0.0));
+    let pr = fx.read(&Options { domain_regions: vec![r], ..plain() });
+    let i = unit_of(&pr, "L1");
+    let problem = fx.problem(&pr);
+    let p = Params::default();
+    let model = Model::new(&problem, &p).unwrap();
+    let mut ev = Evaluator::new(&model, &p, &problem.initial_pose());
+    assert!(ev.forbidden_area(i) > 0.0, "the initial 5 x 3 mm courtyard does not fit the 4 x 6 mm box");
+    ev.propose(&[(i, (142.0, 120.0, 1))]);
+    within(ev.forbidden_area(i), 0.0, 1e-9);
 }

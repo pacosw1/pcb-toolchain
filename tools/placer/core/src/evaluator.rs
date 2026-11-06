@@ -88,6 +88,22 @@ fn box_miss(region: Rect, rects: &[Rect], keepouts: &BTreeSet<usize>) -> f64 {
     (region.x0 - b.x0).max(0.0) + (region.y0 - b.y0).max(0.0) + (b.x1 - region.x1).max(0.0) + (b.y1 - region.y1).max(0.0)
 }
 
+/// The deepest overlap in mm of the courtyard rects with the boxes they must stay out of: the shortest push that
+/// frees a rect, summed over the rects and boxes.
+fn out_box_miss(boxes: &[Rect], rects: &[Rect], keepouts: &BTreeSet<usize>) -> f64 {
+    let mut miss = 0.0;
+    for b in boxes {
+        for (_, r) in rects.iter().enumerate().filter(|(k, _)| !keepouts.contains(k)) {
+            let (ox, oy) = (r.x1.min(b.x1) - r.x0.max(b.x0), r.y1.min(b.y1) - r.y0.max(b.y0));
+            if ox > 0.0 && oy > 0.0 {
+                let push = (r.x1 - b.x0).min(b.x1 - r.x0).min(r.y1 - b.y0).min(b.y1 - r.y0);
+                miss += push;
+            }
+        }
+    }
+    miss
+}
+
 /// The sum over the near rules of the distance beyond d from the local point to the fixed world point.
 fn near_miss(rules: &[NearRule], (x, y, r): Place) -> f64 {
     let miss = |&NearRule(lx, ly, wx, wy, d): &NearRule| {
@@ -255,7 +271,8 @@ impl<'m> Evaluator<'m> {
         let board = &self.model.problem.board;
         let edge = u.edge.as_ref().map_or(0.0, |e| edge_miss(e, place, board, self.model.outline_box));
         let region = u.in_box.map_or(0.0, |b| box_miss(b, self.layout.world(i), &self.model.units[i].keepout_rects));
-        sum + edge + region + near_miss(&u.near, place)
+        let keep_out = if u.out_boxes.is_empty() { 0.0 } else { out_box_miss(&u.out_boxes, self.layout.world(i), &self.model.units[i].keepout_rects) };
+        sum + edge + region + keep_out + near_miss(&u.near, place)
     }
 
     fn locked_and_gap_area(&self, i: usize, edge_pads: Option<&[Rect]>) -> (f64, f64) {
