@@ -228,3 +228,19 @@ test('collect refuses a DIR whose agent never ran, and can run again with the sa
     assert.deepEqual(readObject(join(t.out, 'prepare.json')).board, 'X');
   } finally { t.cleanup(); }
 });
+
+test('verify_prefix: the freshness check runs through the prefix, where the gate ran, with the agent env', async () => {
+  const script = 'echo "$MARK $*" > .args; [ -f .stale ] && { echo "gate tool versions changed" >&2; exit 1; }; exit 0';
+  const t = finished({}, value => { value.design_contract_exempt = true; value.verify_prefix = ['sh', '-c', script, 'x']; value.agent.env = { MARK: 'env' }; });
+  const project = join(t.out, 'project');
+  try {
+    sealedRun(t);
+    let result = await collectTrial(t.out, stale);   // the local check would fail; the prefix decides
+    assert.deepEqual([result.verdict, result.cause], ['passed', null]);
+    assert.equal(readFileSync(join(project, '.args'), 'utf8').trim(), `env tools/pcb trial inputs ${join(project, '.gate/cli/run-a/gate')} --board X`);
+    writeFileSync(join(project, '.stale'), '');
+    result = await collectTrial(t.out, fresh);
+    assert.deepEqual([result.verdict, result.cause], ['failed', 'stale_inputs']);
+    assert.match(result.detail ?? '', /gate tool versions changed/);
+  } finally { t.cleanup(); }
+});

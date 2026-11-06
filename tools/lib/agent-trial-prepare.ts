@@ -3,11 +3,12 @@
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
-import { readCase } from './agent-trial-case.ts';
+import { readCase, type AgentCase } from './agent-trial-case.ts';
 import { isCanonicalRoot, reseal, sealStatus } from './cad-seal.ts';
 import { designExemption } from './design-exemption.ts';
 import { gateInputs } from './gate-inputs.mjs';
 import { atomicJson, sha256File } from './json-file.ts';
+import { context } from './pcb-workflow.ts';
 
 export const PREPARE_SCHEMA = 'iot-lab.agent-trial-prepare.v1';
 export const EXEMPT_REASON = 'agent trial baseline';
@@ -100,6 +101,21 @@ function copyToolchain(toolchain: string, project: string, bin: string | undefin
   return git(toolchain, 'rev-parse', 'HEAD');
 }
 
+/** Archive the sources that `tools/pcb context` and `next` read. Returns the ones the lab commit does not hold; `next` then reports the board as blocked. */
+function contextFiles(lab: Lab, project: string, board: string): string[] {
+  const missing = (): string[] => (context(project, board) as { blockers: { rule: string; path: string }[] }).blockers.filter(row => row.rule === 'missing_context_source').map(row => row.path);
+  lab.extract(missing(), project);
+  return missing();
+}
+
+/** The case's setup step: it makes the start board, in the project, before the baseline is hashed. A failed step stops prepare. */
+function runSetup(setup: NonNullable<AgentCase['setup']>, project: string, board: string): string[] {
+  const argv = setup.argv.map(part => part.replaceAll('{root}', project).replaceAll('{board}', board));
+  const result = spawnSync(argv[0]!, argv.slice(1), { cwd: project, encoding: 'utf8', env: { ...process.env, ...setup.env, IOT_LAB: project, PCB_RUNS_DIR: join(project, '.gate/trial-setup') } });
+  if (result.error || result.status !== 0) throw new Error(`setup failed (${result.error?.message ?? `exit ${result.status}`}): ${(result.stderr ?? '').trim().slice(-2000)}`);
+  return argv;
+}
+
 const logLines = (project: string, board: string): number => readFileSync(join(project, '.gate/cad-seal', `${board}.jsonl`), 'utf8').split('\n').filter(Boolean).length;
 
 export function prepareTrial(options: PrepareOptions): Record<string, any> {
@@ -124,17 +140,19 @@ export function prepareTrial(options: PrepareOptions): Record<string, any> {
     const dirty = git(resolve(options.toolchain), 'status', '--porcelain', '--', 'tools') !== '';
     mkdirSync(join(project, '.claude'), { recursive: true });
     atomicJson(join(project, '.claude/settings.json'), { hooks: { PreToolUse: [{ matcher: 'Edit|Write|MultiEdit|NotebookEdit|Bash', hooks: [{ type: 'command', command: 'node tools/hooks/claude-cad-guard.mjs' }] }] } });
-    const missingGateInputs = gateFiles(source, project, board);
+    const missingGateInputs = gateFiles(source, project, board), missingContext = contextFiles(source, project, board);
     if (agentCase.design_contract_exempt) exempt(project, board);
     const labSeal = sealStatus(project, board).state;
     reseal(project, board, { tool: 'trial-prepare', run_id: null }, 'trial baseline');
+    const setup = agentCase.setup ? { ...agentCase.setup, argv: runSetup(agentCase.setup, project, board) } : null;
+    if (setup) reseal(project, board, { tool: 'trial-setup', run_id: null }, 'trial start state');
     const files = hashTree(project, 'hardware-design');
     copyFileSync(options.casePath, join(out, 'case.json'));
     copyFileSync(promptPath, join(out, 'prompt.txt'));
     const record = {
       schema: PREPARE_SCHEMA, case_id: agentCase.case_id, board, case_sha256: caseSha, lab_commit: commit, toolchain: { git_sha: toolchainSha, tools_dirty: dirty },
       prompt: agentCase.prompt, inputs: agentCase.inputs, lab_seal: labSeal, seal_baseline_lines: logLines(project, board),
-      design_contract_exempt_applied: agentCase.design_contract_exempt, missing_gate_inputs: missingGateInputs, files,
+      design_contract_exempt_applied: agentCase.design_contract_exempt, missing_gate_inputs: missingGateInputs, missing_context_sources: missingContext, setup, files,
     };
     atomicJson(join(out, 'prepare.json'), record);
     return record;

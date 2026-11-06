@@ -2,6 +2,7 @@
 //   tools/agent-trial.ts prepare CASE.json --lab DIR --out DIR [--bin DIR] [--json]
 //   tools/agent-trial.ts run DIR [--wait] [--no-lock] [--json]
 //   tools/agent-trial.ts collect DIR [--json]
+//   tools/agent-trial.ts inputs GATE_DIR --board BOARD      exit 0 when the inputs of a gate run are current here; collect runs it through verify_prefix
 // The lab is a parameter (--lab): it is read through git only, at the commit of the case. `pcb bench` compares two tool variants; this tool measures one agent.
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,14 +13,16 @@ import { runTrial } from './lib/agent-trial-run.ts';
 import { acquire, describeOwner } from './lib/bench-lock.ts';
 import { verifyCurrentInputs } from './lib/pcb-next.ts';
 import { nextReaders } from './lib/pcb-next-readers.ts';
+import { projectRoot } from './lib/project-root.mjs';
 
 const USAGE = [
   'usage: agent-trial.ts prepare CASE.json --lab DIR --out DIR [--bin DIR] [--json]',
   '       agent-trial.ts run DIR [--wait] [--no-lock] [--json]',
   '       agent-trial.ts collect DIR [--json]',
+  '       agent-trial.ts inputs GATE_DIR --board BOARD',
 ].join('\n');
 
-const FLAGS = { lab: { type: 'string' }, out: { type: 'string' }, bin: { type: 'string' }, wait: { type: 'boolean' }, 'no-lock': { type: 'boolean' }, json: { type: 'boolean' }, project: { type: 'string' } } as const;
+const FLAGS = { board: { type: 'string' }, lab: { type: 'string' }, out: { type: 'string' }, bin: { type: 'string' }, wait: { type: 'boolean' }, 'no-lock': { type: 'boolean' }, json: { type: 'boolean' }, project: { type: 'string' } } as const;
 const TOOLCHAIN = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 async function main(argv: string[]): Promise<number> {
@@ -44,6 +47,11 @@ async function main(argv: string[]): Promise<number> {
     if (values.json) console.log(JSON.stringify(record));
     else console.log(`agent ${record.spawn_error ? `did not start (${record.spawn_error})` : `ended: exit ${record.exit_code}, signal ${record.signal}`}${record.timed_out ? ', deadline reached' : ''}, ${record.wall_s.toFixed(1)} s\nnext: tools/pcb trial collect ${resolve(target)}`);
     return record.spawn_error ? 1 : 0;
+  }
+  if (command === 'inputs') {
+    if (!values.board) throw new UsageError(USAGE);
+    await verifyCurrentInputs(projectRoot(), values.board, resolve(target), nextReaders.runStage);
+    return 0;
   }
   if (command === 'collect') {
     const result = await collectTrial(target, { verifyInputs: (root, board, gateDir) => verifyCurrentInputs(root, board, gateDir, nextReaders.runStage) });

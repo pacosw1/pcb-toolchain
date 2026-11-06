@@ -9,12 +9,14 @@ export interface PinnedFile { path: string; sha256: string }
 export interface AgentCase {
   schema: typeof CASE_SCHEMA; case_id: string; board: string; lab: { commit: string }; inputs: PinnedFile[]; prompt: PinnedFile;
   agent: { argv: string[]; parser: Parser; env?: Record<string, string> }; budget: { timeout_s: number; max_turns?: number }; design_contract_exempt: boolean;
+  setup?: { argv: string[]; env?: Record<string, string> }; verify_prefix?: string[];
 }
 
 const PLACEHOLDER = /\{([a-z_]+)\}/g;
 const KNOWN = new Set(['prompt_file', 'root', 'board', 'max_turns', 'timeout_s']);
 const RESERVED_ENV = new Set(['IOT_LAB', 'PCB_RUNS_DIR']);
-const FIELDS = new Set(['schema', 'case_id', 'board', 'lab', 'inputs', 'prompt', 'agent', 'budget', 'design_contract_exempt']);
+const FIELDS = new Set(['schema', 'case_id', 'board', 'lab', 'inputs', 'prompt', 'agent', 'budget', 'design_contract_exempt', 'setup', 'verify_prefix']);
+const SETUP_KNOWN = new Set(['root', 'board']);
 const SHA = /^[0-9a-f]{64}$/;
 
 const fail = (message: string): never => { throw new Error(`agent case: ${message}`); };
@@ -55,11 +57,23 @@ export function validateCase(value: unknown): AgentCase {
     if (name === 'max_turns' && budget.max_turns === undefined) fail('agent.argv uses {max_turns} but budget.max_turns is not set');
   }
   if (value.design_contract_exempt !== undefined && typeof value.design_contract_exempt !== 'boolean') fail('design_contract_exempt must be true or false');
+  const prefix = value.verify_prefix;
+  if (prefix !== undefined && (!Array.isArray(prefix) || !prefix.length || prefix.some(part => typeof part !== 'string'))) fail('verify_prefix must be a nonempty string array');
+  const setup = value.setup;
+  if (setup !== undefined) {
+    if (!isObject(setup) || !Array.isArray(setup.argv) || !setup.argv.length || setup.argv.some(part => typeof part !== 'string')) return fail('setup.argv must be a nonempty string array');
+    if (setup.env !== undefined) {
+      if (!isObject(setup.env) || Object.values(setup.env).some(entry => typeof entry !== 'string')) fail('setup.env must map names to strings');
+      for (const name of Object.keys(setup.env as object)) if (RESERVED_ENV.has(name)) fail(`setup.env cannot set ${name}; the trial sets it`);
+    }
+    for (const part of setup.argv as string[]) for (const [, name] of part.matchAll(PLACEHOLDER)) if (!SETUP_KNOWN.has(name!)) fail(`unknown placeholder {${name}} in setup.argv`);
+  }
   return {
     schema: CASE_SCHEMA, case_id: value.case_id as string, board, lab: { commit: (value.lab as { commit: string }).commit }, inputs, prompt,
     agent: { argv: agent.argv as string[], parser: agent.parser as Parser, ...(agent.env ? { env: agent.env as Record<string, string> } : {}) },
     budget: { timeout_s: budget.timeout_s, ...(budget.max_turns !== undefined ? { max_turns: budget.max_turns as number } : {}) },
     design_contract_exempt: value.design_contract_exempt === true,
+    ...(setup ? { setup: setup as unknown as NonNullable<AgentCase['setup']> } : {}), ...(prefix ? { verify_prefix: prefix as string[] } : {}),
   };
 }
 

@@ -41,3 +41,9 @@ test('a bad command line prints the usage and exits 2', () => {
   assert.equal(unknown.status, 2);
   assert.match(unknown.stderr, /usage: agent-trial\.ts prepare CASE\.json/);
 });
+
+test('trial inputs is a command: a gate folder that is not there fails with a cause, not the usage text', () => {
+  const run = pcb('inputs', '/nonexistent/gate', '--board', 'X');
+  assert.notEqual(run.status, 0);
+  assert.doesNotMatch(run.stderr, /usage:/);
+});

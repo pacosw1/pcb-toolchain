@@ -1,9 +1,10 @@
 // `pcb trial collect`: turn a finished trial folder into one sealed result, schema iot-lab.agent-trial.v1.
 // An unknown value is null, never 0. A missing run, a timeout or an agent that did not start is a failed verdict, never an omission.
+import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { hashTree } from './agent-trial-prepare.ts';
-import { readCase, type Parser } from './agent-trial-case.ts';
+import { readCase, type AgentCase, type Parser } from './agent-trial-case.ts';
 import { canonicalJson, sha256Text } from './bench-analyze.ts';
 import { sealStatus, type SealStatus } from './cad-seal.ts';
 import { designExemption } from './design-exemption.ts';
@@ -167,6 +168,15 @@ function newestCheck(base: string, board: string): { folder: string | null; seen
   return { folder: sealed[0]?.folder ?? null, seen: found.length };
 }
 
+/** The freshness check where the gate ran: tool versions on the host differ from the ones in the route image. Throws what the check said. */
+function prefixed(agentCase: AgentCase): CollectServices {
+  return { verifyInputs: async (root, board, gateDir) => {
+    const [command, ...args] = [...agentCase.verify_prefix!, 'tools/pcb', 'trial', 'inputs', gateDir, '--board', board];
+    const result = spawnSync(command!, args, { cwd: root, encoding: 'utf8', env: { ...process.env, ...agentCase.agent.env, IOT_LAB: root } });
+    if (result.error || result.status !== 0) throw new Error((result.stderr ?? '').trim().slice(-500) || result.error?.message || `exit ${result.status}`);
+  } };
+}
+
 async function judge(project: string, board: string, run: Row, services: CollectServices): Promise<Verdict> {
   if (run.spawn_error) return failure('agent_not_started', String(run.spawn_error));
   if (run.timed_out === true) return failure('timeout', `the agent reached its deadline (${run.wall_s} s)`);
@@ -199,7 +209,7 @@ export async function collectTrial(dirPath: string, services: CollectServices): 
     schema: RESULT_SCHEMA, case_id: prepare.case_id, board, lab_commit: prepare.lab_commit, toolchain: prepare.toolchain, case_sha256: prepare.case_sha256,
     wall_s: run.wall_s, exit_code: run.exit_code, signal: run.signal, timed_out: run.timed_out, agent, pcb_runs: pcbRuns(base), seal: seal.block,
     interventions: notesOf(base), outside_tools: outsideTools(project, board, prepare.files, seal.status), design_contract_exempt_applied: prepare.design_contract_exempt_applied === true,
-    ...(await judge(project, board, run, services)),
+    ...(await judge(project, board, run, agentCase.verify_prefix ? prefixed(agentCase) : services)),
     evidence: { prepare_sha256: sha256File(join(dir, 'prepare.json')), run_sha256: sha256File(join(dir, 'run.json')), agent_stdout_sha256: existsSync(stream) ? sha256File(stream) : null },
   };
   const result = { ...body, result_sha256: sha256Text(canonicalJson(body)) };
