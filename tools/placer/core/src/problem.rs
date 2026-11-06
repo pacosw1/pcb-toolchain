@@ -130,7 +130,7 @@ pub struct Unit {
     #[serde(default)]
     pub in_box: Option<Rect>,
     /// Boxes the courtyards must stay out of (another domain's region, with its clearance).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "read_out_boxes")]
     pub out_boxes: Vec<Rect>,
     #[serde(default)]
     pub near: Vec<NearRule>,
@@ -144,6 +144,14 @@ impl Unit {
     pub fn place(&self) -> Place {
         (self.x, self.y, 0)
     }
+}
+
+fn read_out_boxes<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Rect>, D::Error> {
+    let boxes = Vec::<Rect>::deserialize(d)?;
+    if boxes.iter().any(|b| ![b.x0, b.y0, b.x1, b.y1].iter().all(|x| x.is_finite()) || b.x0 >= b.x1 || b.y0 >= b.y1) {
+        return Err(D::Error::custom("out_boxes must have finite coordinates with x0 < x1 and y0 < y1"));
+    }
+    Ok(boxes)
 }
 
 /// [rect index, class id, gap to another class of the domain, net-class clearance]. Class -1 = a hole rule.

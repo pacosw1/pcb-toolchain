@@ -217,6 +217,14 @@ pub fn domain_regions(board: &Board, units: &mut [Unit], index: &Index, regions:
     let mut member_of: Vec<Option<usize>> = vec![None; units.len()];
     let mut boxes: Vec<([f64; 4], f64)> = Vec::new();
     for (n, r) in regions.iter().enumerate() {
+        for (field, value) in [("margin", r.margin), ("clearance", r.clearance.unwrap_or(0.0))] {
+            if !value.is_finite() || value < 0.0 {
+                return Err(format!("domain region {}: {field} must be finite and non-negative", r.name).into());
+            }
+        }
+        if r.bounds.is_some_and(|b| b.iter().any(|x| !x.is_finite())) {
+            return Err(format!("domain region {}: box coordinates must be finite", r.name).into());
+        }
         let is_member = |u: &Unit| {
             u.refs.iter().any(|x| {
                 r.parts.iter().any(|p| fnmatch(x, p))
@@ -247,8 +255,14 @@ pub fn domain_regions(board: &Board, units: &mut [Unit], index: &Index, regions:
             }
         };
         let gap = r.clearance.unwrap_or_else(|| {
-            rules.iter().filter(|d| r.classes.iter().any(|c| fnmatch(c, &d.0) || fnmatch(&d.0, c))).map(|d| d.1).fold(0.0, f64::max)
+            let classes: BTreeSet<&str> = board.footprints.iter().flat_map(|f| &f.pads).filter(|p| !p.net.is_empty())
+                .flat_map(|p| board.net_class(&p.net).split(',')).filter(|c| r.classes.iter().any(|q| fnmatch(c, q))).collect();
+            rules.iter().filter(|d| classes.iter().any(|c| fnmatch(c, &d.0))).map(|d| d.1).fold(0.0, f64::max)
         });
+        if b.iter().any(|x| !x.is_finite()) || !gap.is_finite() || gap < 0.0
+            || [b[0] - gap, b[1] - gap, b[2] + gap, b[3] + gap].iter().any(|x| !x.is_finite()) {
+            return Err(format!("domain region {}: box and clearance must give finite coordinates and non-negative clearance", r.name).into());
+        }
         boxes.push((b, gap));
     }
     let member_units: Vec<Vec<usize>> = (0..regions.len()).map(|n| (0..units.len()).filter(|&i| member_of[i] == Some(n)).collect()).collect();
@@ -283,11 +297,18 @@ fn in_boxes_for(units: &mut [Unit], members: &[Vec<usize>], boxes: &[([f64; 4], 
         for &i in group {
             let u = &mut units[i];
             if u.fixed {
+                let outside = u.rects.iter().enumerate().filter(|(k, _)| !u.ko.contains(k)).any(|(_, q)| {
+                    u.x + q[0] < b[0] - 1e-9 || u.y + q[1] < b[1] - 1e-9 || u.x + q[2] > b[2] + 1e-9 || u.y + q[3] > b[3] + 1e-9
+                });
+                if outside {
+                    return Err(format!("domain region {}: fixed part {} is outside the box {b:?}", regions[n].name, u.name).into());
+                }
                 continue;
             }
             let body: Vec<&[f64; 5]> = u.rects.iter().enumerate().filter(|(k, _)| !u.ko.contains(k)).map(|(_, r)| r).collect();
             let (w, h) = extent(&body);
-            if w > b[2] - b[0] + 1e-9 || h > b[3] - b[1] + 1e-9 {
+            let fits = |w: f64, h: f64| w <= b[2] - b[0] + 1e-9 && h <= b[3] - b[1] + 1e-9;
+            if !fits(w, h) && !fits(h, w) {
                 return Err(format!("domain region {}: unit {} ({w:.3} x {h:.3} mm) does not fit the box {b:?}", regions[n].name, u.name).into());
             }
             if u.in_box.is_some_and(|old| old != b) {

@@ -587,6 +587,8 @@ fn a_domain_region_boxes_its_members_and_keeps_every_other_part_out_of_the_grown
     let fx = Fixture::new(buck());
     let off = fx.read(&plain());
     assert!(off.units.iter().all(|u| u.in_box.is_none() && u.out_boxes.is_empty()), "off by default");
+    let off_json = serde_json::to_value(&off).unwrap();
+    assert!(off_json["units"].as_array().unwrap().iter().all(|u| u.get("out_boxes").is_none()), "the default output has no new fields");
     let r = region("mains", &[], &["L1"], Some([138.0, 116.0, 146.0, 124.0]), Some(1.0));
     let pr = fx.read(&Options { domain_regions: vec![r], ..plain() });
     let l1 = &pr.units[unit_of(&pr, "L1")];
@@ -629,4 +631,63 @@ fn cli_read_takes_a_domain_regions_file_and_rejects_unknown_keys() {
     assert!(v["units"].as_array().unwrap().iter().any(|u| u.get("out_boxes").is_some()));
     std::fs::write(&file, r#"[{"name":"mains","parts":["L1"],"bogus":1}]"#).unwrap();
     assert!(cli_read(&fx, &["--domain-regions", file.to_str().unwrap()]).is_none());
+}
+
+#[test]
+fn domain_regions_reject_invalid_distances_and_nonfinite_boxes() {
+    let fx = Fixture::new(buck());
+    for value in [-1.0, f64::NAN, f64::INFINITY] {
+        for field in ["margin", "clearance"] {
+            let mut r = region("power", &[], &["L1"], Some([138.0, 116.0, 146.0, 124.0]), Some(0.0));
+            if field == "margin" { r.margin = value } else { r.clearance = Some(value) }
+            let error = fx.read_error(&Options { domain_regions: vec![r], ..plain() });
+            assert!(error.contains(field) && error.contains("finite and non-negative"), "{error}");
+        }
+    }
+    for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let r = region("power", &[], &["L1"], Some([value, 110.0, 150.0, 130.0]), Some(0.0));
+        assert!(fx.read_error(&Options { domain_regions: vec![r], ..plain() }).contains("finite"));
+    }
+    let file = fx.folder().join("regions.json");
+    for field in ["margin", "clearance"] {
+        std::fs::write(&file, format!(r#"[{{"name":"power","parts":["L1"],"{field}":-1}}]"#)).unwrap();
+        assert!(cli_read(&fx, &["--domain-regions", file.to_str().unwrap()]).is_none(), "negative {field}");
+    }
+}
+
+#[test]
+fn a_fixed_domain_member_must_already_be_inside_its_box() {
+    let fx = Fixture::new(buck());
+    let fixed = vec!["L1".to_string()];
+    let r = region("power", &[], &["L1"], Some([110.0, 105.0, 120.0, 115.0]), Some(0.0));
+    let error = fx.read_error(&Options { fix: fixed.clone(), domain_regions: vec![r], ..plain() });
+    assert!(error.contains("fixed part L1") && error.contains("outside"), "{error}");
+    let r = region("power", &[], &["L1"], Some([138.0, 116.0, 146.0, 124.0]), Some(0.0));
+    let pr = fx.read(&Options { fix: fixed, domain_regions: vec![r], ..plain() });
+    assert!(pr.units[unit_of(&pr, "L1")].fixed);
+}
+
+#[test]
+fn a_region_infers_clearance_from_classes_matching_both_patterns() {
+    let fx = Fixture::new(buck());
+    let r = region("power", &["P[O]WER"], &[], None, None);
+    let pr = fx.read(&Options { domains: Some(vec![("PO[W]ER".to_string(), 0.5, 0.3)]), domain_regions: vec![r], ..plain() });
+    let b = pr.units[unit_of(&pr, "L1")].in_box.unwrap();
+    let out = &pr.units[unit_of(&pr, "C1")].out_boxes;
+    assert_eq!(out, &vec![[b[0] - 0.5, b[1] - 0.5, b[2] + 0.5, b[3] + 0.5]]);
+}
+
+#[test]
+fn a_domain_member_can_fit_its_box_after_a_quarter_turn() {
+    let fx = Fixture::new(buck());
+    let r = region("power", &[], &["L1"], Some([140.0, 117.0, 144.0, 123.0]), Some(0.0));
+    let pr = fx.read(&Options { domain_regions: vec![r], ..plain() });
+    let i = unit_of(&pr, "L1");
+    let problem = fx.problem(&pr);
+    let p = Params::default();
+    let model = Model::new(&problem, &p).unwrap();
+    let mut ev = Evaluator::new(&model, &p, &problem.initial_pose());
+    assert!(ev.forbidden_area(i) > 0.0, "the initial 5 x 3 mm courtyard does not fit the 4 x 6 mm box");
+    ev.propose(&[(i, (142.0, 120.0, 1))]);
+    within(ev.forbidden_area(i), 0.0, 1e-9);
 }
