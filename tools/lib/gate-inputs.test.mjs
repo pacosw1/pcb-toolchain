@@ -119,7 +119,7 @@ const EXPECTED_BASE_GATE_TOOLS=[
  'lib/board-edit.ts','lib/board-hit.ts','lib/board-items.ts','lib/board-json.ts',
  'lib/board-obstacles.ts','lib/board-types.ts','lib/check-cache.mjs','lib/cli.ts',
  'lib/copper-current.ts','lib/copper-gap.ts','lib/copper-graph.ts','lib/daemon-job.ts',
- 'lib/drc-run.ts','lib/drc-summary.ts','lib/env-paths.mjs','lib/env.mjs','lib/fnmatch.ts',
+ 'lib/drc-run.ts','lib/drc-summary.ts','lib/env-paths.mjs','lib/env.mjs','lib/explicit-spec.ts','lib/fnmatch.ts',
  'lib/footprint-move.ts','lib/gate-core.mjs','lib/gate-findings.mjs','lib/gate-inputs.mjs',
  'lib/gate-runtime.mjs','lib/grid-search.ts','lib/happy-tar.mjs','lib/iotroute-bin.ts',
  'lib/json-file.ts','lib/kicad-happy-board.ts','lib/kicad-happy-findings.ts',
