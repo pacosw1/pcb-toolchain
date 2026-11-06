@@ -5,7 +5,7 @@
 //   tools/bench.ts analyze DIR [--root DIR] [--json]
 //   tools/bench.ts compare RESULT_A.json RESULT_B.json [--arm-a ID] [--arm-b ID] [--json]
 // Every trial runs through the ordinary pcb run path; this tool never edits canonical CAD and never qualifies a design.
-import { copyFileSync, existsSync, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { projectRoot } from './lib/project-root.mjs';
 import { errorText, parseFlags, runMain, UsageError } from './lib/cli.ts';
@@ -99,12 +99,14 @@ async function run(path: string, values: { out?: string; 'runs-dir'?: string; ro
 
 async function runLocked(path: string, values: { 'runs-dir'?: string; 'no-analyze'?: boolean; json?: boolean }, context: { root: string; out: string; suite: Suite }): Promise<number> {
   const { root, out, suite } = context;
+  // Pin the suite before the first trial: a run that dies midway must not resume under another suite.
+  mkdirSync(out, { recursive: true });
   const suiteCopy = join(out, 'suite.json');
+  if (!existsSync(suiteCopy)) copyFileSync(path, suiteCopy);
   const records = await runSuite(suite, {
     root, runsDir: resolve(values['runs-dir'] ?? join(root, '.gate/cli')), out, executor: spawnExecutor,
     onTrial: (trial, item, index, total) => { if (!values.json) console.error(`[${index + 1}/${total}] ${trial.id}: ${item.status}${item.cause ? ` (${item.cause})` : ''} ${item.wall_s.toFixed(0)}s`); },
   });
-  if (!existsSync(suiteCopy)) copyFileSync(path, suiteCopy);
   if (values['no-analyze']) { console.log(`ran ${records.length} trials; analyze with: bench.ts analyze ${out}`); return 0; }
   return analyzeFolder(out, root, Boolean(values.json));
 }
