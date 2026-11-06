@@ -239,3 +239,57 @@ fn the_default_is_the_old_rudy() {
     assert_eq!(got.keys().collect::<Vec<_>>(), want.keys().collect::<Vec<_>>());
     want.iter().for_each(|(t, v)| within(got[t], *v, 5e-7));
 }
+
+#[test]
+fn cong_soft_is_off_by_default_and_must_not_be_negative() {
+    assert_eq!(Params::default().cong_soft, 0.0);
+    assert!(Params::from_args(&["cong_soft=-1"]).is_err());
+}
+
+#[test]
+fn cong_soft_scores_sparse_poses_that_the_clipped_term_cannot() {
+    let rects = json!([[-0.5, -0.5, 0.5, 0.5, 0.0]]);
+    let pr = problem(json!([unit("A", 3.0, 3.0, rects.clone()), unit("B", 9.0, 9.0, rects)]), json!([net("signal", &[0, 1])]), square_board(30.0, 1.0));
+    let cong = |extra: &[&str], b: Place| {
+        let p = small_params(extra);
+        let m = model(&pr, &p);
+        NetState::new(&m, &Layout::new(&m, &[(3.0, 3.0, 0), b])).congestion(&m)
+    };
+    let (near_pose, far_pose) = ((9.0, 9.0, 0), (21.0, 21.0, 0));
+    assert_eq!((cong(&[], near_pose), cong(&[], far_pose)), (0.0, 0.0));
+    let (a, b) = (cong(&["cong_soft=1"], near_pose), cong(&["cong_soft=1"], far_pose));
+    assert!(a > 0.0 && b > 0.0 && a != b, "{a} {b}");
+    near(cong(&["cong_soft=2"], near_pose), 2.0 * a);
+}
+
+#[test]
+fn cong_soft_leaves_the_clipped_overflow_unchanged() {
+    let pr = two_pads(3.0, 4.0);
+    let m = model(&pr, &small_params(&["cong_soft=3"]));
+    let m0 = model(&pr, &small_params(&[]));
+    let at = |m: &_| NetState::new(m, &Layout::new(m, &pr.initial_pose())).overflow(m);
+    assert_eq!(at(&m), at(&m0));
+}
+
+#[test]
+fn cong_soft_incremental_equals_full() {
+    let mut rng = PyRandom::new(11);
+    let pr = parse(random_problem(&mut rng, 8, 10));
+    let p = small_params(&["cong_soft=0.5", "pin_demand=0.4"]);
+    let m = model(&pr, &p);
+    let mut ev = Evaluator::new(&m, &p, &pr.initial_pose());
+    for k in 0..200 {
+        ev.propose(&[random_move(&mut rng, 1, 8, -2.0, 22.0)]);
+        if k % 2 == 0 { ev.commit() } else { ev.revert() }
+        within(ev.cost(), Evaluator::new(&m, &p, &ev.pose()).cost(), 5e-6);
+    }
+}
+
+#[test]
+fn cong_soft_off_gives_the_clipped_overflow_bit_for_bit_even_with_a_zero_threshold() {
+    let pr = two_pads(3.0, 4.0);
+    let m = model(&pr, &small_params(&["limit=0", "tracks=1"]));
+    let s = NetState::new(&m, &Layout::new(&m, &pr.initial_pose()));
+    assert!(s.overflow(&m) > 0.0, "{}", s.overflow(&m));
+    assert_eq!(s.congestion(&m).to_bits(), s.overflow(&m).to_bits());
+}

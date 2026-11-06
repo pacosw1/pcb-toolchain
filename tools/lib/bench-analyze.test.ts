@@ -31,10 +31,10 @@ test('a result is sealed, splits by case and detects an edit', () => {
 
 test('trials with no sealed run count as failures, not omissions', () => {
   const result = build((_, arm) => arm === 'new', id => id.endsWith('.new') && id.startsWith('ENV'));
-  assert.equal(result.no_run_trials, 6);
+  assert.equal(result.no_run_trials + result.timeout_trials, 6);
   assert.equal(result.overall.pairs, 12);
   assert.equal(result.overall.b.successes, 6);
-  assert.equal(result.evidence_complete, false);
+  assert.equal(result.evidence_complete, true);   // a deadline is a known failure, not missing evidence
 });
 
 test('compare pairs the same cases across two results and refuses a different suite or budget', () => {
@@ -56,3 +56,40 @@ function rehash(result: BenchResult): string {
   return sha(canonical(body));
 }
 import { canonicalJson as canonical } from './bench-analyze.ts';
+
+test('the native metric counts a clean native result even when the configured gate fails, and reports the gate as secondary', () => {
+  const nativeSuite = validateSuite({ ...suite, metric: 'native' });
+  const evaluationNative: Evaluation = {
+    status: 'passed', comparative_readiness: true, blockers: [],
+    observations: expandTrials(nativeSuite).map(t => ({ id: t.id, full_gate_success: false, evidence_valid: true, status: 'failed',
+      native: { errors: 0, opens: t.arm === 'new' ? 0 : 2, parity: 0 }, failure_class: t.arm === 'new' ? 'configured_or_electrical_check' : 'routing_opens' })),
+  };
+  const result = buildResult(nativeSuite, sha('suite'), records(), evaluationNative, null, {});
+  assert.equal(result.metric, 'native');
+  assert.equal(result.overall.b.successes, 12);
+  assert.equal(result.overall.a.successes, 0);
+  assert.equal(result.secondary.metric, 'gate');
+  assert.equal(result.secondary.overall.b.successes, 0);
+  assert.throws(() => validateSuite({ ...suite, metric: 'other' }), /metric/);
+});
+
+test('a run stopped at its own deadline is a timeout failure, not an unknown outcome', () => {
+  const recs = records().map(r => r.id.startsWith('REL') && r.arm === 'new' ? { ...r, run_status: 'timeout' } : r);
+  const ev = evaluation((_, arm) => arm === 'base');
+  ev.observations = ev.observations!.map(o => String(o.id).startsWith('REL') && String(o.id).endsWith('.new') ? { ...o, evidence_valid: false, full_gate_success: false } : o);
+  const result = buildResult(suite, sha('suite'), recs, ev, null, {});
+  assert.equal(result.timeout_trials, 6);
+  assert.equal(result.unknown_outcomes, 0);
+  assert.equal(result.trials.find(t => t.id === 'REL.r1.new')!.failure_class, 'timeout');
+});
+
+test('a router suite tolerates the unequal-execution blocker; a placement suite does not', () => {
+  const ev = { ...evaluation((_, arm) => arm === 'new'), status: 'blocked', comparative_readiness: false, blockers: [{ code: 'unequal_case_or_execution' }] };
+  assert.equal(buildResult(suite, sha('s'), records(), ev, null, {}).evidence_complete, false);
+  const router = buildResult(validateSuite({ ...suite, treatment: 'router' }), sha('s'), records(), ev, null, {});
+  assert.equal(router.evidence_complete, true);
+  assert.equal(router.evaluation.tolerated_blockers, 1);
+  const other = { ...ev, blockers: [{ code: 'unequal_case_or_execution' }, { code: 'trial_evidence_invalid' }] };
+  assert.equal(buildResult(validateSuite({ ...suite, treatment: 'router' }), sha('s'), records(), other, null, {}).evidence_complete, false);
+  assert.throws(() => validateSuite({ ...suite, treatment: 'x' }), /treatment/);
+});

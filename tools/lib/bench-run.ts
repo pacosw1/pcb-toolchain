@@ -13,6 +13,8 @@ export interface TrialRecord {
   schema: typeof TRIAL_RECORD; id: string; arm: string; status: TrialStatus; run_id: string | null; run_path: string | null;
   result_sha256: string | null; wall_s: number; exit_code: number | null; cause: string | null; command: string[];
   parent_run?: { path: string; sha256: string }; placement_input?: { path: string; sha256: string } | null;
+  /** The sealed run's own terminal status (passed, failed, timeout, cancelled), read from its result.json. */
+  run_status?: string | null;
 }
 export interface ExecContext { root: string; runsDir: string; timeoutMs: number; work?: string }
 export type Executor = (trial: PlannedTrial, context: ExecContext) => Promise<TrialRecord>;
@@ -56,13 +58,16 @@ function runStep(argv: string[], env: Record<string, string>, context: ExecConte
 
 const fill = (part: string, values: Record<string, string>): string => part.replace(/\{(work|prev_run|prev_run_path)\}/g, (whole, name: string) => values[name] ?? whole);
 
-interface Sealed { id: string; folder: string; path: string; sha: string }
+interface Sealed { id: string; folder: string; path: string; sha: string; status?: string | null }
 
 function sealedOf(stdout: string, context: ExecContext): Sealed | null {
   const id = runIdOf(stdout);
   if (!id) return null;
   const folder = join(context.runsDir, id), result = join(folder, 'result.json');
-  return existsSync(result) ? { id, folder, path: relative(context.root, folder), sha: sha256File(result) } : null;
+  if (!existsSync(result)) return null;
+  let status: string | null = null;
+  try { status = (JSON.parse(readFileSync(result, 'utf8')) as { status?: string }).status ?? null; } catch { /* unreadable: stays null */ }
+  return { id, folder, path: relative(context.root, folder), sha: sha256File(result), status };
 }
 
 /** The candidate a sealed run produced, as the file inside its workspace (not the daemon's path, which may be stale). */
@@ -103,8 +108,12 @@ export const spawnExecutor: Executor = async (trial, context) => {
   const outcome = last!;
   const cause = outcome.error ?? (outcome.timedOut ? 'deadline reached' : null);
   if (!sealed) return record(trial, { status: outcome.timedOut ? 'timeout' : 'no_run', run_id: runIdOf(outcome.stdout), wall_s, exit_code: outcome.code, cause: cause ?? (outcome.stderr.trim() || 'no sealed result') });
-  const chain = parent ? { parent_run: { path: parent.path, sha256: parent.sha }, placement_input: candidateOf(parent, context) } : {};
-  return record(trial, { status: outcome.timedOut ? 'timeout' : 'sealed', run_id: sealed.id, run_path: sealed.path, result_sha256: sealed.sha, wall_s, exit_code: outcome.code, cause, ...chain });
+  let chain: Partial<TrialRecord> = parent ? { parent_run: { path: parent.path, sha256: parent.sha }, placement_input: candidateOf(parent, context) } : {};
+  if (trial.route_input) {
+    const file = resolve(context.root, fill(trial.route_input, { work }));
+    chain = { ...chain, placement_input: existsSync(file) ? { path: relative(context.root, file), sha256: sha256File(file) } : null };
+  }
+  return record(trial, { status: outcome.timedOut ? 'timeout' : 'sealed', run_id: sealed.id, run_path: sealed.path, result_sha256: sealed.sha, run_status: sealed.status ?? null, wall_s, exit_code: outcome.code, cause, ...chain });
 };
 
 export const recordPath = (out: string, id: string): string => join(out, 'trials', `${id}.json`);
@@ -140,7 +149,7 @@ export function buildStudy(suite: Suite, records: TrialRecord[]): Record<string,
     if (!item || item.status !== 'sealed' || !item.run_path || !item.result_sha256) return [];
     return [{
       id: trial.id, kind: 'cli_run', path: item.run_path, sha256: item.result_sha256, arm: trial.arm, split: trial.split, family: trial.family,
-      case: trial.case, replicate: trial.replicate, placement_input: item.parent_run ? item.placement_input ?? null : trial.input,
+      case: trial.case, replicate: trial.replicate, placement_input: item.parent_run || trial.route_input ? item.placement_input ?? null : trial.input,
       ...(item.parent_run ? { parent_run: item.parent_run } : {}), execution_policy: 'operation/execution-policy.json',
     }];
   });
