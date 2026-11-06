@@ -614,3 +614,18 @@ test('post_verify hooks fill their placeholders and require a stage and argv', (
   assert.throws(() => postVerifyCommands([{ run: ['x'] }], '/r', '/c', 'n', {}), /stage and a run argv/);
   assert.deepEqual(postVerifyCommands(null, '/r', '/c', 'n', {}), []);
 });
+
+test('built-in rules reject a place edit after hooks without a checker hook', needsBinary, async t => {
+  const before = BOARD.replace('(net 0 "")', '(net 0 "") (footprint "X" (layer "F.Cu") (at 1 2) (property "Reference" "U1"))');
+  const after = before.replace('(at 1 2)', '(at 3 2)');
+  const root = project(t, WRITER(after)), boardFolder = join(root, 'hardware-design/boards/X');
+  writeFileSync(join(boardFolder, 'cad/X.kicad_pcb'), before);
+  writeFileSync(join(boardFolder, 'SPEC.md'), 'limit');
+  writeFileSync(join(boardFolder, 'placement-constraints.json'), JSON.stringify({ schema: 'iot-lab.engineering-constraints.v1', rules: [{ id: 'island', kind: 'region', refs: ['U1'], box_mm: [0, 0, 2, 4], metric: 'origin_in_box', placement: 'inside', source: { path: 'hardware-design/boards/X/SPEC.md', sha256: sha(join(boardFolder, 'SPEC.md')), page: 1 } }] }));
+  sealFixtureBoard(root, 'X');
+  const { folder, result } = await edit(root);
+  assert.equal(result.scope, 'candidate_place_check', String(result.cause));
+  assert.equal(result.candidate_verified, false);
+  assert.equal(existsSync(join(folder, 'gate/result.json')), false);
+  assert.match(readFileSync(join(folder, 'operation/placement-constraints.log'), 'utf8'), /FAIL island measured=-1/);
+});

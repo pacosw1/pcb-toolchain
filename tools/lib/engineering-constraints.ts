@@ -3,6 +3,8 @@
 //
 // The placer's problem-level screens are in tools/placer/engineering-problem.ts and, for the search,
 // tools/placer/core/src/engineering.rs.
+import { realpathSync } from 'node:fs';
+import { isAbsolute, relative } from 'node:path';
 import { verifyBinding, type Binding } from './block-bindings.ts';
 import { readBlock } from './block-reuse.ts';
 import { errorText } from './cli.ts';
@@ -18,10 +20,11 @@ import { isDict, need, pyFloat, sameValue, type Dict } from './py-values.ts';
 import { field, forms, type SList } from './sexpr.ts';
 
 export const SCHEMA = 'iot-lab.engineering-constraints.v1';
-const KINDS = ['fixed', 'rigid_group', 'pin_distance', 'clearance', 'connector_access', 'escape'];
+const KINDS = ['fixed', 'rigid_group', 'pin_distance', 'part_distance', 'region', 'clearance', 'connector_access', 'escape'];
 const CORE_FIELDS = ['schema', 'root', 'board', 'manifest', 'native', 'inputs', 'rules', 'geometry', 'bindings'] as const;
-const RULE_FIELDS: Record<string, string[]> = {
+export const RULE_FIELDS: Record<string, string[]> = {
   fixed: ['refs'], rigid_group: ['refs', 'binding'], pin_distance: ['a', 'b', 'metric', 'min_mm', 'max_mm'],
+  part_distance: ['a', 'b', 'metric', 'min_mm', 'max_mm'], region: ['refs', 'box_mm', 'placement', 'metric'],
   clearance: ['a', 'b', 'metric', 'min_mm'], connector_access: ['ref', 'metric', 'corridor_mm', 'exit_side'],
   escape: ['refs', 'pads', 'metric', 'layers', 'width_mm', 'clearance_mm', 'reach_mm', 'grid_mm'],
 };
@@ -99,6 +102,7 @@ function sourceDocument(base: string, source: unknown): string {
   if (!whole || Number(source.page) < 1) {
     throw new Error('constraint requires a reviewed document and one-based page');
   }
+  if (typeof source.path !== 'string' || isAbsolute(source.path) || source.path.split(/[\\/]/).includes('..') || relative(realpathSync(base), realpathSync(resolveIn(base, source.path))).startsWith('..')) throw new Error('constraint source must stay inside project root');
   const path = resolveIn(base, need(source, 'path'));
   if (sha256File(path) !== source.sha256) throw new Error(`constraint source changed: ${path}`);
   return path;
@@ -210,7 +214,8 @@ function endpoint(geometry: Geometry, selector: unknown): Pad {
 }
 
 function ruleRefs(rule: Rule): Set<string> {
-  if (['fixed', 'rigid_group', 'escape'].includes(rule.kind)) return new Set(need<string[]>(rule, 'refs'));
+  if (['fixed', 'rigid_group', 'escape', 'region'].includes(rule.kind)) return new Set(need<string[]>(rule, 'refs'));
+  if (rule.kind === 'part_distance') return new Set([rule.a as string, ...(rule.b as string[])]);
   if (rule.kind === 'connector_access') return new Set([need<string>(rule, 'ref')]);
   return new Set([need<string>(need(rule, 'a'), 'ref'), need<string>(need(rule, 'b'), 'ref')]);
 }
@@ -285,9 +290,10 @@ function checkEscape(rule: Rule, refs: Set<string>, geometry: Geometry): void {
   }
 }
 
-function normalizedRules(root: string, envelope: Dict, geometry: Geometry): { rules: Rule[]; sources: Map<string, string>; bindings: Binding[] } {
+export function normalizedRules(root: string, envelope: Dict, geometry: Geometry): { rules: Rule[]; sources: Map<string, string>; bindings: Binding[] } {
   if (envelope.schema !== SCHEMA || !Array.isArray(envelope.rules)) throw new Error('reviewed placement constraints schema missing');
   const given = exactTree(envelope.rules) as Dict[];
+  if (given.some(rule => !isDict(rule))) throw new Error('constraint must be an object');
   const declared = new Map(given.filter(isDict).map(rule => [rule.id, rule as Rule]));
   const rules: Rule[] = [], sources = new Map<string, string>(), bindings: Binding[] = [], seen = new Set<string>();
   for (const original of given) {
@@ -300,15 +306,27 @@ function normalizedRules(root: string, envelope: Dict, geometry: Geometry): { ru
     if (unknown.length) throw new Error(`unsupported constraint fields: ${unknown.join(',')}`);
     const path = sourceDocument(root, need(rule, 'source'));
     sources.set(path, sha256File(path));
+    if (rule.kind === 'part_distance' && (typeof rule.a !== 'string' || !Array.isArray(rule.b) || !rule.b.length || rule.b.some(ref => typeof ref !== 'string') || new Set(rule.b).size !== rule.b.length)) throw new Error('part distance needs an origin and distinct nearest refs');
+    if (['fixed', 'rigid_group', 'escape', 'region'].includes(rule.kind) && !Array.isArray(rule.refs)) throw new Error('constraint needs distinct exact native refs');
     const refs = ruleRefs(rule);
     if (!refs.size || [...refs].some(ref => !geometry.refs.has(ref))) throw new Error(`constraint references absent native parts: ${rule.id}`);
     const { kind } = rule;
-    if (['fixed', 'rigid_group', 'escape'].includes(kind) && (!Array.isArray(rule.refs) || refs.size !== rule.refs.length)) {
+    if (['fixed', 'rigid_group', 'escape', 'region'].includes(kind) && (!Array.isArray(rule.refs) || refs.size !== rule.refs.length)) {
       throw new Error('constraint needs distinct exact native refs');
     }
     if (kind === 'rigid_group') {
       if (refs.size < 2) throw new Error('rigid group requires at least two parts');
       if (rule.binding) bindings.push(checkBoundBlock(rule, refs, declared, root, sources));
+    } else if (kind === 'part_distance') {
+      if (rule.metric !== 'origin_nearest_euclidean') throw new Error('unsupported part distance metric');
+      if (!('min_mm' in rule) && !('max_mm' in rule)) throw new Error('sourced min/max distance required');
+      for (const key of ['min_mm', 'max_mm']) if (key in rule && numeric(rule[key]) < 0) throw new Error('negative sourced distance');
+      if (limit(rule, 'min_mm', 0) > limit(rule, 'max_mm', Infinity)) throw new Error('contradictory sourced distances');
+    } else if (kind === 'region') {
+      if (rule.metric !== 'origin_in_box' || !['inside', 'outside'].includes(rule.placement as string)) throw new Error('unsupported region metric or placement');
+      if (!Array.isArray(rule.box_mm) || rule.box_mm.length !== 4) throw new Error('region requires a nonempty rectangle');
+      const [a, b, c, d] = rule.box_mm.map(numeric) as Box;
+      if (!(a < c && b < d)) throw new Error('region requires a nonempty rectangle');
     } else if (kind === 'pin_distance' || kind === 'clearance') {
       checkDistance(rule, geometry);
     } else if (kind === 'connector_access') {
@@ -357,15 +375,36 @@ function measureMove(rule: Rule, original: Geometry, geometry: Geometry): Measur
   const bad = rule.kind === 'fixed' || retained
     ? transforms.some(move => move.some(value => value !== 0))
     : new Set(transforms.map(move => move.map(value => value + 0).join(' '))).size !== 1;
-  return { miss: bad ? 1 : 0, detail: { transforms, policy: retained ? 'fixed_retained_copper' : rule.kind } };
+  return { miss: bad ? 1 : 0, detail: { measured: bad ? 1 : 0, max: 0, margin: bad ? -1 : 0, transforms, policy: retained ? 'fixed_retained_copper' : rule.kind } };
 }
 
 function measureDistance(rule: Rule, geometry: Geometry): Measured {
+  if (rule.kind === 'part_distance') {
+    const origin = geometry.refs.get(rule.a as string)!.origin;
+    return distanceMeasurement(rule, Math.min(...(rule.b as string[]).map(ref => dist(origin, geometry.refs.get(ref)!.origin))));
+  }
   const a = endpoint(geometry, rule.a), b = endpoint(geometry, rule.b);
   const measured = rule.kind === 'pin_distance' ? dist(a.center, b.center) : padGap(a, b);
+  return distanceMeasurement(rule, measured);
+}
+
+function distanceMeasurement(rule: Rule, measured: number): Measured {
   const low = limit(rule, 'min_mm', 0), high = limit(rule, 'max_mm', Infinity);
   const limits = Object.fromEntries(['min_mm', 'max_mm'].filter(key => key in rule).map(key => [key, rule[key]]));
-  return { miss: Math.max(low - measured, 0, measured - high), detail: { measured_mm: measured, metric: rule.metric, ...limits } };
+  return { miss: Math.max(low - measured, 0, measured - high), detail: { measured_mm: measured, metric: rule.metric, margin_mm: Math.min('min_mm' in rule ? measured - low : Infinity, high - measured), ...limits } };
+}
+
+function measureRegion(rule: Rule, geometry: Geometry): Measured {
+  const [x0, y0, x1, y1] = (rule.box_mm as unknown[]).map(numeric) as Box;
+  const margins = (rule.refs as string[]).map(ref => {
+    const [x, y] = geometry.refs.get(ref)!.origin;
+    const outside = hypot(Math.max(x0 - x, 0, x - x1), Math.max(y0 - y, 0, y - y1));
+    const inside = Math.min(x - x0, x1 - x, y - y0, y1 - y);
+    const signed = outside > 0 ? -outside : inside;
+    return { ref, margin_mm: rule.placement === 'inside' ? signed : -signed };
+  });
+  const margin = Math.min(...margins.map(row => row.margin_mm));
+  return { miss: Math.max(0, -margin), detail: { measured_mm: margin, min_mm: 0, margin_mm: margin, placement: rule.placement, box_mm: rule.box_mm, origins: margins } };
 }
 
 function measureConnector(rule: Rule, geometry: Geometry): Measured {
@@ -382,6 +421,7 @@ function measureConnector(rule: Rule, geometry: Geometry): Measured {
   return {
     miss: clashes.length || !reaches ? 1 : 0,
     detail: {
+      measured: clashes.length || !reaches ? 1 : 0, max: 0, margin: clashes.length || !reaches ? -1 : 0,
       corridor_world_mm: box, blocking_refs: clashes, reaches_requested_edge: reaches,
       scope: 'conservative_2d_courtyard_screen; enclosure/harness/3d review remains required',
     },
@@ -394,7 +434,7 @@ export function evaluate(contract: Contract, geometry: Geometry): { blockers: Di
   for (const rule of contract.rules) {
     if (rule.kind === 'escape') continue;   // Exact native evidence is checked separately, never a pose proxy.
     const { miss, detail } = rule.kind === 'fixed' || rule.kind === 'rigid_group' ? measureMove(rule, original, geometry)
-      : rule.kind === 'connector_access' ? measureConnector(rule, geometry) : measureDistance(rule, geometry);
+      : rule.kind === 'region' ? measureRegion(rule, geometry) : rule.kind === 'connector_access' ? measureConnector(rule, geometry) : measureDistance(rule, geometry);
     const refs = sortedRefs(rule);
     measurements.push({ id: rule.id, kind: rule.kind, refs, ...detail });
     if (miss) blockers.push({ code: 'constraint_violation', id: rule.id, kind: rule.kind, refs, miss, source: rule.source, ...detail });

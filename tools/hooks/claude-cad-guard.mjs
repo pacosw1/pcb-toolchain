@@ -5,7 +5,7 @@
 import {readFileSync} from 'node:fs';
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
-const CAD_FILE = /\.kicad_(pcb|sch|pro|dru)$/;
+const CAD_FILE = /(?:\.kicad_(pcb|sch|pro|dru)|\/placement-constraints\.json)$/;
 
 const decision = (permissionDecision, permissionDecisionReason) => JSON.stringify({
   hookSpecificOutput: {hookEventName: 'PreToolUse', permissionDecision, permissionDecisionReason},
@@ -20,6 +20,7 @@ export function guard(input) {
     }
   } else if (tool === 'Bash') {
     const command = String(args.command ?? '');
+    if (/\bpcb\b[^\n;&|]*\bconstraints\b/.test(command) && /--(?:add|remove)\b/.test(command)) return decision('ask', 'Approve the board placement rule change and its reason.');
     if (command.includes('pcb seal') && command.includes('--accept')) {
       return decision('ask', 'A person must approve an accepted CAD edit: tools/pcb seal --accept records the current CAD as the sealed state.');
     }

@@ -66,3 +66,10 @@ test('malformed input exits 0 with empty stdout and one line on stderr', () => {
     assert.equal(result.stderr.trim().split('\n').length, 1);
   }
 });
+
+test('board placement rule edits are denied and mutation commands ask', () => {
+  for (const tool_name of ['Edit', 'Write']) assert.equal(decisionOf(run({tool_name, tool_input:{file_path:'/p/hardware-design/boards/X/placement-constraints.json'}})).permissionDecision,'deny');
+  for (const flag of ['--add new.json','--remove distance']) assert.equal(decisionOf(run({tool_name:'Bash',tool_input:{command:`tools/pcb constraints X ${flag} --reason updated`}})).permissionDecision,'ask');
+  assert.equal(decisionOf(run({tool_name:'Bash',tool_input:{command:'tools/pcb --project /tmp/board constraints X --remove near --reason updated'}})).permissionDecision,'ask');
+  assert.equal(run({tool_name:'Bash',tool_input:{command:'tools/pcb constraints X --json'}}).stdout,'');
+});

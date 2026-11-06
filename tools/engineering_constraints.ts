@@ -1,7 +1,7 @@
 // Read-only reviewed placement checks; reports are written only to the supervisor's owned output.
 import { parseArgs } from 'node:util';
 import { checkManifest } from './lib/engineering-constraints.ts';
-import { verifyManifest } from './lib/part-review.ts';
+import { verifyManifest } from './lib/placement-rules.ts';
 import { verifyEscapeEvidence } from './lib/route-decision-escape.ts';
 import { atomicJson } from './lib/json-file.ts';
 import { jsonDumps } from './lib/py-compat.mjs';

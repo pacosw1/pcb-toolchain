@@ -97,7 +97,8 @@ const json = (file) => {
 };
 const bySeverity = (items, severity) => (items ?? []).filter((v) => v.severity === severity).length;
 
-const c = cfg.checks ?? {};
+const c = {...cfg.checks};
+if (existsSync(join(dir, 'placement-constraints.json')) && !c.placement) c.placement = 'placement-constraints.json';
 // Checks that read the board through board-json: they need no pcbnew, and their verdict follows the reader.
 const boardChecks = BOARD_JSON_CHECKS;
 const boardReader = join(process.env.PCB_TOOLCHAIN_ROOT || root, 'bin/iotroute-linux-x86_64');
@@ -120,7 +121,7 @@ if (flag('--findings-baseline')) {
     findingsBaseline=loadFindingsBaseline(path,board,cfg.project);
   } catch (error) { preflightErrors.push(`findings baseline: ${error.message}`); }
 }
-for (const [enabled,file] of [[c.erc,sch],[c.drc,pcb],...['planes','pairs','paths','rf'].map(k=>[c[k],c[k] && spec(c[k])]),
+for (const [enabled,file] of [[c.erc,sch],[c.drc,pcb],...['planes','pairs','paths','rf','placement'].map(k=>[c[k],c[k] && spec(c[k])]),
   ...['exempt','return_planes'].map(k=>[c.kicad_happy?.[k],c.kicad_happy?.[k] && spec(c.kicad_happy[k])])]) {
   if (enabled && !existsSync(file)) preflightErrors.push(`missing required input: ${relative(root,file)}`);
 }
@@ -154,6 +155,9 @@ gateEvent(logDir,'preflight.end',{stage:'preflight',status:preflightErrors.lengt
 gateEvent(logDir,'stage.end',preflightSpan.end(preflightErrors.length ? 'failed' : 'passed'));
 const start = fingerprint(root,inputs.files,versions,externalRoots);
 const jobs = {
+  async placement() {
+    return {placement_failures: countFrom(await output('placement', process.execPath, [...TS_NODE, tool('placement-check.ts'), board, spec(c.placement), pcb, join(logDir, 'placement-constraints.json')]), /placement: (\d+) FAIL/)};
+  },
   async erc() {
     const file = join(logDir, 'erc.json');
     const result = await runTool(logDir,'erc', kicadCli, ['sch', 'erc', '--format', 'json', '--severity-all', '--units', 'mm', '-o', file, sch]);
@@ -215,7 +219,7 @@ const checks = {};
 const cache = {enabled:reuse,hits:0,misses:0,rejected:0};
 const pendingCache = [];
 const cacheDir = cacheDirArg ? resolve(cacheDirArg) : join(dir,'.gate/check-cache');
-const scripts = {planes:'si_planes.ts',pairs:'si_pairs.ts',viapads:'pcbtool.ts',paths:'pcbtool.ts',kicad_happy:'kicad_happy_gate.ts',rf:'rf_lines.ts',port_labels:'port_labels.ts'};
+const scripts = {placement:'placement-check.ts',planes:'si_planes.ts',pairs:'si_pairs.ts',viapads:'pcbtool.ts',paths:'pcbtool.ts',kicad_happy:'kicad_happy_gate.ts',rf:'rf_lines.ts',port_labels:'port_labels.ts'};
 function keyFor(k,files) {
   const names=['node','kicad',...(k==='kicad_happy' ? ['kicad_happy_runtime','kicad-happy'] : ['erc','drc','port_labels',...boardChecks].includes(k) ? [] : ['pcbnew'])];
   return checkKey({root,stage:k,files:checkInputs(root,files,k,scripts[k],environment.repositories),

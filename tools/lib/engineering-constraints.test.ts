@@ -210,3 +210,35 @@ test('a bound block is an actual native instance and never transfers qualificati
   assert.equal(check().status, 'stale');
   assert.ok(readFileSync(bindingPath, 'utf8').includes('"block_id": "MODULE"'));
 });
+
+test('part distance uses the nearest origin and reports the limiting margin', () => {
+  rules(rule('part_distance', { a: 'U1', b: ['C1', 'J1'], metric: 'origin_nearest_euclidean', max_mm: 8 }));
+  assert.equal(check().measurements[0].measured_mm, 4);
+  assert.equal(check().measurements[0].margin_mm, 4);
+  rules(rule('part_distance', { a: 'U1', b: ['C1'], metric: 'origin_nearest_euclidean', min_mm: 10 }));
+  assert.equal(check().blockers[0].miss, 6);
+  assert.equal(check().measurements[0].margin_mm, -6);
+});
+
+test('regions use Euclidean outside distance and nearest-edge inside distance', () => {
+  rules(rule('region', { refs: ['U1', 'C1'], box_mm: [11, 11, 15, 15], placement: 'inside', metric: 'origin_in_box' }));
+  assert.equal(check().blockers[0].miss, Math.SQRT2);
+  rules(rule('region', { refs: ['U1'], box_mm: [8, 8, 12, 12], placement: 'outside', metric: 'origin_in_box' }));
+  assert.equal(check().blockers[0].miss, 2);
+  assert.equal(check(candidate(text.replace('(at 10 10)', '(at 8 10)'))).status, 'passed');
+  rules(rule('region', { refs: ['U1'], box_mm: [10, 10, 12, 12], placement: 'inside', metric: 'origin_in_box' }));
+  assert.equal(check().status, 'passed');
+});
+
+test('new rules reject unknown fields, metrics, refs and invalid limits', () => {
+  const distance = { a: 'U1', b: ['C1'], metric: 'origin_nearest_euclidean', max_mm: 8 };
+  for (const fields of [{ ...distance, b: [] }, { ...distance, b: ['C1', 'C1'] }, { ...distance, b: ['H99'] },
+    { ...distance, metric: 'trace_length' }, { ...distance, typo: 1 }, { ...distance, min_mm: 9 }, { ...distance, max_mm: -1 }]) {
+    rules(rule('part_distance', fields));
+    assert.equal(check().blockers[0].code, 'engineering_review_required');
+  }
+  for (const fields of [{ box_mm: [0, 0, 0, 2] }, { placement: 'near' }, { metric: 'courtyard_in_box' }, { refs: [] }]) {
+    rules(rule('region', { refs: ['U1'], box_mm: [0, 0, 20, 20], placement: 'inside', metric: 'origin_in_box', ...fields }));
+    assert.equal(check().blockers[0].code, 'engineering_review_required');
+  }
+});

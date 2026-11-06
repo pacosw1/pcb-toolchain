@@ -6,7 +6,7 @@ import { verifyBinding } from '../lib/block-bindings.ts';
 import { contractDigest, evaluate, exactTree, inputsCurrent, point, reviewedContract, transformedBox, type Contract, type Geometry, type Part, type ReviewServices, type Rule } from '../lib/engineering-constraints.ts';
 import { fingerprint } from '../lib/fingerprint.ts';
 import { parseTyped } from '../lib/json-file.ts';
-import { verifyManifest } from '../lib/part-review.ts';
+import { verifyManifest } from '../lib/placement-rules.ts';
 import { Float, jsonDumps, number } from '../lib/py-compat.mjs';
 import { pyMod } from '../lib/py-math.ts';
 import { resolvePath } from '../lib/py-path.ts';

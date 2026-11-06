@@ -144,3 +144,36 @@ fn a_rule_this_module_cannot_measure_stops_the_run() {
     assert!(Contract::new(&contract(ambiguous), &pr.units).unwrap_err().to_string().contains("pad endpoint"));
     assert!(Contract::new(&contract(json!([{"id": "t", "kind": "thermal_loop", "refs": ["U1"]}])), &pr.units).is_err());
 }
+
+#[test]
+fn origin_distance_uses_the_nearest_part_and_reaches_each_unit() {
+    let rule = json!([{"id":"near", "kind":"part_distance", "a":"U1", "b":["C1","J1"], "metric":"origin_nearest_euclidean", "min_mm":10}]);
+    assert_eq!(miss(rule.clone(), 0, HOME.to_vec()), 6.0);
+    assert_eq!(miss(rule.clone(), 1, HOME.to_vec()), 6.0);
+    assert_eq!(miss(rule, 2, HOME.to_vec()), 6.0);
+    let max = json!([{"kind":"part_distance", "a":"U1", "b":["C1"], "metric":"origin_nearest_euclidean", "max_mm":3}]);
+    assert_eq!(miss(max, 0, HOME.to_vec()), 1.0);
+}
+
+#[test]
+fn regions_match_the_native_screen_at_corners_and_edges() {
+    let inside = json!([{"kind":"region", "refs":["U1","C1"], "box_mm":[11,11,15,15], "placement":"inside", "metric":"origin_in_box"}]);
+    assert_eq!(miss(inside, 0, HOME.to_vec()), 2.0_f64.sqrt());
+    let outside = json!([{"kind":"region", "refs":["U1"], "box_mm":[8,8,12,12], "placement":"outside", "metric":"origin_in_box"}]);
+    assert_eq!(miss(outside.clone(), 0, HOME.to_vec()), 2.0);
+    assert_eq!(miss(outside, 0, vec![(8.0,10.0,0),HOME[1],HOME[2]]), 0.0);
+}
+
+#[test]
+fn new_rules_fail_closed() {
+    let valid = json!({"kind":"part_distance", "a":"U1", "b":["C1"], "metric":"origin_nearest_euclidean", "max_mm":8});
+    let (pr, _) = problem(contract(json!([])));
+    for (key, value) in [("metric",json!("unknown")), ("b",json!([])), ("b",json!(["C1","C1"])), ("extra",json!(1)), ("min_mm",json!(9)), ("max_mm",json!(-1))] {
+        let mut rule = valid.clone(); rule[key] = value;
+        assert!(Contract::new(&contract(json!([rule])), &pr.units).is_err());
+    }
+    for rule in [json!({"kind":"region","refs":["U1"],"box_mm":[0,0,0,2],"placement":"inside","metric":"origin_in_box"}),
+        json!({"kind":"region","refs":["U1"],"box_mm":[0,0,2,2],"placement":"near","metric":"origin_in_box"})] {
+        assert!(Contract::new(&contract(json!([rule])), &pr.units).is_err());
+    }
+}
