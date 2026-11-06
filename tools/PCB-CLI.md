@@ -279,6 +279,26 @@ person made in KiCad, and it creates the first seal of a board. `--reason` is re
 restore the files with `git checkout -- FILE`. KiCad can rewrite `.kicad_pro` when a person only opens a project;
 accept it or restore it.
 
+To make a Claude Code agent follow the rule, enable the hook in the `.claude/settings.json` of the project. The hook
+denies `Edit`, `Write`, `MultiEdit` and `NotebookEdit` on CAD files under `hardware-design/`, and it asks a person
+before a `pcb seal ... --accept` command runs:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [{ "type": "command", "command": "node tools/hooks/claude-cad-guard.mjs" }]
+      }
+    ]
+  }
+}
+```
+
+The staged-commit check (`tools/check-staged-gates.mjs`) hashes the staged CAD of each board and fails the commit
+when it does not agree with the staged or committed `cad-seal.json`.
+
 ## Release, blocks and measurement
 
 [Release workflow](RELEASE-WORKFLOW.md) describes fresh staged fabrication,

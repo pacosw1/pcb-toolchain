@@ -4,6 +4,7 @@ import {join, resolve, relative, dirname} from 'node:path';
 import {tmpdir} from 'node:os';
 import {gateInputs} from './gate-inputs.mjs';
 import {poolSize, runPool, ProcessGroups} from './gate-pool.mjs';
+import {sealStatus, verifySeal} from './cad-seal.ts';
 
 // A changed path gates a board when it is one of that board's own files (gate.json, board JSONs, project cad/),
 // an input of the board's gate in the staged snapshot, or an input recorded in the board's committed gate-metrics.json
@@ -51,6 +52,26 @@ export function pinnedRelease(snapshot, home = process.env.HOME) {
   if(installed!==version) throw new Error(`toolchain.lock pins pcb-toolchain ${version}, not installed: run pcb-toolchain scripts/install.sh --lock toolchain.lock`);
   return {bundle,version};
 }
+// The CAD seal (tools/lib/cad-seal.ts) of each board whose sealed CAD or cad-seal.json is staged must agree with the staged CAD.
+// SNAPSHOT is the checkout of the index, so the hashes come from the staged blobs and a board without a staged or committed
+// seal has none there. Throws one error for all failing boards. A snapshot that is not canonical fails closed.
+export function checkStagedSeals(snapshot, changed) {
+  const dir=join(snapshot,'hardware-design/boards');
+  if(!existsSync(dir)) return;
+  const sealed=/\.kicad_(pcb|sch|pro|dru)$/;
+  const failures=[];
+  for(const board of readdirSync(dir).filter(b=>existsSync(join(dir,b,'gate.json'))).sort()) {
+    const seal=`hardware-design/boards/${board}/cad-seal.json`;
+    let recorded=[];try {recorded=Object.keys(JSON.parse(readFileSync(join(snapshot,seal),'utf8')).files ?? {});} catch { /* no or unreadable seal: verifySeal reports it */ }
+    const files=new Set([...gateInputs(snapshot,board).files.map(p=>relative(snapshot,p)),...recorded]);
+    if(!changed.some(p=>p===seal || (sealed.test(p) && files.has(p)))) continue;
+    try {
+      if(sealStatus(snapshot,board).state==='not_canonical') throw new Error(`${board}: the snapshot ${snapshot} is not canonical, so its CAD seal cannot be checked`);
+      verifySeal(snapshot,board);
+    } catch(e) {failures.push(e.message);}
+  }
+  if(failures.length) throw new Error(`staged CAD does not agree with the CAD seal:\n${failures.join('\n')}`);
+}
 export function affectedGates(root, changed, oldConfigs = new Map(), headInputs = new Map()) {
   return stagedGateMap(root,changed,oldConfigs,headInputs).boards;
 }
@@ -70,6 +91,7 @@ export async function checkStaged(root) {
     if(git(['write-tree']).trim()!==indexTree) throw new Error('index changed while taking gate snapshot; retry the commit');
     const release=pinnedRelease(snapshot);
     if(release) execFileSync('node',[join(release.bundle,'bin/toolchain_sync.mjs'),snapshot,'--no-exclude'],{stdio:['ignore','inherit','inherit']});
+    checkStagedSeals(snapshot,changed);
     console.log(`staged gates: tools ${release ? `pcb-toolchain ${release.version}` : 'tracked in the project'}`);
     const oldConfigs=new Map();
     const paths=git(['ls-tree','-r','--name-only','HEAD','hardware-design/boards']).split('\n').filter(p=>/\/gate.json$/.test(p));
