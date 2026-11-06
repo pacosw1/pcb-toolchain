@@ -69,3 +69,23 @@ If the scoped result loses verified quality, fails acceptance, or provides no
 useful saving, leave it off and report that result. No numeric improvement
 threshold or default enablement is preregistered. A negative result is valid;
 no broader search algorithm or automatic rule relaxation follows from it.
+
+## Launcher correction before the scoped comparison
+
+The first full control reproduced the exact historical native candidate, with
+native 0/0/0 and the completed reference screen clean. Four separate configured
+checkers then refused because the test launcher omitted the project-root
+`bin/iotroute-linux-x86_64` alias used by the existing board-JSON helper. The
+binary was present at `/bench/bin` and through `IOTROUTE_BIN`; this was a runtime
+path omission, not a routing or rule failure. The failed checker receipts remain
+retained, with null metrics kept as errors.
+
+Before any scoped run, restore the same runtime aliases as the original harness
+in all owned copies and run one fresh gate-only check on the identical control
+candidate. Do not reroute the control. Record that gate's cost separately; the
+original whole-harness timing includes incomplete checks and is not a valid
+fully verified end-to-end baseline. Compare the disjoint native-stage wall and
+CPU directly between modes, and show configured checking cost separately.
+No rules, sources, resource limits, seeds, work limits or acceptance exceptions
+change. An independent container-absence check also corrects the controller's
+case-sensitive matching of Docker's lower-case `no such object` message.
