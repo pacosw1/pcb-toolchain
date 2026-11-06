@@ -1,16 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,readdirSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,readdirSync,existsSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {execFileSync} from 'node:child_process';
 import {affectedGates,stagedGateMap,checkStaged,recordedInputs,pinnedRelease} from './staged-gates.mjs';
+import {reseal} from './cad-seal.ts';
 const fixture=t=>{
  const root=mkdtempSync(join(tmpdir(),'staged-gate-test-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  const put=(p,v)=>{mkdirSync(join(root,p,'..'),{recursive:true});writeFileSync(join(root,p),v);};
  put('hardware-design/boards/BASE-PWR/gate.json',JSON.stringify({project:'cad/A/A',checks:{erc:true,drc:true}}));
  put('hardware-design/boards/BASE-PWR-B/gate.json',JSON.stringify({project:'../BASE-PWR/cad/B/B',checks:{erc:true,drc:true}}));
  return {root,put};
+};
+// Writes cad-seal.json for each gate board of the working tree, as a sealed tool would. Drops the local log, which is no test data.
+const seal=root=>{
+ const boards=join(root,'hardware-design/boards');
+ for(const b of readdirSync(boards)) if(existsSync(join(boards,b,'gate.json'))) reseal(root,b,{tool:'test',run_id:null});
+ rmSync(join(root,'.gate'),{recursive:true,force:true});
 };
 test('rev B maps to its separate gate; deleted/shared assets map conservatively',t=>{
  const {root}=fixture(t);
@@ -27,8 +34,8 @@ test('partial staging checks the index and preserves unrelated edits',async t=>{
  put('tools/gate.mjs',`import {readFileSync,writeFileSync} from 'node:fs';\nconst b=process.argv[2];const p='hardware-design/boards/'+b+'/';const c=JSON.parse(readFileSync(p+'gate.json'));const text=readFileSync(p+c.project+'.kicad_pcb','utf8');if(text!=='staged') process.exit(1);writeFileSync(p+'gate-metrics.json',JSON.stringify({metrics:{drc_errors:0},checked:text}));`);
  put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','initial');
  put('hardware-design/boards/BASE-PWR-B/gate-metrics.json','{}');
- git(['add','.']);git(['commit','-qm','initial']);
- put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','staged');git(['add','hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb']);
+ seal(root);git(['add','.']);git(['commit','-qm','initial']);
+ put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','staged');seal(root);git(['add','hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','hardware-design/boards/BASE-PWR/cad-seal.json']);
  put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','unstaged');put('unrelated.txt','keep');
  await checkStaged(root);
  assert.equal(readFileSync(join(root,'hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb'),'utf8'),'unstaged');
@@ -41,8 +48,8 @@ test('failure retains logs and leaves the index unchanged',async t=>{
  git(['init','-q']);git(['config','user.email','test@example.invalid']);git(['config','user.name','Test']);
  put('tools/gate.mjs',`import {mkdirSync,writeFileSync} from 'node:fs';const p='hardware-design/boards/'+process.argv[2]+'/.gate';mkdirSync(p,{recursive:true});writeFileSync(p+'/drc.log','checker failed');process.exit(1);`);
  put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','initial');
- git(['add','.']);git(['commit','-qm','initial']);
- put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','staged');git(['add','.']);
+ seal(root);git(['add','.']);git(['commit','-qm','initial']);
+ put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','staged');seal(root);git(['add','.']);
  const before=git(['write-tree']).trim();
  await assert.rejects(checkStaged(root));assert.equal(git(['write-tree']).trim(),before);
  const evidence=join(root,'.gate',readdirSync(join(root,'.gate'))[0]);
@@ -54,8 +61,8 @@ test('index changes during validation stop metric staging',async t=>{
  const git=args=>execFileSync('git',['-C',root,...args],{encoding:'utf8'});
  git(['init','-q']);git(['config','user.email','test@example.invalid']);git(['config','user.name','Test']);
  put('tools/gate.mjs',`import {writeFileSync} from 'node:fs';import {execFileSync} from 'node:child_process';const root=${JSON.stringify(root)};writeFileSync(root+'/concurrent.txt','another agent');execFileSync('git',['-C',root,'add','concurrent.txt']);writeFileSync('hardware-design/boards/'+process.argv[2]+'/gate-metrics.json','{}');`);
- put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','initial');git(['add','.']);git(['commit','-qm','initial']);
- put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','staged');git(['add','.']);
+ put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','initial');seal(root);git(['add','.']);git(['commit','-qm','initial']);
+ put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','staged');seal(root);git(['add','.']);
  await assert.rejects(checkStaged(root),/index changed during gate checks/);
  assert.ok(git(['diff','--cached','--name-only']).includes('concurrent.txt'));
  assert.ok(!git(['diff','--cached','--name-only']).includes('gate-metrics.json'));
@@ -121,7 +128,7 @@ test('parallel boards give the same staged metrics as serial; a failure names th
   }
   writeFileSync(p+'gate-metrics.json',JSON.stringify({metrics:{erc_errors:0},board:b,checked:text})+'\\n');`);
  for(const b of ['A','B','C','D']) put(`hardware-design/boards/${b==='A'?'BASE-PWR':b==='B'?'BASE-PWR-B':b}/${b==='A'?'cad/A/A':b==='B'?'../BASE-PWR/cad/B/B':`cad/${b}/${b}`}.kicad_pcb`,'initial');
- git(['add','.']);git(['commit','-qm','initial']);
+ seal(root);git(['add','.']);git(['commit','-qm','initial']);
  put('tools/gate.mjs',readFileSync(join(root,'tools/gate.mjs'),'utf8')+'\n');git(['add','.']);// a shared tool change gates every board
  const env={...process.env};t.after(()=>{for(const k of ['IOT_LAB_GATE_JOBS','LIVE','IOT_LAB_GATE_CACHE','WAIT_FAIL','BARRIER']) if(env[k]===undefined) delete process.env[k];else process.env[k]=env[k];});
  process.env.IOT_LAB_GATE_CACHE=join(root,'.cache');
@@ -134,10 +141,54 @@ test('parallel boards give the same staged metrics as serial; a failure names th
  process.env.IOT_LAB_GATE_JOBS='3';process.env.LIVE=join(root,'.live3');process.env.BARRIER='3';await checkStaged(root);
  assert.deepEqual(staged(),serial);assert.equal(maxOverlap(process.env.LIVE),3);delete process.env.BARRIER;
  git(['read-tree',base]);
- put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','fail');git(['add','.']);const before=git(['write-tree']).trim();
+ put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','fail');seal(root);git(['add','.']);const before=git(['write-tree']).trim();
  process.env.IOT_LAB_GATE_JOBS='2';process.env.LIVE=join(root,'.live2');process.env.WAIT_FAIL='1';
  await assert.rejects(checkStaged(root),/gate failed: BASE-PWR \(exit 1\); not run: C, D/);
  assert.equal(git(['write-tree']).trim(),before);
+});
+
+// Fixture for the seal check: board BASE-PWR with a fake gate that writes metrics.
+const sealRepo=t=>{
+ const {root,put}=fixture(t);
+ const git=args=>execFileSync('git',['-C',root,...args],{encoding:'utf8'});
+ git(['init','-q']);git(['config','user.email','test@example.invalid']);git(['config','user.name','Test']);
+ put('tools/gate.mjs',`import {writeFileSync} from 'node:fs';writeFileSync('hardware-design/boards/'+process.argv[2]+'/gate-metrics.json','{}');`);
+ put('hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb','initial');
+ return {root,put,git};
+};
+const CAD='hardware-design/boards/BASE-PWR/cad/A/A.kicad_pcb',SEAL='hardware-design/boards/BASE-PWR/cad-seal.json';
+test('staged CAD of a board with no seal, staged or committed, fails and names the seal command',async t=>{
+ const {root,put,git}=sealRepo(t);
+ git(['add','.']);git(['commit','-qm','initial']);
+ put(CAD,'staged');git(['add',CAD]);
+ const before=git(['write-tree']).trim();
+ await assert.rejects(checkStaged(root),/BASE-PWR has no CAD seal[\s\S]*tools\/pcb seal BASE-PWR --accept --reason/);
+ assert.equal(git(['write-tree']).trim(),before);
+});
+test('staged CAD that disagrees with the committed seal fails and names the file',async t=>{
+ const {root,put,git}=sealRepo(t);
+ seal(root);git(['add','.']);git(['commit','-qm','initial']);
+ put(CAD,'staged');git(['add',CAD]);
+ await assert.rejects(checkStaged(root),/CAD of BASE-PWR changed outside our tools[\s\S]*changed: hardware-design\/boards\/BASE-PWR\/cad\/A\/A\.kicad_pcb/);
+});
+test('a staged seal that disagrees with the staged CAD fails',async t=>{
+ const {root,put,git}=sealRepo(t);
+ put(CAD,'one');seal(root);put(CAD,'two');// the seal records "one", the CAD is "two"
+ git(['add','.']);
+ await assert.rejects(checkStaged(root),/changed: hardware-design\/boards\/BASE-PWR\/cad\/A\/A\.kicad_pcb/);
+});
+test('the seal is checked on the staged blobs, not on the working tree',async t=>{
+ const {root,put,git}=sealRepo(t);
+ seal(root);git(['add','.']);git(['commit','-qm','initial']);
+ put(CAD,'staged');seal(root);git(['add',CAD,SEAL]);
+ put(CAD,'edited after staging');// the working tree no longer agrees with the staged seal
+ await checkStaged(root);
+});
+test('a commit that touches no CAD of a board does not need its seal',async t=>{
+ const {root,put,git}=sealRepo(t);
+ git(['add','.']);git(['commit','-qm','initial']);// no seal anywhere
+ put('notes.txt','x');git(['add','notes.txt']);
+ await checkStaged(root);
 });
 
 test('pinned release: none without a lock, error when not installed, the bundle when installed',t=>{
