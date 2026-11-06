@@ -105,9 +105,13 @@ and the standard float parser; the model parser and numeric rules do not change.
 Scoped reuse also falls back when width-rewriting rules are present, because
 that separate numeric path has not earned a preservation claim.
 
-A corrected same-binary ESP32 pair has been requested from the coordinator;
-it has not started. If authorized, pin a new source/binary before that pair,
-retain the original failed preservation outcome, and use the exact native
-integer-coordinate auditor. No additional seed, budget increase, tolerance,
-exemption change or acceptance exception is proposed. The option stays off
-until corrected preservation and the required native regressions are verified.
+A corrected same-binary ESP32 pair was explicitly authorized by coordinator
+message 1952, received after the pinned regressions completed. Pin a new
+source/binary before that pair, retain the original failed preservation outcome,
+and use the exact native integer-coordinate auditor. The source incorporates
+the independently verified cleanup-race fix before pinning, so later merge
+does not silently substitute another native executable. No additional seed,
+budget increase, tolerance, exemption change or acceptance exception is proposed.
+The existing public `--reuse` seed reader has a regression at the real writer
+boundary. The option stays off until corrected preservation and required native
+validation are verified.
