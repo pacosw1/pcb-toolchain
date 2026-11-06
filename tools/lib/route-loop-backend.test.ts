@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import { exemptBoard } from './design-exempt-fixture.ts';
 import { sealFixtureBoard } from './cad-seal-fixture.ts';
 import { iotrouteMissing } from './iotroute-bin.ts';
 import { defaultLoopBackend } from './route-loop-backend.ts';
@@ -62,6 +63,7 @@ test(
       join(root, 'hardware-design/boards/X/gate.json'),
       JSON.stringify({ project: 'cad/X', stage: 'G3', checks: { erc: true, drc: true } })
     );
+    exemptBoard(root, 'X');
     sealFixtureBoard(root, 'X');
     const tools = fileURLToPath(new URL('..', import.meta.url));
     mkdirSync(join(root, 'tools/lib'), { recursive: true });

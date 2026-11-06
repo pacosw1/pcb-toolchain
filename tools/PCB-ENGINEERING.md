@@ -126,8 +126,11 @@ Start a new request after inspecting changed inputs; an old action is not refres
 silently. Continuations still bind their separately verified parent candidate.
 
 Placement uses the existing schematic prerequisite; route and repair use the
-existing placement prerequisite. Reviewed design prerequisites remain conditional
-on a supplied or registered design contract, and a valid G3 gate may still route.
+existing placement prerequisite. A design contract is required: a board with
+neither a supplied or registered contract nor a `design_contract_exempt` reason in
+its `hardware-design/registry/boards.json` row stops with scope `design_preflight`.
+An exempt board runs without a prerequisite check and records one `design.exempt`
+event; see `DESIGN-CONTRACT.md`.
 This action record does not fill missing engineering coverage. Through vias,
 via moves and net clearing cover copper across the stack. Route-json actions
 retain whole-board copper scope because stage filters, width edits and pours can

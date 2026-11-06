@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { evaluateCandidateLayout, evaluateContract } from './design-contract-async.ts';
 import type { Report } from './design-contract-verifiers-async.ts';
 import { designServices } from './design-services.ts';
+import { designExemption } from './design-exemption.ts';
 import { checkManifest, reviewedContract, type ReviewServices } from './engineering-constraints.ts';
 import { prerequisiteStage, type AdmittedAction } from './pcb-action.ts';
 export { routesCopper } from './pcb-action.ts';
@@ -35,10 +36,25 @@ export function reviewedRules(root: string, board: string): unknown[] {
   return isFile(manifest) ? reviewedContract(root, board, manifest, review).rules : [];
 }
 
+/** A run with no bound contract continues only for an exempt board, with one event. Any other board stops with the way to continue. */
+function unbound(root: string, folder: string, manifest: OperationManifest, emit: Emit): Report | null {
+  const reason = designExemption(root, manifest.board);
+  if (reason !== null) { emit('design.exempt', { board: manifest.board, reason }); return null; }
+  const file = `hardware-design/registry/design-contracts/${manifest.board}.json`;
+  const cause = isFile(join(root, file)) ? `design contract ${file} exists but this run does not bind it; start the command again with --design-contract ${file}`
+    : 'board has no design contract; bind one with --design-contract FILE, or record design_contract_exempt with a reason in hardware-design/registry/boards.json';
+  const output = join(folder, 'operation/design-preflight.json'), through = prerequisiteStage(manifest);
+  const report = { status: 'failed', blockers: [{ code: 'design_contract_missing', detail: cause }], inputs: {}, tool_inputs: {}, absent_inputs: [], schematic_contracts: [] } as Report;
+  atomicJson(output, report);
+  atomicJson(join(folder, 'operation/result.json'), { status: 'failed', exit_code: 1, scope: 'design_preflight', operation: manifest.operation,
+    cause, candidate_verified: false, qualified: false, release_approved: false, report: output, design_stage: through });
+  return report;
+}
+
 /** The previous stage must hold before a candidate costs anything. The fresh gate still judges the changed layout. */
 export async function designAdmission(root: string, folder: string, manifest: OperationManifest, emit: Emit): Promise<Report | null> {
   const binding = manifest.design_contract;
-  if (!binding) return null;
+  if (!binding) return unbound(root, folder, manifest, emit);
   const path = resolvePath(binding.path);
   if (!isRelativeTo(path, root) || sha256File(path) !== binding.sha256) throw new Error('design contract changed or escaped its checkout after admission');
   const declared = readObject<{ identity?: Row }>(path).identity ?? {};

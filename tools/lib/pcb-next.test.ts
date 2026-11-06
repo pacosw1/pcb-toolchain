@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, u
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { exemptBoard } from './design-exempt-fixture.ts';
 import { sealFixtureBoard } from './cad-seal-fixture.ts';
 import { atomicJson, readObject, sha256File } from './json-file.ts';
 import { evidenceFiles } from './pcb-evidence.ts';
@@ -15,6 +16,7 @@ function fixture(t: { after: (fn: () => void) => void }) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'pcb-next-'))), board = join(root, 'hardware-design/boards/X');
   const project = join(board, 'cad/X'), base = join(root, '.gate/cli'), fingerprint = 'a'.repeat(64);
   t.after(() => rmSync(root, { recursive: true, force: true }));
+  exemptBoard(root, 'X');
   const config = { project: 'cad/X', stage: 'G3', checks: { erc: true, drc: true } };
   atomicJson(join(board, 'gate.json'), config);
   mkdirSync(join(board, 'cad'), { recursive: true });
@@ -61,6 +63,15 @@ function fixture(t: { after: (fn: () => void) => void }) {
   }
   return { root, board, project, base, options, config, fingerprint, run, seal, engineering, probes: () => probes, next: () => nextAction(root, 'X', options) };
 }
+
+test('a board with no design contract and no exemption is blocked; a contract or an exemption is not', async t => {
+  const f = fixture(t);
+  assert.notEqual((await f.next()).blocker?.code, 'design_contract_missing', 'the fixture board is exempt');
+  rmSync(join(f.root, 'hardware-design/registry/boards.json'));
+  const report = await f.next(); assert.equal(report.state, 'blocked'); assert.equal(report.blocker?.code, 'design_contract_missing'); assert.equal(f.probes(), 0);
+  atomicJson(join(f.root, 'hardware-design/registry/design-contracts/X.json'), { identity: { design_id: 'X' }, current_stage: 'requirements' });
+  assert.equal((await f.next()).blocker?.code, 'design_assessment_missing');
+});
 
 test('missing native inputs name the exact source without a probe', async t => {
   const f = fixture(t); unlinkSync(f.project + '.kicad_pcb');

@@ -140,6 +140,25 @@ closure travels with the candidate and must still match at adoption. Fresh candi
 native and board-specific checks remain mandatory; an old prerequisite report
 cannot approve newly edited hardware.
 
+A design contract is required for every candidate command (`build`, `edit`, `route`,
+`repair`, `release`). A board without one stops in scope `design_preflight` before any
+work: the cause is "board has no design contract" when
+`hardware-design/registry/design-contracts/BOARD.json` does not exist, and names that
+file when it exists but the run does not bind it. A board may instead record an
+exemption in its row of `hardware-design/registry/boards.json`:
+
+```json
+{ "id": "BOARD", "design_contract_exempt": { "reason": "legacy board, contract planned" } }
+```
+
+`design_contract_exempt` must be an object with a non-empty string `reason`; the layout
+audit reports anything else as a `registry_schema` finding, and a command that reads a
+malformed value fails. An exempt board runs as before, with no stage check, and each
+command records one `design.exempt` event with the reason. `tools/pcb next` reports a
+board with neither a contract nor an exemption as `blocked` with code
+`design_contract_missing`. The passthrough commands (`parts`, `placement`, `routing`,
+`schematic`, `readiness`, `blocks`) do not check a stage yet.
+
 `evaluate_candidate_layout(root,path,candidate=None,evidence_directory=None)` replays only declared placement
 checks and DFT endpoint checks. `root` and `path` must identify the unchanged canonical
 design; `candidate` names the actual edited PCB. Reviewed fixed/rigid geometry is then

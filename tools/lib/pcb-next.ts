@@ -2,6 +2,8 @@
 import { randomUUID } from 'node:crypto';
 import { lstatSync, readdirSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
+import { STAGES } from './design-contract-load.ts';
+import { designExemption } from './design-exemption.ts';
 import { sealStatus } from './cad-seal.ts';
 import { readObject as readSharedObject, sha256File } from './json-file.ts';
 import { verify } from './pcb-evidence.ts';
@@ -23,7 +25,6 @@ export const OPERATIONS = new Set(['check', 'edit', 'route', 'repair', 'build', 
 const ACTIVE = new Set(['starting', 'running', 'stopping']);
 const CANDIDATE = new Set(['build', 'edit', 'route', 'repair']);
 const ENGINEERING = new Set(['parts', 'placement', 'routing', 'schematic']);
-const DESIGN_STAGES = ['requirements', 'architecture', 'parts', 'schematic', 'placement', 'routing', 'prototype', 'production'];
 export interface Manifest {
   run_id: string; root: string; board?: string; operation?: string; project?: string | null; created_at: string;
   arguments?: string[]; from_run?: { folder: string; result_sha256: string }; gate_config_sha256?: string; router?: string;
@@ -175,7 +176,7 @@ export async function designNext(root: string, identifier: string, contractPath:
   const contract = resolvePath(contractPath), value = readObject<{ identity: { design_id: string; board?: string }; current_stage?: string }>(contract);
   if (value.identity.design_id !== identifier) stale('next design subject differs from its contract identity');
   const stage = options.through ?? value.current_stage;
-  if (!stage || !DESIGN_STAGES.includes(stage)) stale('next needs a declared lifecycle stage');
+  if (!stage || !STAGES.includes(stage)) stale('next needs a declared lifecycle stage');
   const board = value.identity.board || identifier, { selected, rejected } = latestRun(root, board, null, base, options.readers, new Set(['design']));
   const output: Decision = { schema_version: 1, design_id: identifier, board, through: stage, scope: 'next_design_decision_only', qualified: false,
     readiness_verified: false, observed_run: null, ignored_observations: rejected, evidence: { freshness: 'missing' } };
@@ -235,6 +236,7 @@ export async function nextAction(rootPath: string, board: string, options: NextO
   };
   const check = (code: string, message: string, details: Fields = {}) => finish('needs_check', code, message, 'check', ['check', board, checkMode, '--follow', '--json'], details);
   if (pending) return finish('blocked', 'pending_gate', 'Board has only a pending gate' + (missing ? '; required board input is missing: ' + missing.path : ''), 'inspect_required_source', ['context', board, '--json']);
+  if (designExemption(root, board) === null) return finish('blocked', 'design_contract_missing', 'Board has no design contract and no design_contract_exempt reason in the registry', 'inspect_required_source', ['context', board, '--json']);
   let selectedState: RunState | null = null;
   if (selected) {
     const { folder, manifest } = selected;
