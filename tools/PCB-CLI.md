@@ -145,6 +145,8 @@ fail explicitly. The entrypoint must be a regular, repository-relative file in
 or paths excluded from the candidate snapshot. The entrypoint is copied and
 hashed with the candidate inputs. This check does not sandbox a script or prove
 its external dependencies. It does not create a new board revision.
+A board's `gate.json` can name `place_check` hooks, with the same form as `post_verify`. They run
+after `edit --kind place`, before the full gate. A failing hook fails the run, and the result names its log.
 Placement specs use `{"place":{"R1":[x,y,degrees]}}`; routes use the existing
 `pcbtool` format. Commands run in a separate board/dependency snapshot without
 mutable links into canonical CAD. Historical runs/unrelated evidence are excluded.

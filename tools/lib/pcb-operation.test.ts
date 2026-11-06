@@ -584,6 +584,30 @@ writeFileSync(process.argv[3], readFileSync(process.argv[2], 'utf8').length + '\
   assert.equal(failed.result.candidate_verified, false);
 });
 
+test('gate.json place_check hooks stop a placement edit before the full gate', needsBinary, async t => {
+  const root = project(t), gate = join(root, 'hardware-design/boards/X/gate.json');
+  writeFileSync(join(root, 'tools/rules.mjs'), `process.exitCode = process.env.RULES_EXIT === '1' ? 1 : 0;`);
+  writeFileSync(gate, JSON.stringify({ project: 'cad/X', checks: { drc: true }, place_check: [{ stage: 'board-placement', run: ['{node}', 'tools/rules.mjs', '{candidate}'] }] }));
+  const { folder, result } = await edit(root);
+  assert.equal(result.status, 'passed', String(result.cause));
+  assert.ok(existsSync(join(folder, 'operation/board-placement.log')));
+  t.after(() => { fixtureEnv = {}; });
+  fixtureEnv = { RULES_EXIT: '1' };
+  const failed = await edit(root);
+  assert.equal(failed.result.status, 'failed');
+  assert.equal(failed.result.candidate_verified, false);
+  assert.match(String(failed.result.cause), /placement check board-placement failed; see operation\/board-placement\.log/);
+  assert.equal(existsSync(join(failed.folder, 'gate/result.json')), false);
+});
+
+test('a route edit does not run the place_check hooks', needsBinary, async t => {
+  const root = project(t), gate = join(root, 'hardware-design/boards/X/gate.json');
+  writeFileSync(gate, JSON.stringify({ project: 'cad/X', checks: { drc: true }, place_check: [{ stage: 'board-placement', run: ['{node}', 'tools/gone.mjs'] }] }));
+  writeFileSync(join(root, 'spec.json'), '{"routes":[]}');
+  const { folder, result } = await run(root, 'edit', 'X', '--kind', 'route', '--spec', join(root, 'spec.json'));
+  assert.equal(existsSync(join(folder, 'operation/board-placement.log')), false, String(result.cause));
+});
+
 test('post_verify hooks fill their placeholders and require a stage and argv', () => {
   const hooks = postVerifyCommands([{ stage: 'semantic', run: ['{node}', 'check.mjs', '{candidate}', '{operation}'], env: { OUT: '{run}/x' } }], '/run', '/run/board.kicad_pcb', '/bin/node', { KEEP: '1' });
   assert.deepEqual(hooks, [{ stage: 'semantic', command: ['/bin/node', 'check.mjs', '/run/board.kicad_pcb', '/run/operation'], env: { KEEP: '1', OUT: '/run/x' } }]);

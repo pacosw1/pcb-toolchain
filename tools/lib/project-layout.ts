@@ -16,7 +16,7 @@ const REGISTRY = 'hardware-design/registry/boards.json';
 const NOT_BOARDS = new Set(['_art', '.claude']);
 const LIFECYCLES = ['active', 'planned', 'historical', 'obsolete'];
 const KINDS = ['board', 'variant', 'gate-only'];
-const GATE_KEYS = ['about', 'project', 'stage', 'checks', 'release', 'pipeline', 'route_rules', 'route_features', 'plane_via_skip', 'post_verify', 'snapshot_schematic_datasheets', 'isolation_check', 'placement'];
+const GATE_KEYS = ['about', 'project', 'stage', 'checks', 'release', 'pipeline', 'route_rules', 'route_features', 'plane_via_skip', 'post_verify', 'place_check', 'snapshot_schematic_datasheets', 'isolation_check', 'placement'];
 const GATE_STAGES = ['G3', 'G4', 'G5'];
 const LAYOUT_STAGES = ['G4', 'G5'];
 
@@ -169,9 +169,10 @@ function gateSchema(audit: Audit, board: string, name: string, cfg: Raw): void {
     else for (const key of Object.keys(cfg.route_features)) if (!audit.features.has(key)) fail(`route_features: unknown feature ${key}`);
   }
   if ('release' in cfg && !(isObject(cfg.release) && text(cfg.release.maker) && text(cfg.release.fab))) fail('release needs a maker and a fab');
-  if ('post_verify' in cfg) {
-    const hooks = cfg.post_verify;
-    if (!Array.isArray(hooks) || hooks.some(hook => !isObject(hook) || !text(hook.stage) || !Array.isArray(hook.run) || !hook.run.length)) fail('post_verify entries need a stage and a run argv');
+  for (const key of ['post_verify', 'place_check']) {
+    if (!(key in cfg)) continue;
+    const hooks = cfg[key];
+    if (!Array.isArray(hooks) || hooks.some(hook => !isObject(hook) || !text(hook.stage) || !Array.isArray(hook.run) || !hook.run.length)) fail(`${key} entries need a stage and a run argv`);
   }
 }
 
@@ -189,7 +190,7 @@ function gateReferences(audit: Audit, board: string, folder: string, name: strin
   const release = isObject(cfg.release) ? cfg.release : {};
   const files = [cfg.pipeline, cfg.route_rules, release.maker, release.check, release.config, ...(Array.isArray(release.inputs) ? release.inputs : [])];
   for (const value of files) if (text(value)) reference(audit, board, name, audit.root, value as string);
-  const hooks = [release.pre_checks, release.post_export, cfg.post_verify].flatMap(list => (Array.isArray(list) ? list : []));
+  const hooks = [release.pre_checks, release.post_export, cfg.post_verify, cfg.place_check].flatMap(list => (Array.isArray(list) ? list : []));
   const commands = [cfg.isolation_check, cfg.placement, ...hooks.map(hook => (isObject(hook) ? hook.run : undefined))];
   for (const file of commands.flatMap(commandFiles)) reference(audit, board, name, audit.root, file);
   if (name.endsWith('gate.json') && text(cfg.pipeline) && locate(audit.root, cfg.pipeline as string, audit.root)) {
