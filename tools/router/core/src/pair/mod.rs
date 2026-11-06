@@ -6,7 +6,7 @@
 //! like any router result.
 pub mod cli;
 mod lattice;
-mod line;
+pub(crate) mod line;
 mod obstacles;
 pub mod route;
 mod search;

@@ -10,7 +10,9 @@ use super::lock::{make_locked_input, model_pairs};
 use super::measure::{DrcReport, read_report, run_drc};
 use super::project::restore_pro;
 use crate::kicad::board::Board;
-use crate::kicad::geom::to_mm;
+use crate::kicad::edit::NewTrack;
+use crate::kicad::geom::{from_mm, to_mm};
+use crate::model::text::round_to;
 use crate::kicad::pad::Pad;
 use crate::kicad::session::Session;
 use crate::model::dru::{Rule, parse_rules};
@@ -235,6 +237,7 @@ fn route_on(session: &mut Session, job: &PairJob, layer: &str, width: f64, gap: 
             used.entry(this).or_default().push(dir);
             dirs[k] = dir;
         }
+        let (board, edit) = (session.board.clone(), session.edit.clone());
         let spec = Spec { pairs: vec![PairSpec { base: job.name.clone(), width, gap, layer: layer.to_string(), ends: vec![end_spec(&ends[a], dirs[0]), end_spec(&ends[b], dirs[1])] }] };
         let report = stubs::draw(session, &spec)?;
         log.extend(report.iter().cloned());
@@ -244,10 +247,63 @@ fn route_on(session: &mut Session, job: &PairJob, layer: &str, width: f64, gap: 
         let line = route::route(session, &Job::pair(&job.name, &job.p, &job.n, width, gap, layer), &options, &mut |text| log.push(text))?;
         log.push(line.clone());
         if !line.contains(" routed ") {
-            return Err(line);
+            // Ends too close for two fronts and two lead-ins: one straight join with a 45 degree jog, judged by the DRC.
+            (session.board, session.edit) = (board, edit);
+            match direct_join(&ends[a], &ends[b], dirs, width + gap) {
+                Some([p, n]) => {
+                    log.push(format!("PAIR {} joined directly on {layer} ({} / {} points)", job.name, p.len(), n.len()));
+                    for (points, net) in [(p, &job.p), (n, &job.n)] {
+                        for w in points.windows(2) {
+                            session.add_track(NewTrack { start: pt(w[0]), end: pt(w[1]), width: from_mm(width), layer: layer.to_string(), net: net.clone(), locked: true });
+                        }
+                    }
+                }
+                None => return Err(line),
+            }
         }
     }
     Ok(edges.len())
+}
+
+fn pt(p: Point) -> crate::kicad::geom::Pt {
+    crate::kicad::geom::Pt::new(from_mm(round_to(p.0, 4)), from_mm(round_to(p.1, 4)))
+}
+
+/// Facing ends joined without the grid: each net leaves its pad straight for the pair axis (pitch / 2 off the centreline), the
+/// centreline runs straight with one 45 degree jog when the axes are offset, and P keeps its side. None when the ends do not face
+/// each other, the jog does not fit, or the polarity would cross. The P and N polylines, pad centre to pad centre.
+pub fn direct_join(a: &EndPads, b: &EndPads, dirs: [Point; 2], pitch: f64) -> Option<[Vec<Point>; 2]> {
+    let [da, db] = dirs;
+    if dot(da, db) > -0.999 {
+        return None;
+    }
+    let normal = |d: Point| (-d.1, d.0);
+    let (na, nb) = (normal(da), normal(db));
+    let frame = |e: &EndPads, d: Point, n: Point| {
+        let mid = e.mid();
+        let off = dot((e.p_at.0 - mid.0, e.p_at.1 - mid.1), n);
+        let along = (off.abs() - pitch / 2.0).max(0.0);
+        ((mid.0 + d.0 * along, mid.1 + d.1 * along), off.signum())
+    };
+    let ((ca, sa), (cb, sb)) = (frame(a, da, na), frame(b, db, nb));
+    if sa * sb >= 0.0 {
+        return None; // P must be on one side of the centreline seen from both ends: n flips with d
+    }
+    let v = (cb.0 - ca.0, cb.1 - ca.1);
+    let (along, across) = (dot(v, da), dot(v, na));
+    if along < across.abs() + 1e-6 {
+        return None;
+    }
+    let straight = (along - across.abs()) / 2.0;
+    let k1 = (ca.0 + da.0 * straight, ca.1 + da.1 * straight);
+    let k2 = (k1.0 + da.0 * across.abs() + na.0 * across, k1.1 + da.1 * across.abs() + na.1 * across);
+    let centre = crate::pair::line::without_collinear(&[ca, k1, k2, cb]);
+    let side = |s: f64| crate::pair::line::offset(&centre, s * pitch / 2.0);
+    let (left, right) = (side(1.0), side(-1.0));
+    let p_conv = (ca.0 + na.0 * sa * pitch / 2.0, ca.1 + na.1 * sa * pitch / 2.0);
+    let (p_line, n_line) = if dist(left[0], p_conv) < dist(right[0], p_conv) { (left, right) } else { (right, left) };
+    let whole = |pad_a: Point, line: Vec<Point>, pad_b: Point| std::iter::once(pad_a).chain(line).chain(std::iter::once(pad_b)).collect::<Vec<_>>();
+    Some([whole(a.p_at, p_line, b.p_at), whole(a.n_at, n_line, b.n_at)])
 }
 
 /// The rule areas that keep tracks out of a layer, by name.
@@ -473,6 +529,23 @@ mod tests {
         assert!(s.edit.tracks.is_empty() && s.board.copper.is_empty());
         let none = PairJob { width: None, ..job };
         assert!(route_pair(&mut s, &none, &[], &mut Vec::new()).unwrap_err().contains("no DRU"));
+    }
+
+    #[test]
+    fn close_facing_ends_join_with_one_jog_and_keep_polarity() {
+        // ESP32 pads 13/14 (1.27 mm) under two series resistors 2.2 mm apart, 3.55 mm away: too short for fronts and lead-ins.
+        let a = end((149.71, 71.1), (150.98, 71.1), (0.0, -5.0));
+        let mut b = end((148.6, 67.55), (150.8, 67.55), (0.0, 1.5));
+        let dirs = [heading(&a, b.mid(), true), heading(&b, a.mid(), true)];
+        assert_eq!(dirs, [(0.0, -1.0), (0.0, 1.0)]);
+        let [p, n] = direct_join(&a, &b, dirs, 0.35).unwrap();
+        assert_eq!((p[0], *p.last().unwrap(), n[0], *n.last().unwrap()), (a.p_at, b.p_at, a.n_at, b.n_at));
+        // Equal sides: the legs stay pitch apart along the joint run.
+        let (pm, nm) = (p[p.len() / 2], n[n.len() / 2]);
+        assert!((dist(pm, nm) - 0.35).abs() < 0.05 || p.len() != n.len(), "{p:?} {n:?}");
+        std::mem::swap(&mut b.p_at, &mut b.n_at);
+        assert!(direct_join(&a, &b, dirs, 0.35).is_none(), "crossed polarity");
+        assert!(direct_join(&a, &b, [dirs[0], (1.0, 0.0)], 0.35).is_none(), "not facing");
     }
 
     #[test]
