@@ -27,8 +27,8 @@ fn point(p: Point) -> Pt {
 }
 
 /// A list of points of one net, written as tracks.
-fn add_polyline(session: &mut Session, points: &[Point], width: f64, net: &str, layer: &str) {
+fn add_polyline(session: &mut Session, points: &[Point], width: f64, net: &str, layer: &str, locked: bool) {
     for pair in points.windows(2) {
-        session.add_track(NewTrack { start: point(pair[0]), end: point(pair[1]), width: from_mm(width), layer: layer.to_string(), net: net.to_string(), locked: false });
+        session.add_track(NewTrack { start: point(pair[0]), end: point(pair[1]), width: from_mm(width), layer: layer.to_string(), net: net.to_string(), locked });
     }
 }

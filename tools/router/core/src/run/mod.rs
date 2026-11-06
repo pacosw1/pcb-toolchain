@@ -17,6 +17,10 @@
 //!  6. When OUT is not clean, the short report of that in OUT.iotroute/stuck.json (crate::stuck), against the report of --reuse PREV
 //!     when it has one. Without --diagnose it has the DRC and the search but no triage.
 //!
+//! --route-pairs (with --lock-from): the diff pairs are not kept; their copper is cut and they are routed first, by the pair router
+//! (run/pairs.rs), locked, and the core routes the rest around them. A pair it cannot route, or whose new copper KiCad DRC faults,
+//! keeps its input copper as without the flag. The via_count 0 nets (crystals) stay kept either way.
+//!
 //! --reuse PREV (partial re-route, DESIGN.md 5c): the seed is PREV's route, the parts moved since, the nets PREV left open or in
 //! a DRC error, and each --reuse-net. --reuse-fallback full (default): when the reuse result is not PASS, the full route of the same input runs too and
 //! the better one is kept; a tie keeps the full route. none: the reuse result is the result.
@@ -29,6 +33,7 @@ pub mod diagnose;
 pub mod guard;
 pub mod lock;
 pub mod measure;
+pub mod pairs;
 pub mod planes;
 pub mod policy;
 pub mod prepared;
@@ -52,7 +57,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use steps::{Steps, last_line, sources_sha};
 
-const USAGE: &str = "usage: iotroute run BOARD OUT.kicad_pcb [--pcb IN] [--iters N] [--max-time S] [--lock-from SRC] [--reuse PREV] [--reuse-fallback full|none] [--reuse-net NET]... [--congestion] [--return-exempt] [--ref-reuse] [--diagnose] [--plane-net NET]... [--layer L]... [--net NET]... [--seed N] [--stall-passes N] [--checkpoint] [--tools DIR] [--json]";
+const USAGE: &str = "usage: iotroute run BOARD OUT.kicad_pcb [--pcb IN] [--iters N] [--max-time S] [--lock-from SRC] [--reuse PREV] [--reuse-fallback full|none] [--reuse-net NET]... [--congestion] [--return-exempt] [--ref-reuse] [--route-pairs] [--diagnose] [--plane-net NET]... [--layer L]... [--net NET]... [--seed N] [--stall-passes N] [--checkpoint] [--tools DIR] [--json]";
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Args {
@@ -70,6 +75,9 @@ pub struct Args {
     /// Opt-in experiment: copper reuse after reference feedback, with fresh checks and full fallback.
     #[serde(default)]
     pub ref_reuse: bool,
+    /// Opt-in: route the diff pairs first instead of keeping their input copper (needs --lock-from).
+    #[serde(default)]
+    pub route_pairs: bool,
     pub diagnose: bool,
     pub plane_nets: Vec<String>,
     pub layers: Vec<String>,
@@ -91,7 +99,7 @@ fn value<T: std::str::FromStr>(flag: &str, text: Option<&String>) -> Result<T, S
 pub fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut a = Args {
         board: String::new(), out: String::new(), pcb: None, iters: 80, max_time: None, lock_from: None, reuse: None, reuse_fallback: "full".to_string(), reuse_nets: Vec::new(),
-        congestion: std::env::var("IOTROUTE_CONGESTION").is_ok_and(|v| v == "1"), return_exempt: false, ref_reuse: false, diagnose: false, plane_nets: Vec::new(), layers: Vec::new(), nets: Vec::new(), seed: None, via_cost: None, stall_passes: None, checkpoint: false, tools: PathBuf::from("tools"), json: false,
+        congestion: std::env::var("IOTROUTE_CONGESTION").is_ok_and(|v| v == "1"), return_exempt: false, ref_reuse: false, route_pairs: false, diagnose: false, plane_nets: Vec::new(), layers: Vec::new(), nets: Vec::new(), seed: None, via_cost: None, stall_passes: None, checkpoint: false, tools: PathBuf::from("tools"), json: false,
     };
     let mut positional = Vec::new();
     let mut it = argv.iter();
@@ -113,6 +121,7 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--congestion" => a.congestion = true,
             "--return-exempt" => a.return_exempt = true,
             "--ref-reuse" => a.ref_reuse = true,
+            "--route-pairs" => a.route_pairs = true,
             "--diagnose" => a.diagnose = true,
             "--checkpoint" => a.checkpoint = true,
             "--json" => a.json = true,
@@ -125,6 +134,9 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
     }
     if a.ref_reuse && a.reuse.is_some() {
         return Err("--ref-reuse cannot combine with --reuse; reference feedback needs a fresh initial route".into());
+    }
+    if a.route_pairs && a.lock_from.is_none() {
+        return Err("--route-pairs needs --lock-from: without it all input copper is kept".into());
     }
     let [board, out] = positional.as_slice() else { return Err("BOARD and OUT are needed".to_string()) };
     (a.board, a.out) = (board.clone(), out.clone());
@@ -435,17 +447,29 @@ fn finish(rec: &mut Record, out: &Path, work: &Path) -> Result<DrcCounts, String
     Ok(drc)
 }
 
-fn lock_step(steps: &Steps, folder: &Path, src: &Path, work: &Path, lock_from: &str) -> Result<(PathBuf, LockStage), String> {
+fn lock_step(steps: &Steps, folder: &Path, src: &Path, work: &Path, lock_from: &str, route_pairs: bool) -> Result<(PathBuf, LockStage), String> {
     let source = absolute(lock_from)?;
     let model = work.join("lock-model.json");
     let (code, text) = steps.model(folder, &source, &model, &work.join("lock-model.log"), false)?;
     if code != 0 {
         return Err(format!("iotroute model on --lock-from failed: {}", last_line(&text)));
     }
-    let nets = lock_nets(&fs::read_to_string(&model).map_err(|e| format!("{}: {e}", model.display()))?)?;
+    let model_json = fs::read_to_string(&model).map_err(|e| format!("{}: {e}", model.display()))?;
+    let nets = lock_nets(&model_json)?;
     let copy = work.join("input").join(src.file_name().ok_or("a board file has a name")?);
+    if route_pairs {
+        let pair_nets: std::collections::BTreeSet<String> = lock::model_pairs(&model_json)?.into_iter().flat_map(|(_, p, n)| [p, n]).collect();
+        let crystals = nets.difference(&pair_nets).cloned().collect();
+        let (routed, removed, kept, locked, stage) = pairs::route_pairs(src, &source, &model_json, &crystals, work)?;
+        fs::create_dir_all(copy.parent().expect("the copy has a folder")).map_err(|e| e.to_string())?;
+        place_sidecars(src, &copy)?;
+        fs::copy(&routed, &copy).map_err(|e| format!("{}: {e}", copy.display()))?;
+        restore_pro(src, &copy)?;
+        let stage = LockStage { removed, kept, nets: locked.into_iter().collect(), source: source.display().to_string(), source_sha256: sha_file(&source)?, pairs: Some(stage) };
+        return Ok((copy, stage));
+    }
     let (removed, kept) = make_locked_input(src, &source, &nets, &copy)?;
-    let stage = LockStage { removed, kept, nets: nets.into_iter().collect(), source: source.display().to_string(), source_sha256: sha_file(&source)? };
+    let stage = LockStage { removed, kept, nets: nets.into_iter().collect(), source: source.display().to_string(), source_sha256: sha_file(&source)?, pairs: None };
     Ok((copy, stage))
 }
 
@@ -525,7 +549,7 @@ fn prepare<'a>(a: &'a Args, rec: &mut Record, out: &Path, work: &Path) -> Result
 
     let mut route_in = src.clone();
     if let Some(lock_from) = &a.lock_from {
-        let (copy, stage) = lock_step(&steps, &folder, &src, work, lock_from)?;
+        let (copy, stage) = lock_step(&steps, &folder, &src, work, lock_from, a.route_pairs)?;
         route_in = copy;
         rec.stages.lock = Some(stage);
     }

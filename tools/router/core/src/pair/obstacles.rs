@@ -11,6 +11,7 @@ use crate::kicad::board::{Board, Footprint, RoutedCopper, Track};
 use crate::kicad::geom::outline::arc_points;
 use crate::kicad::geom::{Polygon, Pt, Rect, from_mm, to_mm};
 use crate::kicad::pad::Pad;
+use crate::kicad::rules::DesignRules;
 use crate::kicad::shape::{Geometry, Graphic, radius};
 
 pub const CLEAR: f64 = 0.15;
@@ -99,6 +100,8 @@ pub struct Field<'f> {
     pub layer: &'f str,
     /// Centreline to the outer track edge.
     pub half: f64,
+    /// The board's own clearances (`iotroute run --route-pairs`): no item is passed closer than KiCad's clearance of it or of the pair.
+    pub rules: Option<&'f DesignRules>,
 }
 
 impl Field<'_> {
@@ -129,11 +132,21 @@ impl Field<'_> {
         if self.own(net) || net == "GND" || !is_track || same_class { CLEAR } else { o.space }
     }
 
-    fn mark_pad(&self, grid: &mut Lattice, own: &mut Lattice, pad: &Pad, exempt: &[[f64; 4]], barrier: &[(String, f64)]) {
+    /// KiCad's clearance between the pair's tracks and an item whose own clearance is `item` (mm); 0 without board rules.
+    fn board_keep(&self, item: Option<f64>) -> f64 {
+        let Some(rules) = self.rules else { return 0.0 };
+        let own = [self.p_net, self.n_net].iter().filter_map(|net| rules.track_clearance(self.board, net, self.layer).ok()).map(to_mm).fold(0.0, f64::max);
+        own.max(item.unwrap_or(0.0))
+    }
+
+    fn mark_pad(&self, grid: &mut Lattice, own: &mut Lattice, footprint: &Footprint, pad: &Pad, exempt: &[[f64; 4]], barrier: &[(String, f64)]) {
         let bbox = box_mm(pad.bbox);
         let mut keep = self.need(&pad.net, false, barrier);
         if keep == self.options.pad_room && exempt.iter().any(|e| touch(bbox, *e)) {
             keep = CLEAR; // pin fields (exempt courtyards): the board clearance
+        }
+        if let Some(rules) = self.rules.filter(|_| !self.own(&pad.net)) {
+            keep = keep.max(self.board_keep(rules.pad_clearance(self.board, footprint, pad, self.layer).ok().map(to_mm)));
         }
         let target = if self.own(&pad.net) { own } else { grid };
         target.mark(bbox, self.half + keep, |p| box_distance(p, bbox));
@@ -147,6 +160,9 @@ impl Field<'_> {
         let mut keep = self.need(net, true, barrier);
         if (keep == o.space || keep == o.same_class_space) && keep != CLEAR && exempt.iter().any(|e| touch(bbox, *e)) {
             keep = CLEAR;
+        }
+        if let Some(rules) = self.rules.filter(|_| !self.own(net)) {
+            keep = keep.max(self.board_keep(rules.track_clearance(self.board, net, self.layer).ok().map(to_mm)));
         }
         // CORNER_PAD: a mitred corner puts the offset leg d / cos(22.5 deg) from the centreline vertex, and a diagonal run between
         // 0.05 mm cell centres passes closer than the cells show (NET-NODE TXN-RXN 0.106 mm).
@@ -207,8 +223,8 @@ impl Field<'_> {
         let barrier = self.options.barriers()?;
         // The pair's own pads block like other copper, except near the two ends: there the centreline starts between them (OWN_FREE).
         let mut own = grid.empty_like();
-        for (_, pad) in self.board.pads().filter(|(_, pad)| pad.layers.iter().any(|l| l == self.layer)) {
-            self.mark_pad(grid, &mut own, pad, &exempt, &barrier);
+        for (footprint, pad) in self.board.pads().filter(|(_, pad)| pad.layers.iter().any(|l| l == self.layer)) {
+            self.mark_pad(grid, &mut own, footprint, pad, &exempt, &barrier);
         }
         for copper in &self.board.copper {
             match copper {

@@ -23,6 +23,9 @@ pub struct LockStage {
     pub nets: Vec<String>,
     pub source: String,
     pub source_sha256: String,
+    /// --route-pairs: the pairs routed before the core, and those that kept their input copper.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pairs: Option<super::pairs::PairStage>,
 }
 
 #[derive(Default, Deserialize)]
@@ -35,6 +38,7 @@ struct LockModel {
 #[derive(Default, Deserialize)]
 #[serde(default)]
 struct PairNets {
+    name: Option<String>,
     p: Option<String>,
     n: Option<String>,
 }
@@ -57,6 +61,15 @@ pub fn lock_nets(model_json: &str) -> Result<BTreeSet<String>, String> {
     let pairs = model.pairs.into_iter().flat_map(|p| [p.p, p.n]).flatten().filter(|n| !n.is_empty());
     let crystals = model.nets.into_iter().filter(|(_, n)| n.limits.via_count == Some(0.0)).map(|(name, _)| name);
     Ok(pairs.chain(crystals).collect())
+}
+
+/// The diff pairs of a model as (name, P, N); a pair with no name is named by its P net.
+pub fn model_pairs(model_json: &str) -> Result<Vec<(String, String, String)>, String> {
+    let model: LockModel = serde_json::from_str(model_json).map_err(|e| format!("model: {e}"))?;
+    Ok(model.pairs.into_iter().filter_map(|pair| {
+        let (p, n) = (pair.p.filter(|p| !p.is_empty())?, pair.n.filter(|n| !n.is_empty())?);
+        Some((pair.name.unwrap_or_else(|| p.clone()), p, n))
+    }).collect())
 }
 
 type PadMap = BTreeMap<(String, String), (f64, f64, String)>;

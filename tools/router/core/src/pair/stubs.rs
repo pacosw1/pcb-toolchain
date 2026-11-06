@@ -84,6 +84,9 @@ pub struct EndSpec {
     pub reference: String,
     pub p: PadName,
     pub n: PadName,
+    /// The footprint of the N pad when it is not `ref` (two series parts side by side).
+    #[serde(default)]
+    pub n_ref: Option<String>,
     pub dir: Point,
     pub run: Option<f64>,
     #[serde(default)]
@@ -184,7 +187,7 @@ impl EndFrame {
     fn of(board: &Board, end: &EndSpec) -> Result<EndFrame, String> {
         let d = unit(end.dir);
         let normal = (-d.1, d.0);
-        let (p, n) = (pad_of(board, &end.reference, &end.p)?, pad_of(board, &end.reference, &end.n)?);
+        let (p, n) = (pad_of(board, &end.reference, &end.p)?, pad_of(board, end.n_ref.as_deref().unwrap_or(&end.reference), &end.n)?);
         let (p_centre, n_centre) = (centre(p), centre(n));
         let mid = ((p_centre.0 + n_centre.0) / 2.0, (p_centre.1 + n_centre.1) / 2.0);
         let p_offset = (p_centre.0 - mid.0) * normal.0 + (p_centre.1 - mid.1) * normal.1;

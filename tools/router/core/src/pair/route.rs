@@ -46,11 +46,14 @@ pub struct Options {
     pub grid: f64,
     pub margin: f64,
     pub debug: Option<PathBuf>,
+    /// Keep the board's own clearances too (Field::rules), and write the routed tracks locked: `iotroute run --route-pairs`.
+    pub board_rules: bool,
+    pub lock: bool,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { pairs: Vec::new(), nets: Vec::new(), same_class_space: CLEAR, guard_class: Vec::new(), space_exempt_area: Vec::new(), channel: Vec::new(), layer: "F.Cu".to_string(), keepout: Vec::new(), space: 0.5, pad_room: CLEAR, space_exempt: Vec::new(), barrier: Vec::new(), grid: 0.05, margin: 15.0, debug: None }
+        Options { pairs: Vec::new(), nets: Vec::new(), same_class_space: CLEAR, guard_class: Vec::new(), space_exempt_area: Vec::new(), channel: Vec::new(), layer: "F.Cu".to_string(), keepout: Vec::new(), space: 0.5, pad_room: CLEAR, space_exempt: Vec::new(), barrier: Vec::new(), grid: 0.05, margin: 15.0, debug: None, board_rules: false, lock: false }
     }
 }
 
@@ -77,6 +80,9 @@ pub struct Job {
     pub gap: f64,
     pub layer: String,
     pub single: bool,
+    /// The P and N nets: BASE+'P' and BASE+'N' unless named.
+    pub p: String,
+    pub n: String,
 }
 
 impl Job {
@@ -90,11 +96,18 @@ impl Job {
         }
         let (name, sizes) = parts.split_at(parts.len() - numbers);
         let number = |text: &str| text.parse::<f64>().map_err(|_| format!("{spec}: not a number: {text}"));
-        Ok(Job { base: name.join(":"), width: number(sizes[0])?, gap: if single { 0.0 } else { number(sizes[1])? }, layer: layer.to_string(), single })
+        let base = name.join(":");
+        let (p, n) = if single { (base.clone(), base.clone()) } else { (format!("{base}P"), format!("{base}N")) };
+        Ok(Job { base, width: number(sizes[0])?, gap: if single { 0.0 } else { number(sizes[1])? }, layer: layer.to_string(), single, p, n })
+    }
+
+    /// A pair of two named nets.
+    pub fn pair(name: &str, p: &str, n: &str, width: f64, gap: f64, layer: &str) -> Job {
+        Job { base: name.to_string(), width, gap, layer: layer.to_string(), single: false, p: p.to_string(), n: n.to_string() }
     }
 
     fn nets(&self) -> (String, String) {
-        if self.single { (self.base.clone(), self.base.clone()) } else { (format!("{}P", self.base), format!("{}N", self.base)) }
+        (self.p.clone(), self.n.clone())
     }
 
     fn pitch(&self) -> f64 {
@@ -197,7 +210,7 @@ fn centreline(grid: &Lattice, path: &[(i64, i64)], ends: &[End], leads: [Point; 
     without_collinear(&without_short(&line, MIN_SEG))
 }
 
-fn write_pair(session: &mut Session, job: &Job, line: &[Point], ends: &[End]) -> String {
+fn write_pair(session: &mut Session, job: &Job, line: &[Point], ends: &[End], lock: bool) -> String {
     let (p_net, n_net) = job.nets();
     let (first, second) = (&ends[0], &ends[1]);
     let half = job.pitch() / 2.0;
@@ -212,8 +225,8 @@ fn write_pair(session: &mut Session, job: &Job, line: &[Point], ends: &[End]) ->
     }
     (p_line[0], n_line[0]) = (first.p.at, first.n.at);
     (p_line[last], n_line[last]) = (second.p.at, second.n.at);
-    add_polyline(session, &p_line, job.width, &p_net, &job.layer);
-    add_polyline(session, &n_line, job.width, &n_net, &job.layer);
+    add_polyline(session, &p_line, job.width, &p_net, &job.layer, lock);
+    add_polyline(session, &n_line, job.width, &n_net, &job.layer, lock);
     let (p_length, n_length) = (net_length(&session.board, &p_net), net_length(&session.board, &n_net));
     format!("PAIR {} routed on {} centreline {:.1} mm P {p_length:.2} N {n_length:.2} skew {:+.2} mm", job.base, job.layer, length(line), p_length - n_length)
 }
@@ -237,7 +250,7 @@ pub fn route(session: &mut Session, job: &Job, o: &Options, out: &mut dyn FnMut(
     let mut grid = lattice_round(&ends, o);
     let last: Vec<&str> = ends.iter().flat_map(|e| [e.p.track.as_str(), e.n.track.as_str()]).collect();
     let half = job.pitch() / 2.0 + job.width / 2.0;
-    let field = Field { board: &session.board, options: o, p_net: &p_net, n_net: &n_net, single: job.single, layer: &job.layer, half };
+    let field = Field { board: &session.board, options: o, p_net: &p_net, n_net: &n_net, single: job.single, layer: &job.layer, half, rules: o.board_rules.then_some(&session.rules) };
     field.close(&mut grid, &ends, &last)?;
     open_lead_ins(&mut grid, &ends);
     // Lead-in points: FRONT along each heading (free by construction); A* runs between them.
@@ -247,10 +260,10 @@ pub fn route(session: &mut Session, job: &Job, o: &Options, out: &mut dyn FnMut(
     };
     let line = centreline(&grid, &path, &ends, leads);
     if job.single {
-        add_polyline(session, &line, job.width, &p_net, &job.layer);
+        add_polyline(session, &line, job.width, &p_net, &job.layer, o.lock);
         return Ok(format!("PAIR {} routed on {} single track {:.1} mm, net {:.2} mm", job.base, job.layer, length(&line), net_length(&session.board, &p_net)));
     }
-    Ok(write_pair(session, job, &line, &ends))
+    Ok(write_pair(session, job, &line, &ends, o.lock))
 }
 
 /// Every job in order: the lines, and the specs of the routes that failed.

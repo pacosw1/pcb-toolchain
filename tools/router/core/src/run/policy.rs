@@ -1,13 +1,14 @@
 //! `iotroute route-policy CANDIDATE.kicad_pcb < SPEC.json`: the --spec of `tools/pcb route --router iotroute`, checked, as run
 //! arguments, one per line. An empty spec or null is the default policy. Exact fields: {"schema", "iters": 1..1000, "max_time_s": null or > 0, "keep": "lock-nets" | "all", "return_exempt": bool}.
 //! keep lock-nets: route from the candidate's pair and crystal copper; keep all: keep and lock all candidate copper, route only
-//! what is open. return_exempt: no return vias for the nets the board's gate exempts from RP-001 (`--return-exempt`); without it a
+//! what is open. route_pairs (default false, keep lock-nets only): cut the diff pairs' copper too and route them first
+//! (`--route-pairs`); a pair the pair router cannot route keeps its copper. return_exempt: no return vias for the nets the board's gate exempts from RP-001 (`--return-exempt`); without it a
 //! route that gives such a net its returns leaves the exemption stale, and the gate fails on that.
 use serde_json::Value;
 use std::io::Read;
 
 const SCHEMA: &str = "iot-lab.iotroute-policy.v1";
-const FIELDS: [&str; 9] = ["schema", "iters", "max_time_s", "keep", "return_exempt", "layers", "nets", "reuse", "reuse_nets"];
+const FIELDS: [&str; 10] = ["schema", "iters", "max_time_s", "keep", "return_exempt", "layers", "nets", "reuse", "reuse_nets", "route_pairs"];
 const DEFAULT_ITERS: u64 = 80;
 
 #[derive(Debug, PartialEq)]
@@ -16,6 +17,7 @@ pub struct Policy {
     pub max_time_s: Option<f64>,
     pub keep_all: bool,
     pub return_exempt: bool,
+    pub route_pairs: bool,
     /// The layers and nets of the route; empty is all of them.
     pub layers: Vec<String>,
     pub nets: Vec<String>,
@@ -37,7 +39,7 @@ fn names(object: &serde_json::Map<String, Value>, key: &str) -> Result<Vec<Strin
 
 /// The policy of a spec; None for the defaults.
 pub fn policy(spec: Option<&Value>) -> Result<Policy, String> {
-    let Some(spec) = spec else { return Ok(Policy { iters: DEFAULT_ITERS, max_time_s: None, keep_all: false, return_exempt: false, layers: Vec::new(), nets: Vec::new(), reuse: None, reuse_nets: Vec::new() }) };
+    let Some(spec) = spec else { return Ok(Policy { iters: DEFAULT_ITERS, max_time_s: None, keep_all: false, return_exempt: false, route_pairs: false, layers: Vec::new(), nets: Vec::new(), reuse: None, reuse_nets: Vec::new() }) };
     let object = spec.as_object().filter(|o| o.get("schema").and_then(Value::as_str) == Some(SCHEMA)).ok_or_else(|| format!("route --router iotroute requires a {SCHEMA} spec"))?;
     let unknown: Vec<&str> = object.keys().map(String::as_str).filter(|k| !FIELDS.contains(k)).collect();
     if !unknown.is_empty() {
@@ -54,11 +56,15 @@ pub fn policy(spec: Option<&Value>) -> Result<Policy, String> {
         _ => return Err("iotroute policy keep must be lock-nets or all".to_string()),
     };
     let return_exempt = object.get("return_exempt").map_or(Some(false), Value::as_bool).ok_or("iotroute policy return_exempt must be true or false")?;
+    let route_pairs = object.get("route_pairs").map_or(Some(false), Value::as_bool).ok_or("iotroute policy route_pairs must be true or false")?;
+    if route_pairs && keep_all {
+        return Err("iotroute policy route_pairs needs keep lock-nets: keep all keeps the pair copper".to_string());
+    }
     let reuse = match object.get("reuse") {
         None | Some(Value::Null) => None,
         Some(v) => Some(v.as_str().filter(|path| path.starts_with('/')).ok_or("iotroute policy reuse must be null or an absolute path")?.to_string()),
     };
-    Ok(Policy { iters, max_time_s, keep_all, return_exempt, layers: names(object, "layers")?, nets: names(object, "nets")?, reuse, reuse_nets: names(object, "reuse_nets")? })
+    Ok(Policy { iters, max_time_s, keep_all, return_exempt, route_pairs, layers: names(object, "layers")?, nets: names(object, "nets")?, reuse, reuse_nets: names(object, "reuse_nets")? })
 }
 
 /// The run arguments of a policy on the candidate board.
@@ -72,6 +78,9 @@ pub fn policy_args(p: &Policy, candidate: &str) -> Vec<String> {
     }
     if p.return_exempt {
         args.push("--return-exempt".to_string());
+    }
+    if p.route_pairs {
+        args.push("--route-pairs".to_string());
     }
     args.extend(p.layers.iter().flat_map(|layer| ["--layer".to_string(), layer.clone()]));
     args.extend(p.nets.iter().flat_map(|net| ["--net".to_string(), net.clone()]));
@@ -140,6 +149,15 @@ mod tests {
     fn return_exempt_asks_for_the_run_option() {
         let p = policy(Some(&json!({"schema": SCHEMA, "return_exempt": true}))).unwrap();
         assert_eq!(policy_args(&p, "c"), ["--iters", "80", "--lock-from", "c", "--return-exempt"]);
+    }
+
+    #[test]
+    fn route_pairs_asks_for_the_run_option_and_needs_lock_nets() {
+        let p = policy(Some(&json!({"schema": SCHEMA, "route_pairs": true}))).unwrap();
+        assert_eq!(policy_args(&p, "c"), ["--iters", "80", "--lock-from", "c", "--route-pairs"]);
+        assert!(policy(Some(&json!({"schema": SCHEMA, "route_pairs": true, "keep": "all"}))).is_err());
+        assert!(policy(Some(&json!({"schema": SCHEMA, "route_pairs": 1}))).is_err());
+        assert!(!policy(Some(&json!({"schema": SCHEMA, "route_pairs": false}))).unwrap().route_pairs);
     }
 
     #[test]
