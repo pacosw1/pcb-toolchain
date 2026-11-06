@@ -134,9 +134,10 @@ pub(crate) struct RefFill {
     areas: Vec<((usize, u8), Area)>,
     /// own-net exemption discs: centre, radius (pad or via radius + via_allow), net
     anchors: Vec<(f64, f64, f64, i32)>,
-    /// Conservative local hole setback per outer layer, from its adjacent zones.
-    /// Immutable settings only: live via geometry stays in Board's spatial indexes.
-    via_clearance: Vec<(usize, f64)>,
+    /// (outer layer, domain) -> setback for each via net, plus an unknown-net maximum.
+    /// Pair rules for another net or reference domain never become a blanket obstacle.
+    via_clearance: Vec<((usize, u8), Vec<f64>)>,
+    via_recheck: Vec<bool>,
     /// gate scope (2026-11-02, model net `ref_soft`): a net whose off-reference run the gate may accept (si_planes
     /// D-124c: a stub, a run whose terminal snap discs meet in reference copper, a return detour within the edge budget,
     /// or no rule above the board perimeter) is not blocked off the reference: each step there costs more
@@ -214,24 +215,32 @@ impl RefFill {
             {
                 out.add_reference(l, p, model, cu, names);
             }
-            // A new via was absent when KiCad produced the static fill. Its hole
-            // uses zone/DRU clearance, not the old generic --plane-clr alone.
-            // Take maxima across the adjacent layer (including thermal gaps)
-            // and a full minimum-width margin. This deliberately overestimates
-            // local antipads; it is not a replacement for native refill/islands.
-            let class_clearance = ["classes", "nets"].iter().flat_map(|key| model[key].as_object().into_iter().flatten())
-                .filter_map(|(_, c)| c["clearance"].as_f64()).fold(0.0, f64::max);
-            let setback = model["zones"].as_array().into_iter().flatten()
-                .filter(|z| z["layer"].as_str() == lv["plane"].as_str())
-                .map(|z| {
-                    let via_rule = z["net_clearance"].as_object().into_iter().flatten()
-                        .filter_map(|(_, c)| c["via"].as_f64()).fold(0.0, f64::max);
-                    let clearance = crate::f(&z["clearance"]).max(crate::f(&z["thermal_gap"]))
-                        .max(via_rule).max(class_clearance).max(crate::f(&model["setup"]["min_clearance"]));
-                    clearance + crate::f(&z["min_thickness"])
-                }).fold(0.0, f64::max);
-            out.via_clearance.push((l, setback));
             for (di, d) in doms.iter().enumerate() {
+                let domain = di as u8 + 1;
+                let all_zones: Vec<&Value> = model["zones"].as_array().into_iter().flatten()
+                    .filter(|z| z["layer"].as_str() == lv["plane"].as_str()).collect();
+                // Old mixed-plane models lack membership. Keep all their zones
+                // conservatively; a fresh model supplies the exact source-bound list.
+                let references: Option<Vec<&str>> = rf["references"][d].as_array()
+                    .and_then(|r| r.iter().map(Value::as_str).collect())
+                    .filter(|r: &Vec<&str>| !r.is_empty());
+                let selected: Vec<&Value> = all_zones.iter().copied().filter(|z| references.as_ref()
+                    .is_some_and(|r| z["net"].as_str().is_some_and(|n| r.contains(&n)))).collect();
+                let zones = if selected.is_empty() { &all_zones } else { &selected };
+                let mut setbacks = vec![0.0f64; names.len() + 1];
+                for (name, &net) in names {
+                    let data = &model["nets"][name];
+                    let class_clearance = data["clearance"].as_f64().or_else(|| data["class"].as_str()
+                        .and_then(|c| model["classes"][c]["clearance"].as_f64())).unwrap_or(0.0);
+                    setbacks[net] = zones.iter().map(|z| {
+                        let clearance = crate::f(&z["clearance"]).max(crate::f(&z["thermal_gap"]))
+                            .max(crate::f(&z["net_clearance"][name]["via"]))
+                            .max(class_clearance).max(crate::f(&model["setup"]["min_clearance"]));
+                        clearance + crate::f(&z["min_thickness"])
+                    }).fold(0.0, f64::max);
+                }
+                setbacks[names.len()] = setbacks.iter().copied().fold(0.0, f64::max);
+                out.via_clearance.push(((l, domain), setbacks));
                 let mut sets = Vec::new();
                 for poly in lv["domains"][d.as_str()].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
                     let mut set = Vec::new();
@@ -244,7 +253,7 @@ impl RefFill {
                     }
                     sets.push(set);
                 }
-                out.areas.push(((l, di as u8 + 1), Area::build(sets, bbox)));
+                out.areas.push(((l, domain), Area::build(sets, bbox)));
             }
         }
         for a in rf["anchors"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
@@ -252,6 +261,10 @@ impl RefFill {
                 out.anchors.push((crate::f(&a[0]), crate::f(&a[1]), crate::f(&a[2]) + allow, n as i32));
             }
         }
+        out.via_recheck = (0..names.len()).map(|net| {
+            out.is_reference_net(net)
+                || out.via_clearance.iter().any(|(_, values)| values[net] < *values.last().unwrap())
+        }).collect();
         out
     }
     pub(crate) fn adjacent_plane_mask(&self, l: usize) -> Option<u8> {
@@ -271,15 +284,25 @@ impl RefFill {
         net >= 0 && self.reference_nets.contains(&(l, net))
     }
 
+    pub(crate) fn needs_via_recheck(&self, net: usize) -> bool {
+        self.via_recheck.get(net).copied().unwrap_or(false) || self.is_reference_net(net)
+    }
+
     pub(crate) fn is_reference_net(&self, net: usize) -> bool {
         self.reference_nets.iter().any(|&(_, n)| n == net as i32)
     }
 
+    #[cfg(test)]
     pub(crate) fn via_clearance(&self, l: usize) -> f64 {
-        self.via_clearance.iter().find(|(layer, _)| *layer == l).map_or(0.0, |(_, c)| *c)
+        self.via_clearance.iter().filter(|((layer, _), _)| *layer == l)
+            .map(|(_, values)| *values.last().unwrap()).fold(0.0, f64::max)
+    }
+    pub(crate) fn via_clearance_for(&self, l: usize, domain: u8, net: Option<usize>) -> f64 {
+        self.via_clearance.iter().find(|(key, _)| *key == (l, domain))
+            .map_or(0.0, |(_, values)| net.and_then(|n| values.get(n)).copied().unwrap_or_else(|| *values.last().unwrap()))
     }
     pub(crate) fn max_via_clearance(&self) -> f64 {
-        self.via_clearance.iter().map(|(_, c)| *c).fold(0.0, f64::max)
+        self.via_clearance.iter().map(|(_, values)| *values.last().unwrap()).fold(0.0, f64::max)
     }
     /// A soft net (RefFill::soft) with domain d: the track centre at (x, y) on copper layer l is off its reference
     /// (outside the area and outside its own anchor discs), so the A* step there pays --ref-cost.

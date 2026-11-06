@@ -28,7 +28,7 @@ fn empty_board(nets: Vec<Net>) -> Board {
             circ: std::collections::HashMap::new(), vip: Vec::new(), tvia: Vec::new(), web: 0.0, web_hard: false, via_len: DEF_VIA_LEN, keep: Vec::new(), esc: Vec::new(), edges: Vec::new(), fvia: Vec::new(), iso: None, niv: Vec::new(), ppoly: Vec::new(), twin: Vec::new(), gnds: Vec::new(), pidx: Vec::new(), prad: Vec::new(), noret: Vec::new(), rgn: Vec::new(), rfill: Default::default() }
 }
 
-fn ctx_of<'a>(bd: &'a mut Board, o: &'a Opts) -> Ctx<'a> {
+pub(crate) fn ctx_of<'a>(bd: &'a mut Board, o: &'a Opts) -> Ctx<'a> {
     let nn = bd.nets.len();
     let memo_w = bd.nets.iter().flat_map(|n| net_widths(n)).collect();
     Ctx { bd, gr: grid(), o, strict: false, dead: vec![(Vec::new(), String::new()); nn], memo: Vec::new(), memo_w, rcache: vec![0; 201 * 201],
