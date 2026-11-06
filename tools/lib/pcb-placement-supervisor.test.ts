@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
+import { sealFixtureBoard } from './cad-seal-fixture.ts';
 import { BOARD, makeFixture } from './part-fixture.ts';
 import { sha256File } from './json-file.ts';
 import { iotrouteMissing } from './iotroute-bin.ts';
@@ -15,7 +16,7 @@ test('placement supervisor seals a real blocked review without mutating canonica
   const root = mkdtempSync(join(tmpdir(), 'pcb-placement-run-')); t.after(() => rmSync(root, { recursive: true, force: true }));
   const tools = fileURLToPath(new URL('..', import.meta.url)); symlinkSync(tools, join(root, 'tools'));
   const board = join(root, 'hardware-design/boards/X'), pcb = join(board, 'cad/X.kicad_pcb'); mkdirSync(join(board, 'cad'), { recursive: true });
-  writeFileSync(join(board, 'gate.json'), '{"project":"cad/X","checks":{}}'); writeFileSync(pcb, '(kicad_pcb (version 20240108))');
+  writeFileSync(join(board, 'gate.json'), '{"project":"cad/X","checks":{}}'); writeFileSync(pcb, '(kicad_pcb (version 20240108))'); sealFixtureBoard(root, 'X');
   const before = readFileSync(pcb), missing = join(root, 'missing.json');
   const call = spawnSync(join(tools, 'pcb'), ['--project', root, 'placement', '--detach', '--json', 'check', 'X', '--manifest', missing], { encoding: 'utf8' });
   assert.equal(call.status, 0, call.stderr || call.stdout);
@@ -32,6 +33,7 @@ test('placement supervisor evaluates a source-bound reviewed synthetic board', {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'pcb-placement-review-'))); t.after(() => rmSync(root, { recursive: true, force: true }));
   const tools = fileURLToPath(new URL('..', import.meta.url)); symlinkSync(tools, join(root, 'tools'));
   const manifest = makeFixture(root), pcb = join(root, 'hardware-design/boards', BOARD, 'fixture.kicad_pcb'), before = readFileSync(pcb);
+  sealFixtureBoard(root, BOARD);
   const call = spawnSync(join(tools, 'pcb'), ['--project', root, 'placement', '--detach', '--json', 'check', BOARD, '--manifest', manifest], { encoding: 'utf8' });
   assert.equal(call.status, 0, call.stderr || call.stdout);
   const folder = join(root, '.gate/cli', JSON.parse(call.stdout).run_id);

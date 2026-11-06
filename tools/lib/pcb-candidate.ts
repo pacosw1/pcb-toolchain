@@ -8,6 +8,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, fchmodSync, fchownSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
+import { resealLocked, resealOnly, verifySeal } from './cad-seal.ts';
 import { holdLock } from './file-lock.ts';
 import { plainJson, readObject, readPyJson } from './json-file.ts';
 import { runStage } from './lean-stage.ts';
@@ -203,6 +204,7 @@ function settleJournal(path: string): void {
   } else if (current === intent.after_sha256) {
     const saved = joinPath(intent.folder, 'backup', basename(intent.target));
     if (!pathExists(saved) || sha(saved) !== intent.before_sha256) fail(`interrupted adoption of run ${intent.run} lacks its exact backup; inspect ${path}`);
+    resealOnly(intent.target, { tool: 'adopt', run_id: intent.run });   // the swap landed but the crash came before the reseal
     if (!pathExists(joinPath(intent.folder, 'adoption.json'))) writeReceipt(intent);
   } else {
     fail(`canonical PCB matches neither side of an interrupted adoption of run ${intent.run}; inspect ${path}`);
@@ -241,6 +243,7 @@ async function commitAdoption(root: string, folder: string, manifest: RunManifes
     try { writeFileSync(backup, originalBytes); fsyncSync(backup); } finally { closeSync(backup); }
     syncFolder(dirname(saved));
     replaceAtomically(target, candidateBytes, () => unchanged('canonical inputs changed before atomic adoption'));
+    await resealLocked(root, board, { tool: 'adopt', run_id: basename(folder) });
     const receipt = writeReceipt(intent);
     rmSync(journal, { force: true });
     return receipt;
@@ -261,6 +264,7 @@ export async function adopt(rootPath: string, folderPath: string, defect?: strin
   const journal = journalOf(root, manifest.board), finished = joinPath(folder, 'adoption.json');
   await underClaim(journal, () => settleJournal(journal));
   if (pathExists(finished)) return readObject<Dict>(finished);
+  verifySeal(root, manifest.board);
   const state = context(root, manifest.board) as { frozen: boolean };
   if (state.frozen) await checkFrozenBaseline(manifest.node as string, root, folder, manifest.board, baseline, defect);
   return commitAdoption(root, folder, manifest, operation, candidate, defect ?? null);

@@ -11,6 +11,7 @@ import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseFlags, runMain, UsageError } from './lib/cli.ts';
 import { courtyardBox, setCourtyard, type Box } from './lib/courtyard.ts';
+import { processWriter, sealedWrite } from './lib/cad-seal.ts';
 import { floatRepr } from './lib/py-compat.mjs';
 import { projectRoot } from './lib/project-root.mjs';
 import { listEnd } from './lib/sexpr.ts';
@@ -77,7 +78,7 @@ function main(argv: string[]): number {
   for (const row of result.rows) console.log(`${row.ref}\t${row.code}\t${showBox(row.old)} -> ${showBox(row.box)}`);
   const changed = result.text !== before;
   console.log(`${result.rows.length} footprints, ${changed ? 'changed' : 'no change'}${dryRun ? ' (dry run)' : ''}`);
-  if (changed && !dryRun) writeFileSync(board, result.text);
+  if (changed && !dryRun) sealedWrite(board, processWriter(), () => writeFileSync(board, result.text));
   return 0;
 }
 

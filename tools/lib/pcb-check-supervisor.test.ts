@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
+import { sealFixtureBoard } from './cad-seal-fixture.ts';
 import { iotrouteMissing } from './iotroute-bin.ts';
 import { startCheck } from './pcb-check-start.ts';
 import { status } from './pcb-runs.ts';
@@ -32,6 +33,7 @@ function fixture(t: { after(fn: () => void): void }, body: string): string {
   mkdirSync(join(root, 'tools'), { recursive: true });
   writeFileSync(join(root, 'hardware-design/boards/X/gate.json'), '{"project":"cad/X","checks":{"erc":true}}');
   writeFileSync(join(root, 'tools/gate.mjs'), body);
+  sealFixtureBoard(root, 'X');
   return root;
 }
 

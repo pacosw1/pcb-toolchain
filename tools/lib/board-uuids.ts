@@ -7,6 +7,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { processWriter, sealedWrite } from './cad-seal.ts';
 
 const NAMESPACE = '7b6f2c8e-5d1a-4d0e-9f3b-2a6c4e8d1b05';   // fixed for this repository
 const COLLISION_STEP = 1000;
@@ -91,8 +92,7 @@ export function repairFile(path: string, write = true): RepairReport {
   const written = rows.length > 0 && write;
   if (written) {
     const temporary = `${path}.uuidfix`;
-    writeFileSync(temporary, text);
-    renameSync(temporary, path);
+    sealedWrite(path, processWriter(), () => { writeFileSync(temporary, text); renameSync(temporary, path); });
   }
   return { board: resolve(path), replaced: write ? rows.length : 0, duplicates: rows.length, rows, written };
 }

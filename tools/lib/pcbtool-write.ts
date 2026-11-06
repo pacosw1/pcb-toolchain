@@ -21,6 +21,7 @@ import { formatG, pyFloat, round } from './py-numbers.ts';
 import { groundSpec, layersError, mixedKinds, netDomain, padGrounds, planesPath } from './reference-planes.ts';
 import { expandRoute, floatPoint, intentRoute, OTHER_SIDE, parseIntent, placements, specPoint, type ExpandedRoute, type Intent, type PlaceSpec, type RouteSegment, type RouteSpec } from './route-spec.ts';
 import { seigaiha } from './seigaiha.ts';
+import { processWriter, sealedWrite } from './cad-seal.ts';
 import { applyColors } from './stackup-colors.ts';
 
 const TOOL = 'pcbtool';
@@ -183,7 +184,7 @@ function applyRoutes(pcb: string, spec: RouteFile, show: (point: [number, number
     const nets = viaNetsAt(boardJson(pcb).board);
     const renet = moves.map(({ move }) => ({ move, net: nets.get(`${round(move.to[0], 3)},${round(move.to[1], 3)}`) })).filter(({ move, net }) => net !== move.net);
     if (renet.length) {
-      writeFileSync(pcb, original);
+      sealedWrite(pcb, processWriter(), () => writeFileSync(pcb, original));
       const text = renet.map(({ move, net }) => `${move.net} ${listOf(show(move.to as [number, number]))} -> ${net ?? 'None'}`);
       throw stop(`moved via touches copper of another net, board not changed: ${text.join('; ')}`);
     }
@@ -443,7 +444,7 @@ export function art(pcb: string, specFile: string): number {
 
 /** The stackup colours: a plain edit of the file, no KiCad save, as it always was. */
 export function setColors(pcb: string, mask: string, silk: string, finish: string): number {
-  writeFileSync(pcb, applyColors(boardText(pcb), mask, silk, finish));
+  sealedWrite(pcb, processWriter(), () => writeFileSync(pcb, applyColors(boardText(pcb), mask, silk, finish)));
   console.log(`stackup: mask ${mask}, silk ${silk}, finish ${finish}`);
   return 0;
 }
