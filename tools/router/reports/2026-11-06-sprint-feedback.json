@@ -1,0 +1,3233 @@
+{
+  "schema": "pcb.sprint-feedback-report.v1",
+  "task": 1416,
+  "scope": "One frozen ESP32-CORE rev B Hetzner trial, historical #1399 singles; no canonical adoption",
+  "protocol": {
+    "commit": "971eefd0fbb934d3fc6f7e13a6e121a0600406ee",
+    "task_comment": 6113,
+    "prelaunch_binding_comment": 6119,
+    "driver": {
+      "schema": "pcb.sprint-feedback-1416-driver.v1",
+      "protocol_commit": "971eefd0fbb934d3fc6f7e13a6e121a0600406ee",
+      "started_at": "2026-11-06T02:32:08.984Z",
+      "status": "complete",
+      "current": null,
+      "completed": [
+        {
+          "label": "sprint-feedback-a",
+          "job": "20261106-023219-94d1a7",
+          "outcome": {
+            "outcome": "command",
+            "exitCode": 2,
+            "detail": "command exit 2"
+          },
+          "client_exit": 3,
+          "recovered": true,
+          "finished_at": "2026-11-06T02:48:19.586Z"
+        }
+      ],
+      "trials": [
+        [
+          "sprint-feedback-a",
+          "sprint",
+          2,
+          960
+        ]
+      ],
+      "finished_at": "2026-11-06T02:48:19.586Z"
+    }
+  },
+  "provenance": {
+    "schema": "pcb.sprint-feedback-1416.v1",
+    "source_commit": "971eefd0fbb934d3fc6f7e13a6e121a0600406ee",
+    "source_archive_sha256": "7e746685dc1a8b62de6d74f9215049188f9fac5ecd52a22be6169041d4c7aedc",
+    "node_sha256": "3517c2df0b2f8cd7f422b4b8450ef81c6889f08eb03e281d6de9079b15e6a327",
+    "harness": [
+      {
+        "name": "1318-job.ts",
+        "measurement": "b88ccafabcec83c17f165fa4e8e687325106b6ca9d2e8768b41ffc754a3be653"
+      },
+      {
+        "name": "1318-submit.mjs",
+        "measurement": "06122e10e42cf813da556bd6a363652b0ca3a61621a4c4680b47dc74d30c8749"
+      }
+    ],
+    "setup_at": "2026-11-06T02:30:13.205Z",
+    "router_binary_sha256": "fb0d6dd2200fa28728dd032786479f6437c3e8a08122e443c5c866ead4cb4320",
+    "router_source_files": 246,
+    "sealed_at": "2026-11-06T02:31:47.649Z",
+    "measurement_files": {
+      "compare.mjs": "c6c360178d75f689a8df85ca8dc59d55669b4965124727812edc458cf3b2e3d7",
+      "summarize.mjs": "d67bbf8872d8a7dceb15920116ed1ea4a7c6bfc1953544aacf06115f8486cde3",
+      "classify.mjs": "ba4067f655a9e3dd4be6b1206d3bfbec5ec6c4a760e12f2e2fd833aa85131560",
+      "setup.mjs": "a23d7f7ea246ffcb24a4bb2cc0a48f19b10a4df97fd6a1f7d49ff689dd3bf643",
+      "seal.mjs": "99e288ce73745306afecc649c991cca7eefb9f0fb1535652e2a733b0f7ce0284"
+    },
+    "frozen_hardware_files": 2723,
+    "frozen_manifest_sha256": "3f79b6eea1a29f3018591ac16983cc4db18b451de4351c2123bf9f50a0618b35"
+  },
+  "timing_scope": "Single: operation completion upper bound. Sprint: verify.end event after gate and local workspace cleanup. CPU: all cgroup children, operation delta and cumulative container counter through terminal report; later teardown and client packing CPU unmeasured.",
+  "historical_single_trials": [
+    {
+      "label": "single-a",
+      "job_id": "20261105-233750-89895b",
+      "cpus": 2,
+      "deadline_s": 960,
+      "mem_gb": 8,
+      "benchmark_verified": true,
+      "first_benchmark_verified_s": 658.767507569,
+      "operation_wall_s": 658.767507569,
+      "operation_cpu_s": 738.780799,
+      "official_harness_status": "ERROR",
+      "first_fully_verified_s": null,
+      "native": {
+        "status": "PASS",
+        "drc": 0,
+        "opens": 0,
+        "parity": 0,
+        "tracks": 956,
+        "vias": 201,
+        "length_mm": 2225,
+        "sha256": "e9464aaa21ec7792469d02c4cd7244314ab9e4dd1655ad960536a3b709c499bf",
+        "seconds": 620.5,
+        "core_seconds": 287.2
+      }
+    },
+    {
+      "label": "single-b",
+      "job_id": "20261106-001705-557cb6",
+      "cpus": 2,
+      "deadline_s": 960,
+      "mem_gb": 8,
+      "benchmark_verified": true,
+      "first_benchmark_verified_s": 724.3226367999999,
+      "operation_wall_s": 724.3226367999999,
+      "operation_cpu_s": 793.479551,
+      "official_harness_status": "ERROR",
+      "first_fully_verified_s": null,
+      "native": {
+        "status": "PASS",
+        "drc": 0,
+        "opens": 0,
+        "parity": 0,
+        "tracks": 956,
+        "vias": 201,
+        "length_mm": 2225,
+        "sha256": "e9464aaa21ec7792469d02c4cd7244314ab9e4dd1655ad960536a3b709c499bf",
+        "seconds": 688.6,
+        "core_seconds": 319.9
+      }
+    },
+    {
+      "label": "single-equal-cpu",
+      "job_id": "20261106-002929-15ff42",
+      "cpus": 1,
+      "deadline_s": 1920,
+      "mem_gb": 8,
+      "benchmark_verified": true,
+      "first_benchmark_verified_s": 694.899076417,
+      "operation_wall_s": 694.899076417,
+      "operation_cpu_s": 691.090323,
+      "official_harness_status": "ERROR",
+      "first_fully_verified_s": null,
+      "native": {
+        "status": "PASS",
+        "drc": 0,
+        "opens": 0,
+        "parity": 0,
+        "tracks": 956,
+        "vias": 201,
+        "length_mm": 2225,
+        "sha256": "e9464aaa21ec7792469d02c4cd7244314ab9e4dd1655ad960536a3b709c499bf",
+        "seconds": 639.6,
+        "core_seconds": 262.2
+      }
+    }
+  ],
+  "trial": {
+    "label": "sprint-feedback-a",
+    "job_id": "20261106-023219-94d1a7",
+    "mode": "sprint",
+    "calibration": false,
+    "cpus": 2,
+    "mem_gb": 8,
+    "deadline_s": 960,
+    "official_harness_status": "ERROR",
+    "official_harness_error": "Error: sprint exit 2",
+    "official_portfolio_status": "ERROR",
+    "official_portfolio_reason": "deadline",
+    "benchmark_verified": true,
+    "classification_prerequisites": {
+      "cleanup_complete": true,
+      "source_matches": true,
+      "terminal_report": true,
+      "resources_match": true,
+      "implementation_matches": true
+    },
+    "first_benchmark_verified_s": 853.224300772,
+    "first_fully_verified_s": null,
+    "operation_wall_s": 952.363442432,
+    "operation_cpu_s": 1631.099671,
+    "container_cpu_before_operation_s": 1.988258,
+    "container_cpu_through_terminal_report_s": 1633.087929,
+    "client_s": 920.822935204,
+    "client_stream_disconnected": true,
+    "client_exit": 3,
+    "cache": "3730 files, sending 54 (10143 KB)",
+    "best_benchmark_candidate": {
+      "variant": "v00",
+      "variant_state": "complete",
+      "verification_end_s": 853.224300772,
+      "benchmark_verified": true,
+      "fully_accepted": false,
+      "reasons": [],
+      "native": {
+        "status": "PASS",
+        "drc": 0,
+        "opens": 0,
+        "parity": 0,
+        "tracks": 956,
+        "vias": 201,
+        "length_mm": 2225,
+        "sha256": "e9464aaa21ec7792469d02c4cd7244314ab9e4dd1655ad960536a3b709c499bf",
+        "seconds": 300.404979028
+      },
+      "gate": {
+        "exit": 1,
+        "metrics": {
+          "erc_errors": 0,
+          "erc_warnings": 186,
+          "drc_errors": 0,
+          "drc_parity": 0,
+          "drc_unconnected": 0,
+          "drc_warnings": 22,
+          "planes_failures": 0,
+          "pairs_failures": 0,
+          "paths_low": 0,
+          "viapads": 0,
+          "kicad_happy_findings": 5,
+          "port_label_failures": 0
+        },
+        "stale_exemptions": [
+          "/ETH_RSTn",
+          "/EXP_P04",
+          "/EXP_P06",
+          "/SPI_MOSI_S",
+          "/WDI"
+        ],
+        "warnings": 208
+      },
+      "evidence": {
+        "native_sha256": "61da2dc2bcc1f837ca195899505f5bd3839c7e92b436e2770940f7e21b5a3851",
+        "gate_sha256": "54519cdccac86ad896c61dc1a72e48c29523be946eda54adaa3327d05b791fe8",
+        "findings_sha256": "701366c89f72dbc7af87eb1e34fb56fe65df47c471a204a2c71b9a5934c25dca",
+        "happy_sha256": "98f30e2a390fc601c0d003ba0c714fc141626c457923632e466da1d9d250e566"
+      }
+    },
+    "candidates": [
+      {
+        "variant": "v00",
+        "variant_state": "complete",
+        "verification_end_s": 853.224300772,
+        "benchmark_verified": true,
+        "fully_accepted": false,
+        "reasons": [],
+        "native": {
+          "status": "PASS",
+          "drc": 0,
+          "opens": 0,
+          "parity": 0,
+          "tracks": 956,
+          "vias": 201,
+          "length_mm": 2225,
+          "sha256": "e9464aaa21ec7792469d02c4cd7244314ab9e4dd1655ad960536a3b709c499bf",
+          "seconds": 300.404979028
+        },
+        "gate": {
+          "exit": 1,
+          "metrics": {
+            "erc_errors": 0,
+            "erc_warnings": 186,
+            "drc_errors": 0,
+            "drc_parity": 0,
+            "drc_unconnected": 0,
+            "drc_warnings": 22,
+            "planes_failures": 0,
+            "pairs_failures": 0,
+            "paths_low": 0,
+            "viapads": 0,
+            "kicad_happy_findings": 5,
+            "port_label_failures": 0
+          },
+          "stale_exemptions": [
+            "/ETH_RSTn",
+            "/EXP_P04",
+            "/EXP_P06",
+            "/SPI_MOSI_S",
+            "/WDI"
+          ],
+          "warnings": 208
+        },
+        "evidence": {
+          "native_sha256": "61da2dc2bcc1f837ca195899505f5bd3839c7e92b436e2770940f7e21b5a3851",
+          "gate_sha256": "54519cdccac86ad896c61dc1a72e48c29523be946eda54adaa3327d05b791fe8",
+          "findings_sha256": "701366c89f72dbc7af87eb1e34fb56fe65df47c471a204a2c71b9a5934c25dca",
+          "happy_sha256": "98f30e2a390fc601c0d003ba0c714fc141626c457923632e466da1d9d250e566"
+        }
+      },
+      {
+        "variant": "v01",
+        "variant_state": "complete",
+        "verification_end_s": 500.801636427,
+        "benchmark_verified": false,
+        "fully_accepted": false,
+        "reasons": [
+          "Error: ENOENT: no such file or directory, open '/var/tmp/router-benchmark-1318.esp321416/evidence/sprint-feedback-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/finished/ESP32-CORE.kicad_pcb.iotroute/result.json'"
+        ]
+      },
+      {
+        "variant": "v02",
+        "variant_state": "complete",
+        "verification_end_s": null,
+        "benchmark_verified": false,
+        "fully_accepted": false,
+        "reasons": [
+          "Error: ENOENT: no such file or directory, open '/var/tmp/router-benchmark-1318.esp321416/evidence/sprint-feedback-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/finished/ESP32-CORE.kicad_pcb.iotroute/result.json'"
+        ]
+      },
+      {
+        "variant": "v03",
+        "variant_state": "complete",
+        "verification_end_s": 952.258402597,
+        "benchmark_verified": false,
+        "fully_accepted": false,
+        "reasons": [
+          "Error: ENOENT: no such file or directory, open '/var/tmp/router-benchmark-1318.esp321416/evidence/sprint-feedback-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/finished/ESP32-CORE.kicad_pcb.iotroute/result.json'"
+        ]
+      }
+    ],
+    "stages": [],
+    "portfolio": {
+      "schema": "iot-lab.route-sprints.v1",
+      "status": "ERROR",
+      "reason": "deadline",
+      "elapsed_s": 952.260207217,
+      "cpu_s": 1080.216893,
+      "cpu_scope": "owned core slice CPU only; native verification is separately recorded",
+      "policy": {
+        "seeds": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "via_costs": [
+          3
+        ],
+        "parallelism": 2,
+        "slice_passes": 2,
+        "deadline_s": 960,
+        "verify_reserve_s": 30,
+        "mem_gb": 8
+      },
+      "variants": [
+        {
+          "id": "v00",
+          "seed": 0,
+          "via_cost": 3,
+          "state": "complete",
+          "pass": 15,
+          "cpu_s": 281.1731,
+          "progress": {
+            "pass": 15,
+            "unrouted": 0,
+            "conflicts": 0,
+            "wire_mm": 2118.056,
+            "vias": 181
+          },
+          "kind": "complete",
+          "checkpoint": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/state.json",
+          "route": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-8.json"
+        },
+        {
+          "id": "v01",
+          "seed": 1,
+          "via_cost": 3,
+          "state": "complete",
+          "pass": 14,
+          "cpu_s": 297.487006,
+          "progress": {
+            "pass": 14,
+            "unrouted": 1,
+            "conflicts": 0,
+            "wire_mm": 2106.161,
+            "vias": 180
+          },
+          "kind": "complete",
+          "checkpoint": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/state.json",
+          "route": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-7.json"
+        },
+        {
+          "id": "v02",
+          "seed": 2,
+          "via_cost": 3,
+          "state": "complete",
+          "pass": 17,
+          "cpu_s": 239.654041,
+          "progress": {
+            "pass": 17,
+            "unrouted": 0,
+            "conflicts": 0,
+            "wire_mm": 2163.953,
+            "vias": 189
+          },
+          "kind": "complete",
+          "checkpoint": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/state.json",
+          "route": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-9.json"
+        },
+        {
+          "id": "v03",
+          "seed": 3,
+          "via_cost": 3,
+          "state": "complete",
+          "pass": 16,
+          "cpu_s": 261.902746,
+          "progress": {
+            "pass": 16,
+            "unrouted": 0,
+            "conflicts": 0,
+            "wire_mm": 2139.289,
+            "vias": 180
+          },
+          "kind": "complete",
+          "checkpoint": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/state.json",
+          "route": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-8.json"
+        }
+      ],
+      "candidates": [],
+      "winner": null
+    },
+    "events": [
+      {
+        "type": "sprint.start",
+        "elapsed_s": 0.00015566499999999906,
+        "policy": {
+          "seeds": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "via_costs": [
+            3
+          ],
+          "parallelism": 2,
+          "slice_passes": 2,
+          "deadline_s": 960,
+          "verify_reserve_s": 30,
+          "mem_gb": 8
+        },
+        "max_passes": 80
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 24.864960599000003,
+        "variant": "v00",
+        "seed": 0,
+        "via_cost": 3,
+        "after_pass": 0
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 24.868291042,
+        "variant": "v01",
+        "seed": 1,
+        "via_cost": 3,
+        "after_pass": 0
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 38.633395574,
+        "variant": "v00",
+        "pass": 1,
+        "unrouted": 0,
+        "conflicts": 51,
+        "wire_mm": 1991.844,
+        "vias": 123
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 40.13551218,
+        "variant": "v01",
+        "pass": 1,
+        "unrouted": 0,
+        "conflicts": 52,
+        "wire_mm": 1993.499,
+        "vias": 121
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 75.67859547,
+        "variant": "v00",
+        "pass": 2,
+        "unrouted": 0,
+        "conflicts": 47,
+        "wire_mm": 2021.65,
+        "vias": 128
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 75.929412977,
+        "variant": "v00",
+        "pass": 2,
+        "unrouted": 0,
+        "conflicts": 47,
+        "wire_mm": 2021.65,
+        "vias": 128
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 76.59738471700001,
+        "variant": "v00",
+        "state": "yielded",
+        "pass": 2,
+        "cpu_s": 51.010491
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 76.59756207100001,
+        "variant": "v02",
+        "seed": 2,
+        "via_cost": 3,
+        "after_pass": 0
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 77.853352088,
+        "variant": "v01",
+        "pass": 2,
+        "unrouted": 0,
+        "conflicts": 46,
+        "wire_mm": 2017.191,
+        "vias": 129
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 78.103299473,
+        "variant": "v01",
+        "pass": 2,
+        "unrouted": 0,
+        "conflicts": 46,
+        "wire_mm": 2017.191,
+        "vias": 129
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 78.721715844,
+        "variant": "v01",
+        "state": "yielded",
+        "pass": 2,
+        "cpu_s": 53.203471
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 78.721903123,
+        "variant": "v03",
+        "seed": 3,
+        "via_cost": 3,
+        "after_pass": 0
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 94.49128318500001,
+        "variant": "v02",
+        "pass": 1,
+        "unrouted": 0,
+        "conflicts": 51,
+        "wire_mm": 1983.086,
+        "vias": 121
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 96.24252613700001,
+        "variant": "v03",
+        "pass": 1,
+        "unrouted": 0,
+        "conflicts": 51,
+        "wire_mm": 1970.2,
+        "vias": 124
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 122.26680862900001,
+        "variant": "v03",
+        "pass": 2,
+        "unrouted": 0,
+        "conflicts": 47,
+        "wire_mm": 2021.752,
+        "vias": 124
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 122.268014674,
+        "variant": "v02",
+        "pass": 2,
+        "unrouted": 0,
+        "conflicts": 49,
+        "wire_mm": 2025.576,
+        "vias": 132
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 122.517495104,
+        "variant": "v03",
+        "pass": 2,
+        "unrouted": 0,
+        "conflicts": 47,
+        "wire_mm": 2021.752,
+        "vias": 124
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 122.51769468700002,
+        "variant": "v02",
+        "pass": 2,
+        "unrouted": 0,
+        "conflicts": 49,
+        "wire_mm": 2025.576,
+        "vias": 132
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 123.042689681,
+        "variant": "v03",
+        "state": "yielded",
+        "pass": 2,
+        "cpu_s": 43.593554
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 123.042843209,
+        "variant": "v00",
+        "seed": 0,
+        "via_cost": 3,
+        "after_pass": 2
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 123.50234804300001,
+        "variant": "v02",
+        "state": "yielded",
+        "pass": 2,
+        "cpu_s": 45.835170999999995
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 123.502495544,
+        "variant": "v01",
+        "seed": 1,
+        "via_cost": 3,
+        "after_pass": 2
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 153.037819233,
+        "variant": "v00",
+        "pass": 3,
+        "unrouted": 0,
+        "conflicts": 44,
+        "wire_mm": 2019.264,
+        "vias": 134
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 155.791876414,
+        "variant": "v01",
+        "pass": 3,
+        "unrouted": 0,
+        "conflicts": 43,
+        "wire_mm": 2039.596,
+        "vias": 130
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 176.816342783,
+        "variant": "v00",
+        "pass": 4,
+        "unrouted": 0,
+        "conflicts": 43,
+        "wire_mm": 2052.868,
+        "vias": 130
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 177.066965077,
+        "variant": "v00",
+        "pass": 4,
+        "unrouted": 0,
+        "conflicts": 43,
+        "wire_mm": 2052.868,
+        "vias": 130
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 177.343873428,
+        "variant": "v00",
+        "state": "yielded",
+        "pass": 4,
+        "cpu_s": 104.906586
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 177.343956863,
+        "variant": "v03",
+        "seed": 3,
+        "via_cost": 3,
+        "after_pass": 2
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 181.098743916,
+        "variant": "v01",
+        "pass": 4,
+        "unrouted": 0,
+        "conflicts": 41,
+        "wire_mm": 2061.253,
+        "vias": 135
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 181.599311155,
+        "variant": "v01",
+        "state": "yielded",
+        "pass": 4,
+        "cpu_s": 110.706475
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 181.59938920399998,
+        "variant": "v02",
+        "seed": 2,
+        "via_cost": 3,
+        "after_pass": 2
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 201.622153409,
+        "variant": "v03",
+        "pass": 3,
+        "unrouted": 0,
+        "conflicts": 44,
+        "wire_mm": 2041.126,
+        "vias": 130
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 203.373665557,
+        "variant": "v02",
+        "pass": 3,
+        "unrouted": 0,
+        "conflicts": 43,
+        "wire_mm": 2035.382,
+        "vias": 134
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 222.898366025,
+        "variant": "v03",
+        "pass": 4,
+        "unrouted": 0,
+        "conflicts": 41,
+        "wire_mm": 2059.552,
+        "vias": 136
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 223.14899536599998,
+        "variant": "v03",
+        "pass": 4,
+        "unrouted": 0,
+        "conflicts": 41,
+        "wire_mm": 2059.552,
+        "vias": 136
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 223.41420421499998,
+        "variant": "v03",
+        "state": "yielded",
+        "pass": 4,
+        "cpu_s": 89.198797
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 223.414280354,
+        "variant": "v00",
+        "seed": 0,
+        "via_cost": 3,
+        "after_pass": 4
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 224.166832142,
+        "variant": "v02",
+        "pass": 4,
+        "unrouted": 0,
+        "conflicts": 41,
+        "wire_mm": 2059.957,
+        "vias": 141
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 224.477690703,
+        "variant": "v02",
+        "state": "yielded",
+        "pass": 4,
+        "cpu_s": 88.337954
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 224.47777983799998,
+        "variant": "v01",
+        "seed": 1,
+        "via_cost": 3,
+        "after_pass": 4
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 245.252866802,
+        "variant": "v00",
+        "pass": 5,
+        "unrouted": 0,
+        "conflicts": 40,
+        "wire_mm": 2050.398,
+        "vias": 139
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 251.26138263399997,
+        "variant": "v01",
+        "pass": 5,
+        "unrouted": 0,
+        "conflicts": 41,
+        "wire_mm": 2073.361,
+        "vias": 139
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 260.521939417,
+        "variant": "v00",
+        "pass": 6,
+        "unrouted": 0,
+        "conflicts": 33,
+        "wire_mm": 2059.424,
+        "vias": 150
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 260.77171899,
+        "variant": "v00",
+        "pass": 6,
+        "unrouted": 0,
+        "conflicts": 33,
+        "wire_mm": 2059.424,
+        "vias": 150
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 261.08911427699996,
+        "variant": "v00",
+        "state": "yielded",
+        "pass": 6,
+        "cpu_s": 142.081862
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 261.0893321,
+        "variant": "v03",
+        "seed": 3,
+        "via_cost": 3,
+        "after_pass": 4
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 273.855331505,
+        "variant": "v01",
+        "pass": 6,
+        "unrouted": 1,
+        "conflicts": 38,
+        "wire_mm": 2088.714,
+        "vias": 146
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 274.15457316199996,
+        "variant": "v01",
+        "state": "yielded",
+        "pass": 6,
+        "cpu_s": 159.977697
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 274.15465622100004,
+        "variant": "v02",
+        "seed": 2,
+        "via_cost": 3,
+        "after_pass": 4
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 284.91758963499996,
+        "variant": "v03",
+        "pass": 5,
+        "unrouted": 0,
+        "conflicts": 39,
+        "wire_mm": 2062.539,
+        "vias": 140
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 296.682041428,
+        "variant": "v02",
+        "pass": 5,
+        "unrouted": 0,
+        "conflicts": 43,
+        "wire_mm": 2060.575,
+        "vias": 142
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 304.440932953,
+        "variant": "v03",
+        "pass": 6,
+        "unrouted": 0,
+        "conflicts": 39,
+        "wire_mm": 2072.126,
+        "vias": 151
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 304.743014611,
+        "variant": "v03",
+        "state": "yielded",
+        "pass": 6,
+        "cpu_s": 132.470618
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 304.743090974,
+        "variant": "v00",
+        "seed": 0,
+        "via_cost": 3,
+        "after_pass": 6
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 316.25492455200003,
+        "variant": "v02",
+        "pass": 6,
+        "unrouted": 0,
+        "conflicts": 36,
+        "wire_mm": 2085.715,
+        "vias": 153
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 316.504571501,
+        "variant": "v02",
+        "pass": 6,
+        "unrouted": 0,
+        "conflicts": 36,
+        "wire_mm": 2085.715,
+        "vias": 153
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 316.805682263,
+        "variant": "v02",
+        "state": "yielded",
+        "pass": 6,
+        "cpu_s": 130.54845699999998
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 316.805757981,
+        "variant": "v01",
+        "seed": 1,
+        "via_cost": 3,
+        "after_pass": 6
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 322.313399635,
+        "variant": "v00",
+        "pass": 7,
+        "unrouted": 0,
+        "conflicts": 31,
+        "wire_mm": 2085.07,
+        "vias": 157
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 333.32622572599996,
+        "variant": "v00",
+        "pass": 8,
+        "unrouted": 0,
+        "conflicts": 22,
+        "wire_mm": 2097.783,
+        "vias": 170
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 333.57586331799996,
+        "variant": "v00",
+        "pass": 8,
+        "unrouted": 0,
+        "conflicts": 22,
+        "wire_mm": 2097.783,
+        "vias": 170
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 333.777711534,
+        "variant": "v00",
+        "state": "yielded",
+        "pass": 8,
+        "cpu_s": 170.787411
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 333.777789546,
+        "variant": "v03",
+        "seed": 3,
+        "via_cost": 3,
+        "after_pass": 6
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 340.325438593,
+        "variant": "v01",
+        "pass": 7,
+        "unrouted": 1,
+        "conflicts": 33,
+        "wire_mm": 2110.437,
+        "vias": 161
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 353.334707737,
+        "variant": "v01",
+        "pass": 8,
+        "unrouted": 1,
+        "conflicts": 27,
+        "wire_mm": 2114.469,
+        "vias": 165
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 353.463175628,
+        "variant": "v01",
+        "pass": 8,
+        "unrouted": 1,
+        "conflicts": 27,
+        "wire_mm": 2114.469,
+        "vias": 165
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 353.64316615900003,
+        "variant": "v01",
+        "state": "yielded",
+        "pass": 8,
+        "cpu_s": 196.47641000000002
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 353.64322654800003,
+        "variant": "v02",
+        "seed": 2,
+        "via_cost": 3,
+        "after_pass": 6
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 354.39685248,
+        "variant": "v03",
+        "pass": 7,
+        "unrouted": 0,
+        "conflicts": 35,
+        "wire_mm": 2103.269,
+        "vias": 161
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 368.41174728199996,
+        "variant": "v02",
+        "pass": 7,
+        "unrouted": 0,
+        "conflicts": 25,
+        "wire_mm": 2078.105,
+        "vias": 164
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 369.664410433,
+        "variant": "v03",
+        "pass": 8,
+        "unrouted": 0,
+        "conflicts": 23,
+        "wire_mm": 2118.059,
+        "vias": 173
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 370.034475928,
+        "variant": "v03",
+        "state": "yielded",
+        "pass": 8,
+        "cpu_s": 168.252172
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 370.034548086,
+        "variant": "v00",
+        "seed": 0,
+        "via_cost": 3,
+        "after_pass": 8
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 377.04340637599995,
+        "variant": "v02",
+        "pass": 8,
+        "unrouted": 0,
+        "conflicts": 21,
+        "wire_mm": 2085.672,
+        "vias": 171
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 377.263262381,
+        "variant": "v02",
+        "state": "yielded",
+        "pass": 8,
+        "cpu_s": 153.88661199999999
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 377.263335758,
+        "variant": "v01",
+        "seed": 1,
+        "via_cost": 3,
+        "after_pass": 8
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 382.794074169,
+        "variant": "v00",
+        "pass": 9,
+        "unrouted": 0,
+        "conflicts": 19,
+        "wire_mm": 2104.469,
+        "vias": 177
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 388.276269929,
+        "variant": "v01",
+        "pass": 9,
+        "unrouted": 1,
+        "conflicts": 20,
+        "wire_mm": 2110.856,
+        "vias": 174
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 391.298615865,
+        "variant": "v00",
+        "pass": 10,
+        "unrouted": 0,
+        "conflicts": 13,
+        "wire_mm": 2125.613,
+        "vias": 188
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 391.549115652,
+        "variant": "v00",
+        "pass": 10,
+        "unrouted": 0,
+        "conflicts": 13,
+        "wire_mm": 2125.613,
+        "vias": 188
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 391.861796525,
+        "variant": "v00",
+        "state": "yielded",
+        "pass": 10,
+        "cpu_s": 192.169396
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 391.86187118000004,
+        "variant": "v03",
+        "seed": 3,
+        "via_cost": 3,
+        "after_pass": 8
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 399.62220269399995,
+        "variant": "v01",
+        "pass": 10,
+        "unrouted": 1,
+        "conflicts": 16,
+        "wire_mm": 2116.465,
+        "vias": 177
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 400.086965781,
+        "variant": "v01",
+        "state": "yielded",
+        "pass": 10,
+        "cpu_s": 218.851964
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 400.087039346,
+        "variant": "v02",
+        "seed": 2,
+        "via_cost": 3,
+        "after_pass": 8
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 404.61918904199996,
+        "variant": "v03",
+        "pass": 9,
+        "unrouted": 0,
+        "conflicts": 14,
+        "wire_mm": 2155.658,
+        "vias": 179
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 407.84055065300004,
+        "variant": "v02",
+        "pass": 9,
+        "unrouted": 0,
+        "conflicts": 14,
+        "wire_mm": 2097.198,
+        "vias": 178
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 412.343405593,
+        "variant": "v02",
+        "pass": 10,
+        "unrouted": 0,
+        "conflicts": 6,
+        "wire_mm": 2121.812,
+        "vias": 182
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 412.692197852,
+        "variant": "v02",
+        "state": "yielded",
+        "pass": 10,
+        "cpu_s": 166.13543199999998
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 412.69227050499995,
+        "variant": "v00",
+        "seed": 0,
+        "via_cost": 3,
+        "after_pass": 10
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 412.69479192499995,
+        "variant": "v03",
+        "pass": 10,
+        "unrouted": 0,
+        "conflicts": 10,
+        "wire_mm": 2177.302,
+        "vias": 178
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 412.89503106,
+        "variant": "v03",
+        "pass": 10,
+        "unrouted": 0,
+        "conflicts": 10,
+        "wire_mm": 2177.302,
+        "vias": 178
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 413.080063067,
+        "variant": "v03",
+        "state": "yielded",
+        "pass": 10,
+        "cpu_s": 189.121785
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 413.08012265599996,
+        "variant": "v01",
+        "seed": 1,
+        "via_cost": 3,
+        "after_pass": 10
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 422.092194582,
+        "variant": "v01",
+        "pass": 11,
+        "unrouted": 1,
+        "conflicts": 11,
+        "wire_mm": 2143.888,
+        "vias": 177
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 423.844444568,
+        "variant": "v00",
+        "pass": 11,
+        "unrouted": 0,
+        "conflicts": 7,
+        "wire_mm": 2143.382,
+        "vias": 193
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 426.348826896,
+        "variant": "v00",
+        "pass": 12,
+        "unrouted": 0,
+        "conflicts": 3,
+        "wire_mm": 2145.276,
+        "vias": 193
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 426.701858159,
+        "variant": "v00",
+        "state": "yielded",
+        "pass": 12,
+        "cpu_s": 205.74685300000002
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 426.70192696899994,
+        "variant": "v02",
+        "seed": 2,
+        "via_cost": 3,
+        "after_pass": 10
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 428.705338638,
+        "variant": "v01",
+        "pass": 12,
+        "unrouted": 1,
+        "conflicts": 4,
+        "wire_mm": 2164.349,
+        "vias": 180
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 428.95579731,
+        "variant": "v01",
+        "pass": 12,
+        "unrouted": 1,
+        "conflicts": 4,
+        "wire_mm": 2164.349,
+        "vias": 180
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 429.293804544,
+        "variant": "v01",
+        "state": "yielded",
+        "pass": 12,
+        "cpu_s": 234.611543
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 429.293875615,
+        "variant": "v03",
+        "seed": 3,
+        "via_cost": 3,
+        "after_pass": 10
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 430.54700184,
+        "variant": "v02",
+        "pass": 11,
+        "unrouted": 0,
+        "conflicts": 6,
+        "wire_mm": 2108.826,
+        "vias": 183
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 432.798502312,
+        "variant": "v02",
+        "pass": 12,
+        "unrouted": 0,
+        "conflicts": 4,
+        "wire_mm": 2114.545,
+        "vias": 185
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 433.048955991,
+        "variant": "v02",
+        "pass": 12,
+        "unrouted": 0,
+        "conflicts": 4,
+        "wire_mm": 2114.545,
+        "vias": 185
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 433.29768999699996,
+        "variant": "v02",
+        "state": "yielded",
+        "pass": 12,
+        "cpu_s": 172.299773
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 433.29776063699995,
+        "variant": "v00",
+        "seed": 0,
+        "via_cost": 3,
+        "after_pass": 12
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 435.55157629499996,
+        "variant": "v03",
+        "pass": 11,
+        "unrouted": 0,
+        "conflicts": 8,
+        "wire_mm": 2177.223,
+        "vias": 178
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 435.80009060599997,
+        "variant": "v00",
+        "pass": 13,
+        "unrouted": 0,
+        "conflicts": 2,
+        "wire_mm": 2174.553,
+        "vias": 193
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 437.301441827,
+        "variant": "v00",
+        "pass": 14,
+        "unrouted": 0,
+        "conflicts": 2,
+        "wire_mm": 2174.29,
+        "vias": 193
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 437.704986595,
+        "variant": "v00",
+        "state": "yielded",
+        "pass": 14,
+        "cpu_s": 209.744355
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 437.705058745,
+        "variant": "v01",
+        "seed": 1,
+        "via_cost": 3,
+        "after_pass": 12
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 440.70859760999997,
+        "variant": "v01",
+        "pass": 13,
+        "unrouted": 1,
+        "conflicts": 2,
+        "wire_mm": 2169.839,
+        "vias": 183
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 440.708699624,
+        "variant": "v03",
+        "pass": 12,
+        "unrouted": 0,
+        "conflicts": 5,
+        "wire_mm": 2203.571,
+        "vias": 181
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 441.094261543,
+        "variant": "v03",
+        "state": "yielded",
+        "pass": 12,
+        "cpu_s": 200.479267
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 441.09433401499996,
+        "variant": "v02",
+        "seed": 2,
+        "via_cost": 3,
+        "after_pass": 12
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 441.097726065,
+        "variant": "v01",
+        "pass": 14,
+        "unrouted": 1,
+        "conflicts": 0,
+        "wire_mm": 2171.036,
+        "vias": 183
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 442.59607033199995,
+        "variant": "v02",
+        "pass": 13,
+        "unrouted": 0,
+        "conflicts": 5,
+        "wire_mm": 2132.298,
+        "vias": 189
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 446.599935298,
+        "variant": "v02",
+        "pass": 14,
+        "unrouted": 0,
+        "conflicts": 5,
+        "wire_mm": 2208.412,
+        "vias": 190
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 446.850463188,
+        "variant": "v02",
+        "pass": 14,
+        "unrouted": 0,
+        "conflicts": 5,
+        "wire_mm": 2208.412,
+        "vias": 190
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 447.1002173,
+        "variant": "v02",
+        "state": "yielded",
+        "pass": 14,
+        "cpu_s": 177.90487099999999
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 447.100284942,
+        "variant": "v00",
+        "seed": 0,
+        "via_cost": 3,
+        "after_pass": 14
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 448.101074998,
+        "variant": "v00",
+        "pass": 15,
+        "unrouted": 0,
+        "conflicts": 0,
+        "wire_mm": 2180.277,
+        "vias": 195
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 500.799828908,
+        "variant": "v01",
+        "pass": 14,
+        "unrouted": 1,
+        "conflicts": 0,
+        "wire_mm": 2106.161,
+        "vias": 180
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 500.80064680099997,
+        "variant": "v01",
+        "state": "complete",
+        "pass": 14,
+        "cpu_s": 297.487006
+      },
+      {
+        "type": "sprint.verify.start",
+        "elapsed_s": 500.800826897,
+        "variant": "v01"
+      },
+      {
+        "type": "sprint.verify.end",
+        "elapsed_s": 500.801636427,
+        "variant": "v01",
+        "passed": false
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 500.80166631,
+        "variant": "v03",
+        "seed": 3,
+        "via_cost": 3,
+        "after_pass": 12
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 505.55433437299996,
+        "variant": "v03",
+        "pass": 13,
+        "unrouted": 0,
+        "conflicts": 3,
+        "wire_mm": 2201.496,
+        "vias": 182
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 507.30640602200003,
+        "variant": "v03",
+        "pass": 14,
+        "unrouted": 0,
+        "conflicts": 2,
+        "wire_mm": 2203.51,
+        "vias": 184
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 507.609319044,
+        "variant": "v03",
+        "state": "yielded",
+        "pass": 14,
+        "cpu_s": 206.949286
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 507.60939132399994,
+        "variant": "v02",
+        "seed": 2,
+        "via_cost": 3,
+        "after_pass": 14
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 512.363945013,
+        "variant": "v02",
+        "pass": 15,
+        "unrouted": 0,
+        "conflicts": 3,
+        "wire_mm": 2204.029,
+        "vias": 190
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 513.114397629,
+        "variant": "v02",
+        "pass": 16,
+        "unrouted": 0,
+        "conflicts": 2,
+        "wire_mm": 2205.725,
+        "vias": 190
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 513.365010979,
+        "variant": "v02",
+        "pass": 16,
+        "unrouted": 0,
+        "conflicts": 2,
+        "wire_mm": 2205.725,
+        "vias": 190
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 513.6043156430001,
+        "variant": "v02",
+        "state": "yielded",
+        "pass": 16,
+        "cpu_s": 183.571858
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 513.604388724,
+        "variant": "v03",
+        "seed": 3,
+        "via_cost": 3,
+        "after_pass": 14
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 515.355684022,
+        "variant": "v03",
+        "pass": 15,
+        "unrouted": 0,
+        "conflicts": 2,
+        "wire_mm": 2203.885,
+        "vias": 186
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 515.855661073,
+        "variant": "v03",
+        "pass": 16,
+        "unrouted": 0,
+        "conflicts": 0,
+        "wire_mm": 2203.505,
+        "vias": 186
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 518.671029084,
+        "variant": "v00",
+        "pass": 15,
+        "unrouted": 0,
+        "conflicts": 0,
+        "wire_mm": 2118.056,
+        "vias": 181
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 518.805504668,
+        "variant": "v00",
+        "state": "complete",
+        "pass": 15,
+        "cpu_s": 281.1731
+      },
+      {
+        "type": "sprint.verify.start",
+        "elapsed_s": 518.8055645979999,
+        "variant": "v00"
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 581.607782866,
+        "variant": "v03",
+        "pass": 16,
+        "unrouted": 0,
+        "conflicts": 0,
+        "wire_mm": 2139.289,
+        "vias": 180
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 581.608527997,
+        "variant": "v03",
+        "state": "complete",
+        "pass": 16,
+        "cpu_s": 261.902746
+      },
+      {
+        "type": "sprint.verify.end",
+        "elapsed_s": 853.224300772,
+        "variant": "v00",
+        "passed": false
+      },
+      {
+        "type": "sprint.slice.start",
+        "elapsed_s": 853.2243799769999,
+        "variant": "v02",
+        "seed": 2,
+        "via_cost": 3,
+        "after_pass": 16
+      },
+      {
+        "type": "sprint.verify.start",
+        "elapsed_s": 853.226790505,
+        "variant": "v03"
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 860.2389840019999,
+        "variant": "v02",
+        "pass": 17,
+        "unrouted": 0,
+        "conflicts": 0,
+        "wire_mm": 2205.209,
+        "vias": 190
+      },
+      {
+        "type": "sprint.checkpoint",
+        "elapsed_s": 922.7058000019999,
+        "variant": "v02",
+        "pass": 17,
+        "unrouted": 0,
+        "conflicts": 0,
+        "wire_mm": 2163.953,
+        "vias": 189
+      },
+      {
+        "type": "sprint.slice.end",
+        "elapsed_s": 922.812009321,
+        "variant": "v02",
+        "state": "complete",
+        "pass": 17,
+        "cpu_s": 239.654041
+      },
+      {
+        "type": "sprint.verify.end",
+        "elapsed_s": 952.258402597,
+        "variant": "v03",
+        "passed": false
+      },
+      {
+        "type": "sprint.end",
+        "elapsed_s": 952.2600085729999,
+        "status": "ERROR",
+        "reason": "deadline",
+        "winner": null
+      }
+    ],
+    "owned_stages": [
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "sprint-prepare",
+          "ESP32-CORE",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb",
+          "--pcb",
+          "/job/hardware-design/boards/ESP32-CORE/cad/ESP32-CORE/ESP32-CORE.kicad_pcb",
+          "--lock-from",
+          "/job/hardware-design/boards/ESP32-CORE/cad/ESP32-CORE/ESP32-CORE.kicad_pcb",
+          "--return-exempt",
+          "--iters",
+          "80"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/prepare.log",
+        "wall_s": 24.850244398999997,
+        "returncode": 0,
+        "childCpuS": 40.534457,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-1.json",
+          "--iters",
+          "80",
+          "--seed",
+          "0",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/progress.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-1.log",
+        "wall_s": 51.271551574,
+        "returncode": 3,
+        "childCpuS": 51.010491,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-1.json",
+          "--iters",
+          "80",
+          "--seed",
+          "1",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/progress.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-1.log",
+        "wall_s": 53.465471181999995,
+        "returncode": 3,
+        "childCpuS": 53.203471,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-1.json",
+          "--iters",
+          "80",
+          "--seed",
+          "3",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/progress.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-1.log",
+        "wall_s": 43.87016579099999,
+        "returncode": 3,
+        "childCpuS": 43.593554,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-1.json",
+          "--iters",
+          "80",
+          "--seed",
+          "2",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/progress.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-1.log",
+        "wall_s": 46.444776194000006,
+        "returncode": 3,
+        "childCpuS": 45.835170999999995,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-2.json",
+          "--iters",
+          "80",
+          "--seed",
+          "0",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-2.log",
+        "wall_s": 54.068248611,
+        "returncode": 3,
+        "childCpuS": 53.896094999999995,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-2.json",
+          "--iters",
+          "80",
+          "--seed",
+          "1",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-2.log",
+        "wall_s": 57.87769448500001,
+        "returncode": 3,
+        "childCpuS": 57.503004,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-2.json",
+          "--iters",
+          "80",
+          "--seed",
+          "3",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-2.log",
+        "wall_s": 45.864834295999984,
+        "returncode": 3,
+        "childCpuS": 45.605243,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-2.json",
+          "--iters",
+          "80",
+          "--seed",
+          "2",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-2.log",
+        "wall_s": 42.66178118000002,
+        "returncode": 3,
+        "childCpuS": 42.502783,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-3.json",
+          "--iters",
+          "80",
+          "--seed",
+          "0",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-3.log",
+        "wall_s": 37.45358401299998,
+        "returncode": 3,
+        "childCpuS": 37.175276,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-3.json",
+          "--iters",
+          "80",
+          "--seed",
+          "1",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-3.log",
+        "wall_s": 49.46873326400001,
+        "returncode": 3,
+        "childCpuS": 49.271222,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-3.json",
+          "--iters",
+          "80",
+          "--seed",
+          "3",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-3.log",
+        "wall_s": 43.46831507300001,
+        "returncode": 3,
+        "childCpuS": 43.271821,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-3.json",
+          "--iters",
+          "80",
+          "--seed",
+          "2",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-3.log",
+        "wall_s": 42.460398869000024,
+        "returncode": 3,
+        "childCpuS": 42.210502999999996,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-4.json",
+          "--iters",
+          "80",
+          "--seed",
+          "0",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-4.log",
+        "wall_s": 28.843576308000017,
+        "returncode": 3,
+        "childCpuS": 28.705548999999998,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-4.json",
+          "--iters",
+          "80",
+          "--seed",
+          "1",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-4.log",
+        "wall_s": 36.65502705600002,
+        "returncode": 3,
+        "childCpuS": 36.498713,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-4.json",
+          "--iters",
+          "80",
+          "--seed",
+          "3",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-4.log",
+        "wall_s": 36.051642387999976,
+        "returncode": 3,
+        "childCpuS": 35.781554,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-4.json",
+          "--iters",
+          "80",
+          "--seed",
+          "2",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-4.log",
+        "wall_s": 23.433717665000003,
+        "returncode": 3,
+        "childCpuS": 23.338155,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-5.json",
+          "--iters",
+          "80",
+          "--seed",
+          "0",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-5.log",
+        "wall_s": 21.630839049000002,
+        "returncode": 3,
+        "childCpuS": 21.381985,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-5.json",
+          "--iters",
+          "80",
+          "--seed",
+          "1",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-5.log",
+        "wall_s": 22.631937910000037,
+        "returncode": 3,
+        "childCpuS": 22.375554,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-5.json",
+          "--iters",
+          "80",
+          "--seed",
+          "2",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-5.log",
+        "wall_s": 12.421133221999975,
+        "returncode": 3,
+        "childCpuS": 12.24882,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-5.json",
+          "--iters",
+          "80",
+          "--seed",
+          "3",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-5.log",
+        "wall_s": 21.03048058199999,
+        "returncode": 3,
+        "childCpuS": 20.869612999999998,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-6.json",
+          "--iters",
+          "80",
+          "--seed",
+          "0",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-6.log",
+        "wall_s": 13.824842732999997,
+        "returncode": 3,
+        "childCpuS": 13.577456999999999,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-6.json",
+          "--iters",
+          "80",
+          "--seed",
+          "1",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-6.log",
+        "wall_s": 16.03039153100003,
+        "returncode": 3,
+        "childCpuS": 15.759579,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-6.json",
+          "--iters",
+          "80",
+          "--seed",
+          "2",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-6.log",
+        "wall_s": 6.419009584999992,
+        "returncode": 3,
+        "childCpuS": 6.164340999999999,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-7.json",
+          "--iters",
+          "80",
+          "--seed",
+          "0",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-7.log",
+        "wall_s": 4.215189971000014,
+        "returncode": 3,
+        "childCpuS": 3.997502,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-6.json",
+          "--iters",
+          "80",
+          "--seed",
+          "3",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-6.log",
+        "wall_s": 11.619892397999996,
+        "returncode": 3,
+        "childCpuS": 11.357482,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-7.json",
+          "--iters",
+          "80",
+          "--seed",
+          "2",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-7.log",
+        "wall_s": 5.815859979000001,
+        "returncode": 3,
+        "childCpuS": 5.605098,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-7.json",
+          "--iters",
+          "80",
+          "--seed",
+          "1",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-7.log",
+        "wall_s": 63.09164680400002,
+        "returncode": 0,
+        "childCpuS": 62.875462999999996,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-7.json",
+          "--iters",
+          "80",
+          "--seed",
+          "3",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-7.log",
+        "wall_s": 6.616583871999988,
+        "returncode": 3,
+        "childCpuS": 6.470019,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-8.json",
+          "--iters",
+          "80",
+          "--seed",
+          "2",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-8.log",
+        "wall_s": 5.815067265000019,
+        "returncode": 3,
+        "childCpuS": 5.666987000000001,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-8.json",
+          "--iters",
+          "80",
+          "--seed",
+          "0",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-8.log",
+        "wall_s": 71.70110205099999,
+        "returncode": 0,
+        "childCpuS": 71.42874499999999,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-8.json",
+          "--iters",
+          "80",
+          "--seed",
+          "3",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-8.log",
+        "wall_s": 68.00077679500006,
+        "returncode": 0,
+        "childCpuS": 54.95346,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "sprint-finish",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/prepared.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-8.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/finished/ESP32-CORE.kicad_pcb",
+          "0",
+          "3",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-8.log"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/native.log",
+        "wall_s": 300.542716714,
+        "returncode": 0,
+        "childCpuS": 326.512356,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/node-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/workspace/tools/gate.mjs",
+          "ESP32-CORE",
+          "--fresh",
+          "--evidence-dir",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/gate"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/gate.log",
+        "wall_s": 33.60625773999991,
+        "returncode": 1,
+        "childCpuS": 63.287671,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/model.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-9.json",
+          "--iters",
+          "80",
+          "--seed",
+          "2",
+          "--via-cost",
+          "3",
+          "--resume-save",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/state.json",
+          "--yield-after-passes",
+          "2",
+          "--checkpoint",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/progress.json",
+          "--resume",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/state.json"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-9.log",
+        "wall_s": 69.58412793299998,
+        "returncode": 0,
+        "childCpuS": 56.082183,
+        "adoptedChildCpuS": 0,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups",
+          "owned_group_gone": true
+        }
+      },
+      {
+        "command": [
+          "/job/in/iotroute-linux-x86_64",
+          "sprint-finish",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/shared/ESP32-CORE.kicad_pcb.iotroute/prepared.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-8.json",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/finished/ESP32-CORE.kicad_pcb",
+          "3",
+          "3",
+          "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-8.log"
+        ],
+        "log": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/native.log",
+        "wall_s": 99.02916739199998,
+        "returncode": -15,
+        "childCpuS": 31.609223,
+        "adoptedChildCpuS": 80.017606,
+        "cpuScope": "owned leader wait4; includes children it reaped; nested intervals non-additive",
+        "cleanup": {
+          "child_reaped": true,
+          "complete": true,
+          "errors": [],
+          "family_cleanup": "registered owned-stage groups"
+        }
+      }
+    ],
+    "job": {
+      "schema": "pcb-job.v1",
+      "id": "20261106-023219-94d1a7",
+      "seq": 269,
+      "spec": {
+        "name": "benchmark1318-sprint-feedback-a",
+        "command": [
+          "bash",
+          "-c",
+          "set -eu\nmkdir .happy bin\ntar -xzf in/kicad-happy-a6bba1a.tar.gz -C .happy\nln -s ../in/node-linux-x86_64 bin/node\nln -s ../in/iotroute-linux-x86_64 bin/iotroute-linux-x86_64\nexport KICAD_HAPPY_DIR=$PWD/.happy KICAD_CLI=kicad-cli PATH=\"$PWD/bin:$PATH\" PCB_TOOLCHAIN_ROOT=$PWD IOTROUTE_BIN=$PWD/in/iotroute-linux-x86_64 PCB_JOBS_LOCAL=1 REMOTE_NO_DAEMON=1 NODE_OPTIONS=\"--experimental-strip-types --no-warnings\"\nexec in/node-linux-x86_64 --experimental-strip-types --no-warnings tools/router/benchmarks/1318-job.ts \"$@\"",
+          "_",
+          "sprint",
+          "960",
+          "ESP32-CORE"
+        ],
+        "image": "iot-lab-route:10.0-nightly-4fe1ca2060",
+        "cpus": 2,
+        "memGb": 8,
+        "diskGb": 10,
+        "timeoutS": 960,
+        "queueWaitS": 300,
+        "maxRetries": 0,
+        "retryExitCodes": []
+      },
+      "state": "failed",
+      "createdAt": "2026-11-06T02:32:19.952Z",
+      "updatedAt": "2026-11-06T02:48:17.329Z",
+      "cancelRequested": false,
+      "attempts": [
+        {
+          "n": 1,
+          "container": "pcbjob-20261106-023219-94d1a7-1",
+          "startedAt": "2026-11-06T02:32:21.226Z",
+          "endedAt": "2026-11-06T02:48:17.329Z",
+          "exitCode": 2,
+          "outcome": "command",
+          "detail": "command exit 2",
+          "trimmed": true
+        }
+      ],
+      "result": {
+        "outcome": "command",
+        "exitCode": 2,
+        "detail": "command exit 2"
+      }
+    },
+    "cleanup": [
+      {
+        "container": "pcbjob-20261106-023219-94d1a7-1",
+        "trimmed": true,
+        "absent": true
+      }
+    ],
+    "resource_observation": {
+      "job": "20261106-023219-94d1a7",
+      "observed_at": "2026-11-06T02:32:24.197Z",
+      "image": "sha256:8c1c6d83c4050f4876f21926846e4e1d640b6be5194f448c3e239392c83a20af",
+      "nano_cpus": 2000000000,
+      "memory_bytes": 8589934592,
+      "status": "running"
+    },
+    "candidate_details": [
+      {
+        "variant": "v00",
+        "seed": 0,
+        "via_cost": 3,
+        "state": "complete",
+        "reason": null,
+        "native_record": {
+          "schema": "iot-lab.iotroute-run.v1",
+          "status": "PASS",
+          "board_file": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/finished/ESP32-CORE.kicad_pcb",
+          "work": "/job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/finished/ESP32-CORE.kicad_pcb.iotroute",
+          "stages": {
+            "binary": {
+              "path": "/job/in/iotroute-linux-x86_64",
+              "how": "self",
+              "sources_sha256": "ea8557f74e8c71f06cea74b597c106788a149a11dfbbed43de0cf13c7c8efead",
+              "sha256": "fb0d6dd2200fa28728dd032786479f6437c3e8a08122e443c5c866ead4cb4320"
+            },
+            "lock": {
+              "removed": 1277,
+              "kept": 30,
+              "nets": [
+                "/USB_DN",
+                "/USB_DP"
+              ],
+              "source": "/job/hardware-design/boards/ESP32-CORE/cad/ESP32-CORE/ESP32-CORE.kicad_pcb",
+              "source_sha256": "b6b97508157893ccca5c5c2cc3e0c90d55691a42d094f9c1015ad8b7f31bdb2b"
+            },
+            "model": {
+              "line": "shared prepared model",
+              "sha256": "670f292a2d34439cb793399f6d591eab2e4d4fd536400203b15e46de43bf3182"
+            },
+            "write": {
+              "exit": 0,
+              "line": "WRITE PASS drc 0 {} unconnected 0 parity 0 -> /job/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/finished/ESP32-CORE.kicad_pcb.iotroute/write/ESP32-CORE.kicad_pcb"
+            },
+            "ref_gate": {
+              "rounds": [
+                {
+                  "round": 1,
+                  "planes_fail_lines": 1,
+                  "fail_nets": [
+                    "/SPI_MISO"
+                  ],
+                  "raised": [
+                    "/SPI_MISO"
+                  ],
+                  "set_hard": [],
+                  "next_core": {
+                    "status": "PASS",
+                    "converged": true,
+                    "iters": 22,
+                    "tracks": 926,
+                    "vias": 201,
+                    "failed": 0
+                  },
+                  "next_core_seconds": 264.8
+                },
+                {
+                  "round": 2,
+                  "planes_fail_lines": 0,
+                  "fail_nets": [],
+                  "raised": [],
+                  "set_hard": []
+                }
+              ]
+            }
+          },
+          "drc_errors": 0,
+          "unconnected": 0,
+          "parity": 0,
+          "tracks": 956,
+          "vias": 201,
+          "board": "ESP32-CORE",
+          "input": "/job/hardware-design/boards/ESP32-CORE/cad/ESP32-CORE/ESP32-CORE.kicad_pcb",
+          "input_sha256": "b6b97508157893ccca5c5c2cc3e0c90d55691a42d094f9c1015ad8b7f31bdb2b",
+          "iters": 80,
+          "seed": 0,
+          "pro_restored": false,
+          "drc_by_type": {},
+          "track_length_mm": 2225,
+          "board_sha256": "e9464aaa21ec7792469d02c4cd7244314ab9e4dd1655ad960536a3b709c499bf",
+          "seconds": 300.404979028
+        },
+        "selected_failed": []
+      },
+      {
+        "variant": "v01",
+        "seed": 1,
+        "via_cost": 3,
+        "state": "complete",
+        "reason": null,
+        "native_record": null,
+        "selected_failed": null
+      },
+      {
+        "variant": "v02",
+        "seed": 2,
+        "via_cost": 3,
+        "state": "complete",
+        "reason": null,
+        "native_record": null,
+        "selected_failed": null
+      },
+      {
+        "variant": "v03",
+        "seed": 3,
+        "via_cost": 3,
+        "state": "complete",
+        "reason": null,
+        "native_record": null,
+        "selected_failed": []
+      }
+    ]
+  },
+  "comparison": [
+    {
+      "baseline": "single-a",
+      "same_cpu_and_wall": true,
+      "reserved_cpu_s": 1920,
+      "new_reserved_cpu_s": 1920,
+      "earlier_benchmark_verification": false,
+      "shorter_verified_route": false,
+      "lower_operation_cpu": false
+    },
+    {
+      "baseline": "single-b",
+      "same_cpu_and_wall": true,
+      "reserved_cpu_s": 1920,
+      "new_reserved_cpu_s": 1920,
+      "earlier_benchmark_verification": false,
+      "shorter_verified_route": false,
+      "lower_operation_cpu": false
+    },
+    {
+      "baseline": "single-equal-cpu",
+      "same_cpu_and_wall": false,
+      "reserved_cpu_s": 1920,
+      "new_reserved_cpu_s": 1920,
+      "earlier_benchmark_verification": false,
+      "shorter_verified_route": false,
+      "lower_operation_cpu": false
+    }
+  ],
+  "limitations": [
+    "Single follow-up; descriptive, not statistical speedup evidence.",
+    "Historical singles use the earlier binary; shared host load and version changes are confounds.",
+    "Reserved CPU ceilings match; actual all-child CPU is measured separately.",
+    "Stale exemptions are excluded only from the preregistered benchmark classification; the official gate remains unchanged.",
+    "No LLM policy was tested."
+  ],
+  "shared_host_activity": {
+    "samples": 30,
+    "first": "2026-11-06T02:32:47.612Z",
+    "last": "2026-11-06T02:48:22.054Z",
+    "retained_file": "host-load-samples.jsonl"
+  },
+  "final_integrity_audit": {
+    "checked_at": "2026-11-06T03:46:10.473Z",
+    "frozen_hardware_files": 2723,
+    "new_and_original_hardware_unchanged": true,
+    "binary_sha256": "fb0d6dd2200fa28728dd032786479f6437c3e8a08122e443c5c866ead4cb4320",
+    "measurement_files_unchanged": true,
+    "harness_unchanged": true,
+    "shared_prepared_model_unchanged": true,
+    "shared_prepared_model_sha256": "670f292a2d34439cb793399f6d591eab2e4d4fd536400203b15e46de43bf3182",
+    "cleanup": [
+      {
+        "container": "pcbjob-20261106-023219-94d1a7-1",
+        "trimmed": true,
+        "absent": true
+      }
+    ],
+    "job_id": "20261106-023219-94d1a7",
+    "attempts": 1,
+    "trial_manifest_sha256": "89a87af23084fd4292b7651b8007fb38ceffd9f55badacde87c1c73908d658cb",
+    "trial_files": 182
+  },
+  "evidence_archives": {
+    "remote_directory": "/var/lib/cip/saved-artifacts/sprint-feedback-1416",
+    "evidence_sha256": "5a532120cbf059792f32b0921bc53ecf22f67b04e831d5c683dd70f285c8ea35",
+    "source_sha256": "7e746685dc1a8b62de6d74f9215049188f9fac5ecd52a22be6169041d4c7aedc",
+    "binary_sha256": "fb0d6dd2200fa28728dd032786479f6437c3e8a08122e443c5c866ead4cb4320"
+  }
+}

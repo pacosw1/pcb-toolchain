@@ -160,10 +160,10 @@ export class NativeBackend implements Backend {
   }
 
   async verify(v: Variant, signal: AbortSignal): Promise<Candidate|null> {
-    const p=this.prepared!, dir=this.directory(v); let route=v.route;
+    const p=this.prepared!, dir=this.directory(v); let route=v.route, routeLog=route?.replace(/\.json$/,'.log');
     if(!route){
       const state=join(dir,'state.json'), saved=this.saved(state); if(!saved)return null;
-      route=join(dir,'final.json');
+      route=join(dir,'final.json');routeLog=join(dir,'finalize.log');
       const args=[this.options.bin,p.model,route,'--iters',String(saved.pass),'--seed',String(v.seed),'--via-cost',String(v.via_cost),'--resume',state];
       if(p.args.congestion)args.push('--congestion',join(dir,'congestion.json'),'--cong-free','1');
       const result=await this.owned(args,join(dir,'finalize.log'),signal);
@@ -171,7 +171,7 @@ export class NativeBackend implements Backend {
     }
     const raw=read(route); if(raw.schema!=='iot-lab.route-result.v0'||!Array.isArray(raw.failed)||raw.failed.length)return null;
     const board=join(dir,'finished',basename(this.options.out));mkdirSync(dirname(board),{recursive:true});
-    const written=await this.owned([this.options.bin,'sprint-finish',this.manifest,route,board,String(v.seed)],join(dir,'native.log'),signal);
+    const written=await this.owned([this.options.bin,'sprint-finish',this.manifest,route,board,String(v.seed),String(v.via_cost),routeLog!],join(dir,'native.log'),signal);
     if(written.returncode!==0)return null;
     const record=read(`${board}.iotroute/result.json`);
     if(record.status!=='PASS'||record.drc_errors!==0||record.unconnected!==0||record.parity!==0||record.board_sha256!==digest(board))return null;
