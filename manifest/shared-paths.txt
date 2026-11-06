@@ -349,6 +349,7 @@ tools/lib/run-record.test.ts
 tools/lib/run-record.ts
 tools/lib/seigaiha.ts
 tools/lib/set-stackup.test.ts
+tools/lib/schematic-datasheets.ts
 tools/lib/sexpr.ts
 tools/lib/si-checks.mjs
 tools/lib/si-checks.test.mjs

@@ -1,12 +1,11 @@
 // Standalone repair snapshot: use the existing gate dependency resolver, then materialize exact file copies.
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, dirname, extname, join, relative } from 'node:path';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { dirname, extname, join, relative } from 'node:path';
 import { sha256File } from './json-file.ts';
 import { inside, nativeInputs, same } from './route-decision-evidence.ts';
 import { resolvePath, withSuffix } from './py-path.ts';
-import { forms } from './sexpr.ts';
-import type { SList } from './sexpr.ts';
+import { schematicDatasheets } from './schematic-datasheets.ts';
 const IGNORED = new Set(['.git', '.gate', '.claude', '.bench', '__pycache__', 'node_modules', 'fab', 'render', 'renders', 'reports', 'target']);
 const BINARY = new Set(['.pyc', '.step', '.stp', '.wrl', '.mp4', '.gif']);
 export function repairSnapshot(root: string, workspace: string, board: string): void {
@@ -30,15 +29,17 @@ export function repairSnapshot(root: string, workspace: string, board: string): 
   if (probe.error || probe.status !== 0) throw new Error('cannot resolve snapshot dependencies: ' + (probe.error?.message ?? probe.stderr.trim()));
   const dependencies: unknown = JSON.parse(probe.stdout);
   if (!Array.isArray(dependencies) || dependencies.some(p => typeof p !== 'string')) throw new Error('invalid snapshot dependency list');
-  for (const name of dependencies as string[]) { const file = resolvePath(name); if (inside(file, root) && statSync(file, { throwIfNoEntry: false })?.isFile()) files.add(file); }
+  const sheets = new Set([withSuffix(native, '.kicad_sch')]);
+  for (const name of dependencies as string[]) {
+    const file = resolvePath(name);
+    if (inside(file, root) && statSync(file, { throwIfNoEntry: false })?.isFile()) {
+      files.add(file);
+      if (file.endsWith('.kicad_sch')) sheets.add(file);
+    }
+  }
   for (const name of readdirSync(join(root, 'hardware-design'))) { const file = join(root, 'hardware-design', name); if (statSync(file).isFile()) files.add(file); }
   if (cfg.snapshot_schematic_datasheets) {
-    const rootForm = forms(readFileSync(withSuffix(native, '.kicad_sch'), 'utf8'))[0] as SList;
-    for (const symbol of rootForm) if (Array.isArray(symbol) && symbol[0] === 'symbol') {
-      for (const field of symbol) if (Array.isArray(field) && field[0] === 'property' && field[1] === 'Datasheet' && typeof field[2] === 'string' && field[2]) {
-        const pdf = join(root, 'hardware-design/registry/datasheets', basename(field[2])); if (statSync(pdf, { throwIfNoEntry: false })?.isFile()) files.add(pdf);
-      }
-    }
+    for (const file of schematicDatasheets(root, sheets)) files.add(file);
   }
   for (const name of ['FOCUS.md', 'AGENTS.md', 'CLAUDE.md']) if (existsSync(join(root, name))) files.add(join(root, name));
   const before = Object.fromEntries([...files].sort().map(file => [file, sha256File(file)]));

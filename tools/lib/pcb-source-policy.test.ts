@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { test } from 'node:test';
+import { repairSnapshot } from './route-decision-cli.ts';
 import { operationCommand } from './pcb-workflow.ts';
-import { snapshot } from './pcb-sources.ts';
+import { snapshot, sourceState } from './pcb-sources.ts';
 
 test('an admitted build entrypoint exists as an independent file in the candidate snapshot', t => {
   const root = mkdtempSync(join(tmpdir(), 'pcb-build-source-'));
@@ -57,3 +58,45 @@ test('a board snapshot carries the shared art that board labels read, and no oth
   assert.equal(readFileSync(join(candidate, 'hardware-design/boards/_art/pitsa-logo.png'), 'utf8'), 'logo');
   assert.ok(!state.files['hardware-design/boards/Y/gate.json']);
 });
+
+for (const [name, capture] of [['candidate', snapshot], ['standalone repair', repairSnapshot]] as const) {
+  test(`${name} snapshots bind datasheets from nested and shared schematic sheets`, t => {
+    const root = mkdtempSync(join(tmpdir(), 'pcb-sheet-datasheets-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const put = (relative: string, content: string | Uint8Array) => {
+      const path = join(root, relative); mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content);
+    };
+    // Exercise the real sheet dependency resolver, without native KiCad or a project checkout.
+    put('tools/pcb_snapshot_inputs.mjs', `import {gateInputs} from ${JSON.stringify(new URL('./gate-inputs.mjs', import.meta.url).href)}; console.log(JSON.stringify(gateInputs(process.argv[2],process.argv[3]).files));`);
+    put('tools/gate.mjs', 'export {};');
+    const config = { project: 'cad/X', checks: {}, snapshot_schematic_datasheets: true };
+    put('hardware-design/boards/X/gate.json', JSON.stringify(config));
+    for (const ext of ['kicad_pcb', 'kicad_pro', 'kicad_dru']) put(`hardware-design/boards/X/cad/X.${ext}`, '{}');
+    put('hardware-design/boards/X/cad/X.kicad_sch', `(kicad_sch
+      (symbol (property "Datasheet" "top.pdf"))
+      (sheet (property "Sheetfile" "sub/child.kicad_sch"))
+      (sheet (property "Sheetfile" "sub/child.kicad_sch")))`);
+    put('hardware-design/boards/X/cad/sub/child.kicad_sch', `(kicad_sch
+      (symbol (property "Datasheet" "child.pdf"))
+      (sheet (property "Sheetfile" "../../../../blocks/shared.kicad_sch")))`);
+    put('hardware-design/blocks/shared.kicad_sch', `(kicad_sch
+      (symbol (property "Datasheet" "shared.pdf"))
+      (sheet (property "Sheetfile" "../boards/X/cad/X.kicad_sch")))`);
+    const pdfs = ['top.pdf', 'child.pdf', 'shared.pdf'];
+    for (const pdf of [...pdfs, 'unrelated.pdf']) put(`hardware-design/registry/datasheets/${pdf}`, Buffer.from(`%PDF original ${pdf}\n\0unchanged`));
+    const before = sourceState(root, 'X');
+    const workspace = join(root, 'candidate'); capture(root, workspace, 'X');
+    for (const pdf of pdfs) {
+      const relative = `hardware-design/registry/datasheets/${pdf}`;
+      assert.deepEqual(readFileSync(join(workspace, relative)), readFileSync(join(root, relative)), pdf);
+      assert.ok(before.files[relative], `fingerprint must bind ${pdf}`);
+    }
+    assert.equal(existsSync(join(workspace, 'hardware-design/registry/datasheets/unrelated.pdf')), false);
+    put('hardware-design/registry/datasheets/child.pdf', 'changed original child PDF');
+    assert.notEqual(sourceState(root, 'X').sha256, before.sha256);
+    assert.match(readFileSync(join(workspace, 'hardware-design/registry/datasheets/child.pdf'), 'utf8'), /original child/);
+    put('hardware-design/boards/X/gate.json', JSON.stringify({ ...config, snapshot_schematic_datasheets: false }));
+    const disabled = join(root, 'disabled'); capture(root, disabled, 'X');
+    for (const pdf of pdfs) assert.equal(existsSync(join(disabled, `hardware-design/registry/datasheets/${pdf}`)), false);
+  });
+}
