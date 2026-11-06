@@ -18,7 +18,7 @@ export interface BenchResult {
   schema: typeof RESULT;
   suite_id: string; suite_sha256: string; budget: Suite['budget']; seeds: number[]; arms: string[]; metric: Metric;
   evaluation: { status: string; comparative_readiness: boolean; blockers: number; error: string | null; report_sha256: string | null };
-  evidence_complete: boolean; unknown_outcomes: number; no_run_trials: number;
+  evidence_complete: boolean; unknown_outcomes: number; no_run_trials: number; timeout_trials: number;
   trials: TrialOutcome[];
   overall: PairedAnalysis; by_split: Record<string, PairedAnalysis>; by_case: Record<string, PairedAnalysis>;
   /** The other metric over the same trials, for reference: gate when the suite measures native, native when it measures gate. */
@@ -54,6 +54,10 @@ export function outcomes(trials: PlannedTrial[], records: Map<string, TrialRecor
       return { ...base, ok: false, seconds: null, length_mm: null, vias: null, status: item?.status ?? 'missing', failure_class: item?.status === 'timeout' ? 'timeout' : 'no_run', evidence_valid: false, gate_ok: false, native_ok: false };
     }
     if (!row) return { ...base, ok: false, seconds: null, length_mm: null, vias: null, status: 'unevaluated', failure_class: 'evidence_invalid', evidence_valid: false, gate_ok: false, native_ok: false };
+    // A run its own supervisor stopped at the deadline leaves no execution policy, so the evaluator cannot admit it; it is a timeout.
+    if (row.evidence_valid !== true && (item.run_status === 'timeout' || item.run_status === 'cancelled')) {
+      return { ...base, ok: false, seconds: null, length_mm: null, vias: null, status: item.run_status, failure_class: item.run_status, evidence_valid: false, gate_ok: false, native_ok: false };
+    }
     const native = asRow(row.native);
     const gateOk = row.full_gate_success === true;
     const nativeOk = row.evidence_valid === true && native.errors === 0 && native.opens === 0 && native.parity === 0;
@@ -93,7 +97,7 @@ export function buildResult(suite: Suite, suiteSha256: string, records: TrialRec
   const bySplit: Record<string, PairedAnalysis> = {}, byCase: Record<string, PairedAnalysis> = {};
   for (const [name, items] of group(list, item => item.split)) bySplit[name] = analyze(pairsOf(items, first, second));
   for (const [name, items] of group(list, item => item.case)) byCase[name] = analyze(pairsOf(items, first, second));
-  const unknown = list.filter(item => !item.evidence_valid).length;
+  const unknown = list.filter(item => !item.evidence_valid && !['timeout', 'cancelled', 'no_run'].includes(item.failure_class ?? '')).length;
   const body = {
     schema: RESULT, suite_id: suite.suite_id, suite_sha256: suiteSha256, budget: suite.budget, seeds: suite.seeds, arms: [first, second], metric,
     evaluation: {
@@ -101,7 +105,7 @@ export function buildResult(suite: Suite, suiteSha256: string, records: TrialRec
       blockers: (evaluation.blockers ?? []).length, error: evaluation.error ?? null, report_sha256: reportSha256,
     },
     evidence_complete: unknown === 0 && evaluation.comparative_readiness === true, unknown_outcomes: unknown,
-    no_run_trials: list.filter(item => item.failure_class === 'no_run' || item.failure_class === 'timeout').length,
+    no_run_trials: list.filter(item => item.failure_class === 'no_run').length, timeout_trials: list.filter(item => item.failure_class === 'timeout').length,
     trials: list, overall: analyze(pairsOf(list, first, second)), by_split: bySplit, by_case: byCase,
     secondary: { metric: other, overall: analyze(pairsOf(otherList, first, second)) }, inputs,
   };

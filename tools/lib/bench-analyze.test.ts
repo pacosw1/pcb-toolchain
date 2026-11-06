@@ -31,7 +31,7 @@ test('a result is sealed, splits by case and detects an edit', () => {
 
 test('trials with no sealed run count as failures, not omissions', () => {
   const result = build((_, arm) => arm === 'new', id => id.endsWith('.new') && id.startsWith('ENV'));
-  assert.equal(result.no_run_trials, 6);
+  assert.equal(result.no_run_trials + result.timeout_trials, 6);
   assert.equal(result.overall.pairs, 12);
   assert.equal(result.overall.b.successes, 6);
   assert.equal(result.evidence_complete, false);
@@ -71,4 +71,14 @@ test('the native metric counts a clean native result even when the configured ga
   assert.equal(result.secondary.metric, 'gate');
   assert.equal(result.secondary.overall.b.successes, 0);
   assert.throws(() => validateSuite({ ...suite, metric: 'other' }), /metric/);
+});
+
+test('a run stopped at its own deadline is a timeout failure, not an unknown outcome', () => {
+  const recs = records().map(r => r.id.startsWith('REL') && r.arm === 'new' ? { ...r, run_status: 'timeout' } : r);
+  const ev = evaluation((_, arm) => arm === 'base');
+  ev.observations = ev.observations!.map(o => String(o.id).startsWith('REL') && String(o.id).endsWith('.new') ? { ...o, evidence_valid: false, full_gate_success: false } : o);
+  const result = buildResult(suite, sha('suite'), recs, ev, null, {});
+  assert.equal(result.timeout_trials, 6);
+  assert.equal(result.unknown_outcomes, 0);
+  assert.equal(result.trials.find(t => t.id === 'REL.r1.new')!.failure_class, 'timeout');
 });
