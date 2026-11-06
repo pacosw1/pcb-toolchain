@@ -12,10 +12,13 @@ happy=${KICAD_HAPPY_DIR:-$HOME/Documents/GitHub/kicad-happy}
 for f in node-linux-x86_64 iotroute-linux-x86_64 iotplace-linux-x86_64; do [ -x "$toolchain/$f" ] || { echo "bench-in-route: no $toolchain/$f" >&2; exit 2; }; done
 # The board reader looks for PCB_TOOLCHAIN_ROOT/bin/iotroute-linux-x86_64; PCB_TOOLCHAIN_ROOT is the project here.
 mkdir -p "$project/bin"
-for f in iotroute-linux-x86_64 iotplace-linux-x86_64; do cmp -s "$toolchain/$f" "$project/bin/$f" || cp "$toolchain/$f" "$project/bin/$f"; done
+for f in iotroute-linux-x86_64 iotplace-linux-x86_64; do cmp -s "$toolchain/$f" "$project/bin/$f" || { rm -f "$project/bin/$f"; cp "$toolchain/$f" "$project/bin/$f"; }; done
+runs=${PCB_RUNS_DIR:-$project/.gate/cli}
+mkdir -p "$runs"; runs=$(cd "$runs" && pwd -P)
+case "$runs/" in "$project"/*) extra='' ;; *) extra="-v $runs:$runs" ;; esac   # a runs folder outside the project is mounted too
 exec docker run --rm --platform linux/amd64 --network none --cpus "${BENCH_CPUS:-2}" --memory "${BENCH_MEM:-4g}" --user "$(id -u):$(id -g)" \
-  -v "$project:$project" -v "$toolchain:/opt/bench/toolchain:ro" -v "$happy:/opt/kicad-happy:ro" -w "$project" \
-  -e HOME=/tmp -e IOT_LAB="$project" -e PCB_TOOLCHAIN_ROOT="$project" -e PCB_RUNS_DIR="${PCB_RUNS_DIR:-$project/.gate/cli}" \
+  -v "$project:$project" $extra -v "$toolchain:/opt/bench/toolchain:ro" -v "$happy:/opt/kicad-happy:ro" -w "$project" \
+  -e HOME=/tmp -e IOT_LAB="$project" -e PCB_TOOLCHAIN_ROOT="$project" -e PCB_RUNS_DIR="$runs" \
   -e IOTROUTE_BIN=/opt/bench/toolchain/iotroute-linux-x86_64 -e IOTPLACE_BIN=/opt/bench/toolchain/iotplace-linux-x86_64 \
   -e REMOTE_NO_DAEMON=1 -e PCB_JOBS_LOCAL=1 -e JOBD_URL= -e KICAD_HAPPY_DIR=/opt/kicad-happy -e KICAD_CLI=kicad-cli \
   -e NODE_OPTIONS='--experimental-strip-types --no-warnings' \

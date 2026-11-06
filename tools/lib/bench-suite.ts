@@ -9,7 +9,9 @@ const KNOWN = new Set(['board', 'seed', 'timeout_s', 'cpus', 'memory_gb', 'input
 const RUNTIME = new Set(['work', 'prev_run', 'prev_run_path']);
 const SHA = /^[0-9a-f]{64}$/;
 
-export interface Arm { id: string; argv?: string[]; steps?: string[][]; env?: Record<string, string>; toolchain_sha256?: string }
+/** route_input: when earlier steps build a project copy with its own board (a placer arm), the file the final route reads, e.g.
+ *  "{work}/proj/{input}". The trial's placement input is then that file's bytes, not the suite board. */
+export interface Arm { id: string; argv?: string[]; steps?: string[][]; env?: Record<string, string>; toolchain_sha256?: string; route_input?: string }
 export interface SuiteBoard { family: string; board: string; split: 'development' | 'holdout'; input: { path: string; sha256: string } }
 export interface Budget { timeout_s: number; cpus: number; memory_gb: number }
 /** gate: the full configured gate passed (default). native: native DRC errors, unconnected and parity all 0, the placer studies' 'verified'. */
@@ -18,7 +20,7 @@ export interface Suite { schema: typeof SUITE; suite_id: string; arms: [Arm, Arm
 
 export interface PlannedTrial {
   id: string; arm: string; family: string; board: string; split: string; case: string; replicate: number; seed: number;
-  argv: string[]; steps: string[][]; env: Record<string, string>; input: { path: string; sha256: string };
+  argv: string[]; steps: string[][]; env: Record<string, string>; input: { path: string; sha256: string }; route_input?: string;
 }
 
 export const armSteps = (arm: Arm): string[][] => arm.steps ?? (arm.argv ? [arm.argv] : []);
@@ -45,6 +47,10 @@ export function validateSuite(value: unknown): Suite {
       }
     });
     if (arm.toolchain_sha256 !== undefined && !SHA.test(arm.toolchain_sha256)) fail(`arm ${arm.id}: toolchain_sha256 must be a SHA-256`);
+    if (arm.route_input !== undefined) {
+      if (typeof arm.route_input !== 'string' || !arm.steps) fail(`arm ${arm.id}: route_input needs steps and a path template`);
+      for (const [, name] of arm.route_input!.matchAll(PLACEHOLDER)) if (!KNOWN.has(name!) && name !== 'work') fail(`arm ${arm.id}: route_input may use {work} and suite placeholders only`);
+    }
   }
   if (!Array.isArray(s.boards) || !s.boards.length) fail('boards must be nonempty');
   const cases = new Set<string>();
@@ -95,6 +101,7 @@ export function expandTrials(suite: Suite): PlannedTrial[] {
           id: `${board.board}.r${index + 1}.${arm.id}`, arm: arm.id, family: board.family, board: board.board, split: board.split, case: board.board,
           replicate: index + 1, seed,
           steps: planned, argv: planned[planned.length - 1]!, env: arm.env ?? {}, input: board.input,
+          ...(arm.route_input ? { route_input: substitute(arm.route_input, values) } : {}),
         });
       }
     });

@@ -103,7 +103,11 @@ export const spawnExecutor: Executor = async (trial, context) => {
   const outcome = last!;
   const cause = outcome.error ?? (outcome.timedOut ? 'deadline reached' : null);
   if (!sealed) return record(trial, { status: outcome.timedOut ? 'timeout' : 'no_run', run_id: runIdOf(outcome.stdout), wall_s, exit_code: outcome.code, cause: cause ?? (outcome.stderr.trim() || 'no sealed result') });
-  const chain = parent ? { parent_run: { path: parent.path, sha256: parent.sha }, placement_input: candidateOf(parent, context) } : {};
+  let chain: Partial<TrialRecord> = parent ? { parent_run: { path: parent.path, sha256: parent.sha }, placement_input: candidateOf(parent, context) } : {};
+  if (trial.route_input) {
+    const file = resolve(context.root, fill(trial.route_input, { work }));
+    chain = { ...chain, placement_input: existsSync(file) ? { path: relative(context.root, file), sha256: sha256File(file) } : null };
+  }
   return record(trial, { status: outcome.timedOut ? 'timeout' : 'sealed', run_id: sealed.id, run_path: sealed.path, result_sha256: sealed.sha, wall_s, exit_code: outcome.code, cause, ...chain });
 };
 
@@ -140,7 +144,7 @@ export function buildStudy(suite: Suite, records: TrialRecord[]): Record<string,
     if (!item || item.status !== 'sealed' || !item.run_path || !item.result_sha256) return [];
     return [{
       id: trial.id, kind: 'cli_run', path: item.run_path, sha256: item.result_sha256, arm: trial.arm, split: trial.split, family: trial.family,
-      case: trial.case, replicate: trial.replicate, placement_input: item.parent_run ? item.placement_input ?? null : trial.input,
+      case: trial.case, replicate: trial.replicate, placement_input: item.parent_run || trial.route_input ? item.placement_input ?? null : trial.input,
       ...(item.parent_run ? { parent_run: item.parent_run } : {}), execution_policy: 'operation/execution-policy.json',
     }];
   });

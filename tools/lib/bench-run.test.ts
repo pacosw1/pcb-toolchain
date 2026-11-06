@@ -70,3 +70,28 @@ test('spawnExecutor follows a command to its run folder, and reports a command t
     assert.equal(missing.status, 'no_run');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('route_input: a placer arm records the placed board it routed as the trial placement input', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'bench-ri-'));
+  try {
+    const runs = join(root, 'runs');
+    mkdirSync(join(runs, 'run-ri'), { recursive: true });
+    writeFileSync(join(runs, 'run-ri/result.json'), '{"status":"passed"}');
+    const value = validateSuite({
+      schema: SUITE, suite_id: 'ri', budget: { timeout_s: 10, cpus: 1, memory_gb: 1 }, seeds: [1, 2],
+      arms: ['a', 'b'].map(id => ({ id, route_input: '{work}/proj/{input}', steps: [
+        ['/bin/sh', '-c', 'mkdir -p "$1/proj/x" && printf placed-{seed} > "$1/proj/x/b.kicad_pcb"', 'sh', '{work}'],
+        ['/bin/sh', '-c', 'echo \'{"run_id":"run-ri"}\''],
+      ] })),
+      boards: [{ family: 'A', board: 'B1', split: 'development', input: { path: 'x/b.kicad_pcb', sha256: sha('orig') } },
+               { family: 'B', board: 'B2', split: 'holdout', input: { path: 'x/b.kicad_pcb', sha256: sha('orig') } }],
+    });
+    assert.throws(() => validateSuite({ ...value, arms: [{ id: 'a', argv: ['x'], route_input: 'y' }, value.arms[1]] }), /route_input needs steps/);
+    const records = await runSuite(value, { root, runsDir: runs, out: join(root, 'out'), executor: spawnExecutor });
+    assert.equal(records[0]!.status, 'sealed');
+    assert.equal(records[0]!.placement_input!.sha256, sha('placed-1'));
+    assert.match(records[0]!.placement_input!.path, /out\/work\/B1\.r1\.a\/proj\/x\/b\.kicad_pcb$/);
+    const study = buildStudy(value, records) as { trials: { placement_input: { sha256: string } }[] };
+    assert.equal(study.trials[2]!.placement_input.sha256, sha('placed-2'));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
