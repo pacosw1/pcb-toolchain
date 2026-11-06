@@ -185,6 +185,10 @@ replaced. The router's own counts are never the verdict. `--spec` is optional; t
 {"schema":"iot-lab.iotroute-policy.v1","iters":80,"max_time_s":null,"keep":"lock-nets","return_exempt":false,"layers":[],"nets":[]}
 ```
 
+Optional, default off: `"tune": true` runs the post-route length / skew tuning stage (meanders on router-routed nets short of a DRU
+`length` min or `skew` max; hand-routed locked copper is never edited; tools/router/DESIGN.md 5f), and `"seed": N` passes `--seed N`
+to the core (another route of the same board, for paired benchmarks).
+
 An optional `sprints` object runs a bounded portfolio in **one daemon job**:
 
 ```json

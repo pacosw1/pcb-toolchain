@@ -458,3 +458,53 @@ test('the old default ranks by halo and has no length stop', async () => {
   assert.equal(looped.rank, 'halo');
   assert.equal(looped.best_step, looped.steps.length - 1);
 });
+
+const three = (): SearchResult => ({ candidates: [0, 1, 2, 3].map(i => ({ pose: [[2 + i, 2, 0], [8, 8, 0]], cost: i + 1, illegal: i === 3 ? ['bad'] : [] })) });
+
+function routeTop(outcomes: Record<number, any>, options: LoopOptions) {
+  const seen = { write: [] as number[], route: [] as number[], limit: [] as (number | null)[] };
+  let time = 0;
+  const effects: Partial<Effects> = {
+    search: three,
+    write: (q, pose, k, step, slot = 0) => (seen.write.push(slot), `b-${slot}`),
+    route: (path, step, slot = 0) => (seen.route.push(slot), time += 10, outcomes[slot]),
+    limit: seconds => void seen.limit.push(seconds),
+  };
+  return { seen, looped: runLoop(pair(), [10, 10], effects as Effects, { realFirst: true, budget: 300, clock: () => time, ...options }) };
+}
+
+test('route-top routes the retained candidates and stops at the first verified one', async () => {
+  const { seen, looped } = routeTop({ 0: [4], 1: [0], 2: [0] }, { routeTop: 3 });
+  const t = (await looped).steps[0];
+  assert.deepEqual(seen.route, [0, 1]);
+  assert.deepEqual(t.route_top?.map(r => [r.slot, r.passed, r.chosen]), [[0, false, false], [1, true, true]]);
+  assert.equal(t.passed, true);
+  assert.equal(t.board, 'b-1');
+  assert.equal(number(t.cost), 2);
+  assert.deepEqual(seen.limit.slice(0, 2), [100, null]);   // the budget of 300 s split in 3
+});
+
+test('route-top pick length routes all legal candidates and takes the shortest verified', async () => {
+  const m = (length: number) => new Measured([0], { length_mm: length, vias: 1 });
+  const { seen, looped } = routeTop({ 0: m(50), 1: m(40), 2: m(45) }, { routeTop: 4, routeTopPick: 'length', routeTopBudget: 20 });
+  const t = (await looped).steps[0];
+  assert.deepEqual(seen.route, [0, 1, 2]);   // the illegal one is never routed
+  assert.deepEqual(t.route_top?.map(r => r.chosen), [false, true, false]);
+  assert.equal(number(t.measure?.length_mm), 40);
+  assert.equal(seen.limit[0], 20);
+});
+
+test('route-top with nothing verified keeps the fewest unrouted, earliest on a tie', async () => {
+  const { looped } = routeTop({ 0: [5], 1: [2], 2: [2] }, { routeTop: 3, target: 0, budget: 1e6 });
+  const t = (await looped).steps[0];
+  assert.equal(t.passed, false);
+  assert.deepEqual(t.route_top?.map(r => r.chosen), [false, true, false]);
+  assert.equal(t.unrouted, 2);
+});
+
+test('route-top off routes only the first candidate and records nothing extra', async () => {
+  const { seen, looped } = routeTop({ 0: [0] }, {});
+  const t = (await looped).steps[0];
+  assert.deepEqual(seen.route, [0]);
+  assert.equal(t.route_top, undefined);
+});
