@@ -89,3 +89,25 @@ CPU directly between modes, and show configured checking cost separately.
 No rules, sources, resource limits, seeds, work limits or acceptance exceptions
 change. An independent container-absence check also corrects the controller's
 case-sensitive matching of Docker's lower-case `no such object` message.
+
+## Preservation failure and corrected revision pending
+
+The pinned scoped prototype passed the named native and reference checks and
+improved track length/via count, but it failed the stronger untouched-copper
+audit. Native integer-coordinate exports confirm one-nanometre differences on
+15 unrelated nets. An earlier round-to-nearest JSON comparison was withdrawn:
+the writer actually truncates toward zero. Both audits and the failed result
+are retained. Locked input objects remain unchanged.
+
+The cause is the existing seed loader's default JSON float parsing. The local
+correction preserves each seed decimal's original double bits using RawValue
+and the standard float parser; the model parser and numeric rules do not change.
+Scoped reuse also falls back when width-rewriting rules are present, because
+that separate numeric path has not earned a preservation claim.
+
+A corrected same-binary ESP32 pair has been requested from the coordinator;
+it has not started. If authorized, pin a new source/binary before that pair,
+retain the original failed preservation outcome, and use the exact native
+integer-coordinate auditor. No additional seed, budget increase, tolerance,
+exemption change or acceptance exception is proposed. The option stays off
+until corrected preservation and the required native regressions are verified.

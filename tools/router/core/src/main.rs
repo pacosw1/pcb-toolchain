@@ -4516,7 +4516,7 @@ fn route_cli(args: &[String]) {
     // reuse (reuse.rs): the kept copper of the earlier route is loaded as routed copper; only the ripped nets are routed
     // in iteration 1
     let plan: Option<reuse::SeedPlan> = reuse_path.as_ref().map(|p| {
-        let seed: Value = serde_json::from_str(&std::fs::read_to_string(p).expect("seed")).expect("seed json");
+        let seed = reuse::read_seed_exact(&std::fs::read_to_string(p).expect("seed")).expect("seed json");
         reuse::load_seed(&mut bd, &o, &model, &seed)
     });
     if let Some(pl) = &plan {

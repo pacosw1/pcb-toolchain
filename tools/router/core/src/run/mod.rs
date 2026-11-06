@@ -183,7 +183,12 @@ impl Run<'_> {
             scoped_planes_fail_lines: None, fallback_reason: None };
         let seed = work.join("seed.json");
         let mut chosen: Option<(AttemptStages, PathBuf, PathBuf)> = None;
-        match reuse::feedback_seed(before_model, &self.model, &self.route_in, &self.route_in_sha256, previous, previous_route, &seed, changed) {
+        let seeded = if self.widths.is_empty() {
+            reuse::feedback_seed(before_model, &self.model, &self.route_in, &self.route_in_sha256, previous, previous_route, &seed, changed)
+        } else {
+            Err("scoped feedback reuse does not support route width rewriting; use the full route".into())
+        };
+        match seeded {
             Ok((record, binding)) => {
                 evidence.record = Some(record); evidence.binding = Some(binding);
                 let scoped = work.join("scoped"); fs::create_dir_all(&scoped).map_err(|e| e.to_string())?;
@@ -685,9 +690,10 @@ esac
         let model = root.0.join("model.json");
         let a = parse_args(&["BOARD".into(), "out.kicad_pcb".into(), "--ref-reuse".into()]).unwrap();
         let mut steps = Steps::new(&root.0).unwrap(); steps.exe = backend;
-        let context = Run { a: &a, steps, model: model.clone(), route_in: input.clone(), route_in_sha256: sha_file(&input).unwrap(),
+        let mut context = Run { a: &a, steps, model: model.clone(), route_in: input.clone(), route_in_sha256: sha_file(&input).unwrap(),
             src: input, folder: root.0.clone(), widths: Vec::new() };
-        for mode in ["pass", "native", "planes", "plane-error", "core-error", "invalidate"] {
+        for mode in ["pass", "native", "planes", "plane-error", "core-error", "invalidate", "width-rewrite"] {
+            context.widths = if mode == "width-rewrite" { vec![crate::plan::WidthRule { name: "region".into(), bounds: [0.0, 0.0, 1.0, 1.0], layers: vec!["F.Cu".into()], width_mm: 0.15 }] } else { Vec::new() };
             fs::write(root.0.join("mode"), mode).unwrap();
             let after = before.replace("3.0", "30.0");
             fs::write(&model, if mode == "invalidate" { after.replace("\"nets\":", "\"new_rule\":true,\"nets\":") } else { after }).unwrap();
@@ -702,7 +708,7 @@ esac
             assert_eq!(evidence.fallback_reason.is_some(), mode != "pass");
             if mode == "native" { assert_eq!(evidence.record.as_ref().unwrap().attempts["scoped"].unconnected, Some(1)); }
             if mode == "planes" { assert_eq!(evidence.scoped_planes_fail_lines, Some(1)); }
-            if mode == "invalidate" { assert!(evidence.record.is_none() && evidence.binding.is_none()); }
+            if matches!(mode, "invalidate" | "width-rewrite") { assert!(evidence.record.is_none() && evidence.binding.is_none()); }
         }
         // A changed native input is not a failed search: refuse it before either path runs.
         fs::write(&context.route_in, "changed input").unwrap();

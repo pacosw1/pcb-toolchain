@@ -3,6 +3,28 @@ use super::*;
 use super::tests_v6::{opts, pad};
 use serde_json::json;
 
+#[test]
+fn seed_parse_preserves_the_original_writer_nanometre_and_numeric_types() {
+    use iotroute::kicad::item_text::mm_text;
+    let source = r#"{"tracks":[{"net":"123","a":[108.69999999999999,120.44999999999997],"b":[-1.0000000000000002,-0.0],"w":0.4000000000000001}],"passes":15,"large":18446744073709551615,"flag":true,"nothing":null}"#;
+    let seed = reuse::read_seed_exact(source).unwrap();
+    let track = &seed["tracks"][0];
+    for (value, literal) in [(&track["a"][0], "108.69999999999999"), (&track["a"][1], "120.44999999999997"),
+        (&track["b"][0], "-1.0000000000000002"), (&track["b"][1], "-0.0"), (&track["w"], "0.4000000000000001")] {
+        let expected = literal.parse::<f64>().unwrap();
+        assert_eq!(value.as_f64().unwrap().to_bits(), expected.to_bits(), "{literal}");
+        assert_eq!(mm_text(value.as_f64().unwrap()), mm_text(expected));
+    }
+    assert_eq!(mm_text(track["a"][0].as_f64().unwrap()), "108.699999");
+    assert_eq!(track["net"], "123"); assert_eq!(seed["passes"].as_u64(), Some(15));
+    assert_eq!(seed["large"].as_u64(), Some(u64::MAX)); assert_eq!(seed["flag"], true); assert!(seed["nothing"].is_null());
+    let again = reuse::read_seed_exact(&serde_json::to_string(&seed).unwrap()).unwrap();
+    assert_eq!(again["tracks"][0]["a"][0].as_f64().unwrap().to_bits(), track["a"][0].as_f64().unwrap().to_bits());
+    assert!(reuse::read_seed_exact("{invalid}").is_err());
+    assert_eq!(reuse::read_seed_exact("  -0  ").unwrap().as_f64().unwrap().to_bits(), (-0.0f64).to_bits());
+    assert!(reuse::read_seed_exact(&format!("{}0{}", "[".repeat(140), "]".repeat(140))).is_err());
+}
+
 fn n(name: &str) -> Net {
     Net { name: name.into(), width: 0.15, clr: 0.15, fast: false, plane: false, power: false, layers: 0b101, via_d: 0.6, via_drill: 0.3, max_vias: None,
           max_len: None, pref: false, min_w: 0.0, min_wl: Vec::new(), in_vias: 0, neck_w: 0.0 }
