@@ -9,7 +9,7 @@ case "${1:-}" in
 esac
 case "$command" in
   loop) exec node --experimental-strip-types --no-warnings "$here/pcb-loop.ts" "$@" ;;
-  list|context|next|status|events|explain|cancel|note|benchmark|cycle|adopt) exec node --experimental-strip-types --no-warnings "$here/pcb-observe.ts" "$@" ;;
+  list|context|next|status|events|explain|cancel|note|benchmark|cycle|adopt|seal) exec node --experimental-strip-types --no-warnings "$here/pcb-observe.ts" "$@" ;;
   bench) exec node --experimental-strip-types --no-warnings "$here/bench.ts" "$@" ;;
   project-check) exec node --experimental-strip-types --no-warnings "$here/pcb-project-check.ts" "$@" ;;
 esac

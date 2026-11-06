@@ -4,6 +4,7 @@ import { lstatSync, readdirSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import { STAGES } from './design-contract-load.ts';
 import { designExemption } from './design-exemption.ts';
+import { sealStatus } from './cad-seal.ts';
 import { readObject as readSharedObject, sha256File } from './json-file.ts';
 import { verify } from './pcb-evidence.ts';
 import { context as boardContext, observedConfig } from './pcb-workflow.ts';
@@ -252,6 +253,9 @@ export async function nextAction(rootPath: string, board: string, options: NextO
     }
   }
   if (missing) return finish('blocked', missing.rule, 'Required board input is missing: ' + missing.path, 'inspect_required_source', ['context', board, '--json'], { evidence: { path: join(root, missing.path), exists: false } });
+  const seal = sealStatus(root, board);   // never throws on a broken seal: the answer is a state and the command to settle it
+  if (seal.state === 'missing') return finish('cad_unsealed', 'cad_seal_missing', 'Board CAD has no seal; create the first seal after you check the files are the intended ones', 'seal', ['seal', board], { evidence: { path: seal.seal, exists: false } });
+  if (seal.state === 'changed') return finish('cad_unsealed', 'cad_changed', 'Board CAD changed outside our tools; undo the change, or accept it with --accept --reason TEXT', 'seal', ['seal', board], { evidence: { path: seal.seal }, changed: seal.changed, added: seal.added, removed: seal.removed });
   if (!selected) { output.evidence = { freshness: context.previous_gate ? 'unverified_legacy' : 'missing', ...(context.previous_gate ? { legacy_observation: context.previous_gate } : {}) }; return check('current_check_missing', 'No current unified run evidence for this board revision'); }
   const { folder, manifest } = selected, operation = manifest.operation ?? 'check';
   const explain = ['explain', basename(folder), '--json'];

@@ -13,6 +13,7 @@
 // CONFIRM the dielectric thicknesses with the stackup that JLCPCB shows for the order before an impedance claim.
 import { formEnd } from './lib/board-edit.ts';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { processWriter, sealedWrite } from './lib/cad-seal.ts';
 import { parseFlags, runMain, UsageError } from './lib/cli.ts';
 import { floatRepr } from './lib/py-compat.mjs';
 import { round } from './lib/py-numbers.ts';
@@ -130,7 +131,7 @@ function main(argv: string[]): number {
   const dielectrics = values.dielectrics
     ? explicitDielectrics(dielectricList(values.dielectrics), names.length)
     : derivedDielectrics(names.length, outerPrepreg, thickness);
-  writeFileSync(path, withStackup(board, stackupText(names, dielectrics)));
+  sealedWrite(path, processWriter(), () => writeFileSync(path, withStackup(board, stackupText(names, dielectrics))));
   const shown = dielectrics.map(gap => floatRepr(gap.thickness)).join(' ');
   console.log(`set_stackup: ${names.length} copper layers ${names.join(' ')}; dielectrics (mm): ${shown}`);
   return 0;

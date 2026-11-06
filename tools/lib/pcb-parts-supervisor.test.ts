@@ -8,6 +8,7 @@ import { sourceState } from './pcb-sources.ts';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
+import { sealFixtureBoard } from './cad-seal-fixture.ts';
 import { iotrouteMissing } from './iotroute-bin.ts';
 import { status } from './pcb-runs.ts';
 
@@ -53,6 +54,7 @@ test('parts from-run binds the sealed candidate and never mutates canonical CAD'
   put(join(board, 'gate.json'), config); put(join(folder, 'workspace/hardware-design/boards/X/gate.json'), config);
   put(target, '(kicad_pcb (version 20240108))'); put(candidate, '(kicad_pcb (version 20240108))');
   put(join(board, 'cad/X.kicad_sch'), '(kicad_sch (version 20250114))');
+  sealFixtureBoard(root, 'X');
   put(join(folder, 'workspace/hardware-design/boards/X/cad/X.kicad_sch'), '(kicad_sch (version 20250114))');
   put(join(folder, 'run.json'), JSON.stringify({ root, board: 'X', operation: 'edit', node: process.execPath }));
   put(join(folder, 'operation/result.json'), JSON.stringify({ candidate, candidate_sha256: sha(candidate), candidate_verified: true, identity_preserved: true, source_unchanged: true, protected_source_changes: [] }));

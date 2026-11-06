@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
+import { sealFixtureBoard } from './cad-seal-fixture.ts';
 import { iotrouteMissing } from './iotroute-bin.ts';
 import { exemptBoard } from './design-exempt-fixture.ts';
 import { BOARD as FIXTURE_BOARD, makeFixture } from './part-fixture.ts';
@@ -53,6 +54,7 @@ function project(t: { after(fn: () => void): void }, writer = WRITER(MOVED), gat
   writeFileSync(join(root, 'tools/pcb_snapshot_inputs.mjs'), 'console.log("[]");');
   writeFileSync(join(root, 'spec.json'), '{"place":{}}');
   exemptBoard(root, 'X');
+  sealFixtureBoard(root, 'X');
   return root;
 }
 
@@ -312,6 +314,7 @@ test('reviewed part use screens a copper edit before and after the tool', needsB
   t.after(() => rmSync(root, { recursive: true, force: true }));
   exemptBoard(root, FIXTURE_BOARD, undefined, { revisions: [{ revision: 'synthetic-1', spec: 'SPEC.md', state: 'review', gate: FIXTURE_BOARD }] });
   const manifest = makeFixture(root);
+  sealFixtureBoard(root, FIXTURE_BOARD);
   mkdirSync(join(root, 'tools'), { recursive: true });
   writeFileSync(join(root, 'tools/gate.mjs'), GATE());
   writeFileSync(join(root, 'tools/pcbtool.ts'), 'process.stdout.write("no change\\n");');
@@ -372,11 +375,15 @@ test('adoption replaces the canonical board atomically, with a backup and a rece
   assert.equal(again.status, 0, again.stdout);
   assert.deepEqual(JSON.parse(again.stdout), receipt);
   assert.equal(readFileSync(canonicalOf(root), 'utf8'), MOVED);
+  const seal = pcb(root, 'seal', 'X', '--json');   // the swap resealed the board: the seal agrees with the adopted bytes
+  assert.equal(seal.status, 0, seal.stdout);
+  assert.equal((JSON.parse(readFileSync(join(root, 'hardware-design/boards/X/cad-seal.json'), 'utf8')) as Row).writer.run_id, id);
 });
 
 test('a source edit after the candidate blocks adoption, and the board stays free', needsBinary, async t => {
   const root = project(t), { folder } = await edit(root), id = folder.split('/').at(-1)!;
   writeFileSync(canonicalOf(root), BOARD + '\n');
+  sealFixtureBoard(root, 'X');   // a person accepted the edit; the freshness check, not the seal, must stop the old candidate
   const call = pcb(root, 'adopt', id, '--json');
   assert.equal(call.status, 2);
   assert.match(call.stdout, /canonical inputs changed since candidate creation/);
@@ -403,6 +410,7 @@ test('an adoption interrupted after its replacement finishes its receipt', needs
   assert.equal(call.status, 0, call.stdout + call.stderr);
   assert.equal((JSON.parse(call.stdout) as Row).after_sha256, result.candidate_sha256);
   assert.equal(existsSync(journalOf(root)), false);
+  assert.equal(pcb(root, 'seal', 'X').status, 0);   // the recovery resealed the replaced board
 });
 
 test('an adoption interrupted before its replacement is simply done again', needsBinary, async t => {

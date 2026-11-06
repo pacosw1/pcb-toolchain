@@ -254,6 +254,31 @@ boards require `--baseline FAILED_RUN --defect FINDING_ID` from a currently
 verified failed check, with that error resolved by complete candidate evidence.
 Unexecuted dependent checks never count as passing baseline evidence.
 
+## CAD seal
+
+Rule: canonical CAD changes only through our tools. Do not edit `.kicad_pcb`, `.kicad_sch`,
+`.kicad_pro` or `.kicad_dru` files of a board by hand or with a plain file write.
+
+`hardware-design/boards/BOARD/cad-seal.json` (schema `iot-lab.cad-seal.v1`, committed) holds the sha256 of each
+CAD file of the board, the total hash, and the last writer (`tool`, `run_id`). It has no timestamp. The file list
+comes from the gate inputs of the board. Each tool that writes CAD updates the seal. The local log
+`.gate/cad-seal/BOARD.jsonl` gets one line per write or accepted edit: tool, before hash, after hash, reason.
+
+If the CAD does not agree with the seal, `check`, `build`, `edit`, `route`, `repair`, `release`, the passthrough
+commands and `adopt` stop with an error that names each changed file. `tools/pcb next BOARD` does not stop: it
+returns the state `cad_unsealed` and the next action `tools/pcb seal BOARD`. A board without a seal file fails the
+same way. Run workspaces and candidate copies (a `.gate/` segment in the root path) are never sealed.
+
+```sh
+tools/pcb seal BOARD [--json]
+tools/pcb seal BOARD --accept --reason TEXT
+```
+
+The first form is read-only. It exits 1 when the seal is missing or broken. The second form records an edit that a
+person made in KiCad, and it creates the first seal of a board. `--reason` is required. To undo an edit instead,
+restore the files with `git checkout -- FILE`. KiCad can rewrite `.kicad_pro` when a person only opens a project;
+accept it or restore it.
+
 ## Release, blocks and measurement
 
 [Release workflow](RELEASE-WORKFLOW.md) describes fresh staged fabrication,

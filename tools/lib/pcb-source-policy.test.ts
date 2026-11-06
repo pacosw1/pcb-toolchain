@@ -100,3 +100,20 @@ for (const [name, capture] of [['candidate', snapshot], ['standalone repair', re
     for (const pdf of pdfs) assert.equal(existsSync(join(disabled, `hardware-design/registry/datasheets/${pdf}`)), false);
   });
 }
+
+test('the CAD seal record is no source: a reseal keeps candidates fresh and the snapshot leaves it out', t => {
+  const root = mkdtempSync(join(tmpdir(), 'pcb-seal-source-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const put = (relative: string, content: string) => { const path = join(root, relative); mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content); };
+  put('tools/pcb_snapshot_inputs.mjs', 'console.log("[]")');
+  put('hardware-design/boards/X/gate.json', JSON.stringify({ project: 'cad/X' }));
+  for (const ext of ['kicad_pcb', 'kicad_sch', 'kicad_pro']) put(`hardware-design/boards/X/cad/X.${ext}`, 'synthetic');
+  const before = sourceState(root, 'X');
+  put('hardware-design/boards/X/cad-seal.json', '{"writer":"one"}');
+  assert.equal(sourceState(root, 'X').sha256, before.sha256);
+  put('hardware-design/boards/X/cad-seal.json', '{"writer":"two"}');
+  assert.equal(sourceState(root, 'X').sha256, before.sha256);
+  const workspace = join(root, 'candidate'); snapshot(root, workspace, 'X');
+  assert.equal(existsSync(join(workspace, 'hardware-design/boards/X/cad-seal.json')), false);
+  assert.equal(existsSync(join(workspace, 'hardware-design/boards/X/gate.json')), true);
+});
