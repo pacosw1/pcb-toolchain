@@ -1,0 +1,138 @@
+{
+  "schema": "pcb-toolchain.aio-reference-diagnosis.v1",
+  "task": 1421,
+  "run": "run-ZmQgy8",
+  "toolchain": {
+    "version": "0.2.12",
+    "source": "743fd53f2f1d800da3a2f7acb25771252bad2a78",
+    "binary_sha256": "9f69901f68dd55ed035ed195d04a3d79b29a4f0528f8b17c082c8ec1dd19a25f",
+    "image_sha256": "293bed2fbb778ea606f530c12d1f41fbe542f7460825d7a9f13128dc36b5929b"
+  },
+  "candidate_sha256": "c74dd740ca97538ea304a6ba95eb97a277eee00d0a72c9f5d20e41cebdcb07db",
+  "original_check": {
+    "original_fail_lines": [
+      "FAIL detour B.Cu /WD_OK: 2 of 2 crossings with a return detour > 1.6 mm or no reference path, longest run 0.5 mm at (121.1, 156.5), detour 10.2 mm (tr 0.235942 ns: driver U10.Q SN74LVC1G123 IBIS V-I conditional estimate: C*dV/I_avg, sn74lvc1g123.ibs [Model] LVC1G123_OUT_50 (VCC 5 V): 16.3919 pF (8.99086 pF trace, 2.041 pF sourced loads, 5.36 pF C_comp min) -> 0.235942 ns; source https://www.ti.com/lit/zip/SCEM427 (downloaded 2026-10-09); loads without source omitted: Q1.G, Q32.G)",
+      "FAIL detour B.Cu /DAC_ALARM: 1 of 1 crossings with a return detour > 13.4 mm or no reference path, longest run 0.5 mm at (135.6, 152.4), detour 22.4 mm (tr 2.01011 ns: driver U8.~{ALARM} DAC8760 IBIS V-I conditional estimate: C*dV/I_avg, dac8750_60.ibs [Model] DOU_OD_5 (DVDD 5 V): 12.8613 pF (7.60626 pF trace, 3.648 pF sourced loads, 1.607 pF C_comp min) -> 2.01011 ns; source https://www.ti.com/lit/zip/SBAM177 (downloaded 2026-10-09))",
+      "FAIL fast-crossing B.Cu /LATCH: 1 crossings, longest 0.22 mm at (138.2, 164.6) (a fast net may cross no gap, void or slot)"
+    ],
+    "candidate_fail_lines": [
+      "FAIL detour B.Cu /WD_OK: 2 of 2 crossings with a return detour > 1.6 mm or no reference path, longest run 0.5 mm at (121.1, 156.5), detour 10.2 mm (tr 0.235942 ns: driver U10.Q SN74LVC1G123 IBIS V-I conditional estimate: C*dV/I_avg, sn74lvc1g123.ibs [Model] LVC1G123_OUT_50 (VCC 5 V): 16.3919 pF (8.99086 pF trace, 2.041 pF sourced loads, 5.36 pF C_comp min) -> 0.235942 ns; source https://www.ti.com/lit/zip/SCEM427 (downloaded 2026-10-09); loads without source omitted: Q1.G, Q32.G)",
+      "FAIL detour B.Cu /DAC_ALARM: 1 of 1 crossings with a return detour > 13.4 mm or no reference path, longest run 0.5 mm at (135.6, 152.4), detour 22.4 mm (tr 2.01011 ns: driver U8.~{ALARM} DAC8760 IBIS V-I conditional estimate: C*dV/I_avg, dac8750_60.ibs [Model] DOU_OD_5 (DVDD 5 V): 12.8613 pF (7.60626 pF trace, 3.648 pF sourced loads, 1.607 pF C_comp min) -> 2.01011 ns; source https://www.ti.com/lit/zip/SBAM177 (downloaded 2026-10-09))",
+      "FAIL fast-crossing B.Cu /LATCH: 1 crossings, longest 0.22 mm at (138.2, 164.6) (a fast net may cross no gap, void or slot)"
+    ],
+    "identical": true,
+    "started": "2026-11-06T01:09:40Z",
+    "ended": "2026-11-06T01:11:23Z",
+    "exit": 1,
+    "source_sha256": "e78aacd648480582143331ea1e7de0e0499e8b61acddd65254907f39c4876008",
+    "copy_sha256": "e78aacd648480582143331ea1e7de0e0499e8b61acddd65254907f39c4876008",
+    "planes_log_sha256": "c1d1ad448320c575a28993d675f736757dafc43f1a1fba12bb63b399655c2f62",
+    "cpu_limit": 2,
+    "memory_gib": 8,
+    "container_absence_verified": true
+  },
+  "copper": {
+    "per_net": {
+      "FIELD_0V": {
+        "counts": [
+          451,
+          451
+        ],
+        "hashes": [
+          "81d25262a4a6b3b9b3daa6458d545485289bd77df684c05acaeaf9efac627b07",
+          "81d25262a4a6b3b9b3daa6458d545485289bd77df684c05acaeaf9efac627b07"
+        ],
+        "identical": true
+      },
+      "/AI1/SH": {
+        "counts": [
+          10,
+          10
+        ],
+        "hashes": [
+          "0fef2fde999a07eb7a71c0224b7b7d9af7243cfccf5477fd26577341656e6de2",
+          "0fef2fde999a07eb7a71c0224b7b7d9af7243cfccf5477fd26577341656e6de2"
+        ],
+        "identical": true
+      },
+      "/AI2/SH": {
+        "counts": [
+          10,
+          10
+        ],
+        "hashes": [
+          "ffb06fde0f6055ae16d0a7ba0dd031ac1ec92f1917ad3e88f26bf62681643812",
+          "ffb06fde0f6055ae16d0a7ba0dd031ac1ec92f1917ad3e88f26bf62681643812"
+        ],
+        "identical": true
+      },
+      "/AI3/SH": {
+        "counts": [
+          10,
+          10
+        ],
+        "hashes": [
+          "2c268c99e16de69dc59a8f7adfd00fd26219ce719eb1f0f4652df85bf22206ac",
+          "2c268c99e16de69dc59a8f7adfd00fd26219ce719eb1f0f4652df85bf22206ac"
+        ],
+        "identical": true
+      },
+      "/AI4/SH": {
+        "counts": [
+          12,
+          12
+        ],
+        "hashes": [
+          "fab65e8dad19f89d4a9d3671560b8078693aadd53a87ee82ab9f4e699d28712e",
+          "fab65e8dad19f89d4a9d3671560b8078693aadd53a87ee82ab9f4e699d28712e"
+        ],
+        "identical": true
+      },
+      "/WD_OK": {
+        "counts": [
+          64,
+          64
+        ],
+        "hashes": [
+          "dfa3c2fae2e2e34352d3037c6a8bd439e59a76805cdfcf157a55c5b58af1a03e",
+          "dfa3c2fae2e2e34352d3037c6a8bd439e59a76805cdfcf157a55c5b58af1a03e"
+        ],
+        "identical": true
+      },
+      "/DAC_ALARM": {
+        "counts": [
+          38,
+          38
+        ],
+        "hashes": [
+          "25758f955d7babdc0730981b2b41fe4a7916bbc501dad1fb874a0360e0ac3f6e",
+          "25758f955d7babdc0730981b2b41fe4a7916bbc501dad1fb874a0360e0ac3f6e"
+        ],
+        "identical": true
+      },
+      "/LATCH": {
+        "counts": [
+          50,
+          50
+        ],
+        "hashes": [
+          "4396fc2eb88897ad9fa1f1e78a10d4d0ab279aed5d0c2c02a29b324f9d8d6a22",
+          "4396fc2eb88897ad9fa1f1e78a10d4d0ab279aed5d0c2c02a29b324f9d8d6a22"
+        ],
+        "identical": true
+      }
+    },
+    "added_count": 7,
+    "removed_count": 0,
+    "added_by_net": {
+      "GND": 7
+    }
+  },
+  "scope": {
+    "reroutes": 0,
+    "source_modified": false,
+    "adopted": false,
+    "qualification": false
+  },
+  "conclusion": "Three original reference-plane failures preserved as fixed input copper. Staged route-json skips reference feedback, but feedback cannot relocate fixed input tracks."
+}
