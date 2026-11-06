@@ -105,6 +105,9 @@ pub fn core_args(a: &Args, model: &Path, route: &Path, work: &Path, extra: &[Str
             args.extend([flag.to_string(), value.to_string()]);
         }
     }
+    if let Some(cost) = a.via_cost {
+        args.extend(["--via-cost".into(), cost.to_string()]);
+    }
     if a.checkpoint {
         args.extend(["--checkpoint".to_string(), work.join("checkpoint.json").display().to_string()]);
         if let Some(sha) = source_sha {

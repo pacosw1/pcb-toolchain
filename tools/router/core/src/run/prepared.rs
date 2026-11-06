@@ -67,12 +67,20 @@ pub fn prepare_cli(args: &[String]) -> i32 {
     }
 }
 
-fn finish_job(prepared: &Prepared, route: &Path, out: &Path, work: &Path, seed: u64, rec: &mut Record) -> Result<(), String> {
+fn finish_job(prepared: &Prepared, route: &Path, out: &Path, work: &Path, seed: u64, via_cost: f64, route_log: &Path, rec: &mut Record) -> Result<(), String> {
+    finish_job_using(prepared, route, out, work, seed, via_cost, route_log, rec, Steps::new(&prepared.args.tools)?, super::finish)
+}
+
+fn finish_job_using(prepared: &Prepared, route: &Path, out: &Path, work: &Path, seed: u64, via_cost: f64, route_log: &Path, rec: &mut Record,
+    steps: Steps, finish: impl FnOnce(&mut Record, &Path, &Path) -> Result<DrcCounts, String>) -> Result<(), String> {
     if out.extension().and_then(|e| e.to_str()) != Some("kicad_pcb") || out.exists() || work.exists() {
         rec.work = None;
         return Err("sprint finish needs a new .kicad_pcb output and work folder".into());
     }
-    let steps = Steps::new(&prepared.args.tools)?;
+    if prepared.args.ref_reuse { return Err("sprint finish does not enable experimental feedback reuse".into()); }
+    if !via_cost.is_finite() || via_cost <= 0.0 { return Err("via cost must be finite and positive".into()); }
+    if !route_log.is_file() { return Err("sprint finish requires the original core log".into()); }
+
     validate(prepared, &steps.exe)?;
     let result: serde_json::Value = serde_json::from_slice(&fs::read(route).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     if result["schema"] != "iot-lab.route-result.v0" || !result["tracks"].is_array() || !result["vias"].is_array() || !result["failed"].is_array() {
@@ -81,6 +89,12 @@ fn finish_job(prepared: &Prepared, route: &Path, out: &Path, work: &Path, seed: 
     fs::create_dir_all(work).map_err(|e| e.to_string())?;
     let local_route = work.join("route.json");
     fs::copy(route, &local_route).map_err(|e| e.to_string())?;
+    fs::copy(route_log, work.join("route.log")).map_err(|e| e.to_string())?;
+    // Feedback raises model costs; checkpoint input remains immutable for every variant.
+    let model = work.join("model.json");
+    fs::copy(&prepared.model, &model).map_err(|e| e.to_string())?;
+    let mut args = prepared.args.clone();
+    args.seed = Some(seed); args.via_cost = Some(via_cost);
     let widths = widths::board_widths(&prepared.folder, &prepared.model)?;
     rec.board = prepared.folder.file_name().map(|n| n.to_string_lossy().into_owned());
     rec.input = Some(prepared.src.display().to_string());
@@ -92,25 +106,31 @@ fn finish_job(prepared: &Prepared, route: &Path, out: &Path, work: &Path, seed: 
     rec.stages.write = Some(steps.write_route(&prepared.route_in, &local_route, out, work, &widths)?);
     place_sidecars(&prepared.src, out)?;
     rec.pro_restored = Some(restore_pro(&prepared.src, out)?);
-    super::finish(rec, out, work)?;
+    let context = Run { a: &args, steps, model, route_in: prepared.route_in.clone(),
+        route_in_sha256: sha_file(&prepared.route_in)?, src: prepared.src.clone(), folder: prepared.folder.clone(), widths };
+    rec.stages.ref_gate = Some(context.ref_gate(out, work)?);
+    validate(prepared, &context.steps.exe)?;
+    finish(rec, out, work)?;
+    let result: serde_json::Value = serde_json::from_slice(&fs::read(&local_route).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     // Core failures may describe rules not reducible to a native connectivity count.
-    if !result["failed"].as_array().unwrap().is_empty() {
+    if !result["failed"].as_array().is_some_and(|failed| failed.is_empty()) {
         rec.status = "FAIL"; rec.cause = Some("finalized core result still has failed nets".into());
     }
     Ok(())
 }
 
 pub fn finish_cli(args: &[String]) -> i32 {
-    let [manifest, route, output, seed] = args else { eprintln!("usage: iotroute sprint-finish PREPARED.json ROUTE.json OUT.kicad_pcb SEED"); return 2 };
+    let [manifest, route, output, seed, via_cost, route_log] = args else { eprintln!("usage: iotroute sprint-finish PREPARED.json ROUTE.json OUT.kicad_pcb SEED VIA_COST ROUTE.log"); return 2 };
     let prepared: Prepared = match fs::read(manifest).map_err(|e| e.to_string()).and_then(|b| serde_json::from_slice(&b).map_err(|e| e.to_string())) {
         Ok(p) => p, Err(e) => { eprintln!("prepared input: {e}"); return 2 }
     };
     let Ok(seed) = seed.parse::<u64>() else { eprintln!("seed must be an unsigned integer"); return 2 };
+    let Ok(via_cost) = via_cost.parse::<f64>() else { eprintln!("invalid via cost"); return 2 };
     let out = match absolute(output) { Ok(p) => p, Err(e) => { eprintln!("{e}"); return 2 } };
     let work = PathBuf::from(format!("{}.iotroute", out.display()));
     let start = Instant::now();
     let mut rec = Record::new(out.display().to_string(), work.display().to_string());
-    let code = match finish_job(&prepared, Path::new(route), &out, &work, seed, &mut rec) {
+    let code = match finish_job(&prepared, Path::new(route), &out, &work, seed, via_cost, Path::new(route_log), &mut rec) {
         Ok(()) => i32::from(rec.status != "PASS"),
         Err(e) => { rec.status = "ERROR"; rec.cause = Some(e); 2 }
     };
@@ -123,6 +143,81 @@ pub fn finish_cli(args: &[String]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn sprint_feedback_is_private_preserves_variant_and_checks_selected_failures() {
+        use std::os::unix::fs::PermissionsExt;
+        struct Temp(PathBuf);
+        impl Drop for Temp { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
+        let root = Temp(std::env::temp_dir().join(format!("sprint-feedback-{}", std::process::id())));
+        fs::create_dir_all(&root.0).unwrap();
+        let backend = root.0.join("backend.sh");
+        fs::write(&backend, r##"#!/bin/sh
+set -eu
+case "$1" in
+  write)
+    mkdir -p "$4"
+    cp "$2" "$4/input.kicad_pcb"
+    echo 'WRITE PASS drc 0 {} unconnected 0 parity 0'
+    ;;
+  si-planes)
+    # Fail only the initial screen; a selected feedback route ends the loop.
+    if [ ! -d "${2}.iotroute/ref-r2" ]; then echo 'FAIL unknown-driver F.Cu A: crossing'; exit 1; fi
+    echo '0 reference-plane failures'
+    ;;
+  *)
+    printf '%s\n' "$@" > "$(dirname "$2")/args.txt"
+    failed=$(cat "$(dirname "$0")/failed")
+    printf '{"schema":"iot-lab.route-result.v0","tracks":[],"vias":[],"failed":%s}' "$failed" > "$2"
+    echo 'ROUTE PASS converged true iters 1 tracks 0 vias 0 failed 0 notes 0 0 s -> route.json'
+    ;;
+esac
+"##).unwrap();
+        fs::set_permissions(&backend, fs::Permissions::from_mode(0o700)).unwrap();
+        let src = root.0.join("input.kicad_pcb"); fs::write(&src, "(kicad_pcb)").unwrap();
+        fs::write(src.with_extension("kicad_pro"), "{}").unwrap();
+        fs::write(root.0.join("gate.json"), r#"{"checks":{"planes":"planes.json"}}"#).unwrap();
+        let model = root.0.join("prepared-model.json");
+        fs::write(&model, r#"{"nets":{"A":{"ref_soft":true,"ref_cost":3.0}}}"#).unwrap();
+        let mut prepared = Prepared { schema: SCHEMA.into(), args: parse_args(&["B".into(), "out.kicad_pcb".into()]).unwrap(),
+            src: src.clone(), folder: root.0.clone(), route_in: src.clone(), model: model.clone(),
+            binary_sha256: sha_file(&backend).unwrap(), files: BTreeMap::new(), lock: None };
+        bind(&mut prepared.files, &src).unwrap(); bind(&mut prepared.files, &model).unwrap();
+        let initial = root.0.join("initial.json");
+        fs::write(&initial, r#"{"schema":"iot-lab.route-result.v0","tracks":[],"vias":[],"failed":[]}"#).unwrap();
+        let log = root.0.join("initial.log"); fs::write(&log, "actual initial core log\n").unwrap();
+        for (index, failed, expected) in [(0, "[]", "PASS"), (1, "[\"A\"]", "FAIL"), (2, "null", "FAIL")] {
+            fs::write(root.0.join("failed"), failed).unwrap();
+            let out = root.0.join(format!("variant-{index}.kicad_pcb"));
+            let work = PathBuf::from(format!("{}.iotroute", out.display()));
+            let mut steps = Steps::new(&root.0).unwrap(); steps.exe = backend.clone();
+            let mut rec = Record::new(out.display().to_string(), work.display().to_string());
+            finish_job_using(&prepared, &initial, &out, &work, 23, 7.5, &log, &mut rec, steps, |rec, board, work| {
+                // The final native check must run after feedback has selected its board.
+                assert!(work.join("ref-r2/route.json").is_file());
+                assert_eq!(fs::read(board).unwrap(), fs::read(&src).unwrap());
+                rec.status = "PASS"; Ok(DrcCounts::default())
+            }).unwrap();
+            assert_eq!(rec.status, expected);
+            assert_eq!(rec.stages.ref_gate.unwrap().rounds.len(), 2);
+            assert_eq!(fs::read_to_string(work.join("route-initial.log")).unwrap(), "actual initial core log\n");
+            assert_ne!(sha_file(&work.join("model.json")).unwrap(), sha_file(&model).unwrap());
+            validate(&prepared, &backend).unwrap();
+            let args = fs::read_to_string(work.join("ref-r2/args.txt")).unwrap();
+            assert!(args.contains("\n--seed\n23\n")); assert!(args.contains("\n--via-cost\n7.5\n"));
+            assert!(!args.contains("--reuse"));
+        }
+        // Missing logs and invalid costs fail before any child can run or work directory is created.
+        for (cost, log_path, message) in [(f64::NAN, log.clone(), "via cost"), (0.0, log.clone(), "via cost"), (3.0, root.0.join("missing.log"), "original core log")] {
+            let out = root.0.join("invalid.kicad_pcb"); let work = root.0.join("invalid-work");
+            let mut steps = Steps::new(&root.0).unwrap(); steps.exe = backend.clone();
+            let mut rec = Record::new(out.display().to_string(), work.display().to_string());
+            let err = finish_job_using(&prepared, &initial, &out, &work, 0, cost, &log_path, &mut rec, steps,
+                |_, _, _| panic!("invalid input reached native check")).unwrap_err();
+            assert!(err.contains(message)); assert!(!work.exists());
+        }
+    }
+
     #[test]
     fn sprint_preparation_refuses_an_ignored_feedback_experiment() {
         let error = prepare_job(&["BOARD".into(), "out.kicad_pcb".into(), "--ref-reuse".into()]).err().unwrap();
