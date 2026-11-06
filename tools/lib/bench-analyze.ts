@@ -12,12 +12,14 @@ export interface TrialOutcome extends Outcome {
   id: string; arm: string; case: string; replicate: number; split: string; status: string; failure_class: string | null; evidence_valid: boolean;
   gate_ok: boolean; native_ok: boolean;
 }
-export interface Evaluation { status?: string; comparative_readiness?: boolean; blockers?: unknown[]; observations?: Row[]; error?: string }
+export interface Evaluation { status?: string; comparative_readiness?: boolean; blockers?: { code?: string }[]; observations?: Row[]; error?: string }
+const TOLERATED: Record<string, string[]> = { placement: [], router: ['unequal_case_or_execution'] };
 
 export interface BenchResult {
   schema: typeof RESULT;
   suite_id: string; suite_sha256: string; budget: Suite['budget']; seeds: number[]; arms: string[]; metric: Metric;
-  evaluation: { status: string; comparative_readiness: boolean; blockers: number; error: string | null; report_sha256: string | null };
+  evaluation: { status: string; comparative_readiness: boolean; blockers: number; tolerated_blockers: number; error: string | null; report_sha256: string | null };
+  treatment: string;
   evidence_complete: boolean; unknown_outcomes: number; no_run_trials: number; timeout_trials: number;
   trials: TrialOutcome[];
   overall: PairedAnalysis; by_split: Record<string, PairedAnalysis>; by_case: Record<string, PairedAnalysis>;
@@ -97,14 +99,17 @@ export function buildResult(suite: Suite, suiteSha256: string, records: TrialRec
   const bySplit: Record<string, PairedAnalysis> = {}, byCase: Record<string, PairedAnalysis> = {};
   for (const [name, items] of group(list, item => item.split)) bySplit[name] = analyze(pairsOf(items, first, second));
   for (const [name, items] of group(list, item => item.case)) byCase[name] = analyze(pairsOf(items, first, second));
+  const tolerated = TOLERATED[suite.treatment ?? 'placement'] ?? [];
+  const blocking = (evaluation.blockers ?? []).filter(b => !tolerated.includes(String(b.code)));
+  const ready = evaluation.comparative_readiness === true || (evaluation.status !== 'error' && (evaluation.observations?.length ?? 0) > 0 && blocking.length === 0);
   const unknown = list.filter(item => !item.evidence_valid && !['timeout', 'cancelled', 'no_run'].includes(item.failure_class ?? '')).length;
   const body = {
     schema: RESULT, suite_id: suite.suite_id, suite_sha256: suiteSha256, budget: suite.budget, seeds: suite.seeds, arms: [first, second], metric,
     evaluation: {
       status: evaluation.status ?? 'error', comparative_readiness: evaluation.comparative_readiness === true,
-      blockers: (evaluation.blockers ?? []).length, error: evaluation.error ?? null, report_sha256: reportSha256,
+      blockers: blocking.length, tolerated_blockers: (evaluation.blockers ?? []).length - blocking.length, error: evaluation.error ?? null, report_sha256: reportSha256,
     },
-    evidence_complete: unknown === 0 && evaluation.comparative_readiness === true, unknown_outcomes: unknown,
+    evidence_complete: unknown === 0 && ready, treatment: suite.treatment ?? 'placement', unknown_outcomes: unknown,
     no_run_trials: list.filter(item => item.failure_class === 'no_run').length, timeout_trials: list.filter(item => item.failure_class === 'timeout').length,
     trials: list, overall: analyze(pairsOf(list, first, second)), by_split: bySplit, by_case: byCase,
     secondary: { metric: other, overall: analyze(pairsOf(otherList, first, second)) }, inputs,

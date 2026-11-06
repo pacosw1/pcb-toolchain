@@ -16,7 +16,10 @@ export interface SuiteBoard { family: string; board: string; split: 'development
 export interface Budget { timeout_s: number; cpus: number; memory_gb: number }
 /** gate: the full configured gate passed (default). native: native DRC errors, unconnected and parity all 0, the placer studies' 'verified'. */
 export type Metric = 'gate' | 'native';
-export interface Suite { schema: typeof SUITE; suite_id: string; arms: [Arm, Arm]; boards: SuiteBoard[]; seeds: number[]; budget: Budget; metric?: Metric }
+/** placement (default): routing is held fixed, so arms must route with identical tools and specs. router: the router build or
+ *  route spec is the thing compared, so the evaluator's unequal_case_or_execution blocker is expected and tolerated (still reported). */
+export type Treatment = 'placement' | 'router';
+export interface Suite { schema: typeof SUITE; suite_id: string; arms: [Arm, Arm]; boards: SuiteBoard[]; seeds: number[]; budget: Budget; metric?: Metric; treatment?: Treatment }
 
 export interface PlannedTrial {
   id: string; arm: string; family: string; board: string; split: string; case: string; replicate: number; seed: number;
@@ -68,6 +71,7 @@ export function validateSuite(value: unknown): Suite {
     fail('seeds must be at least two distinct integers');
   }
   if (s.metric !== undefined && s.metric !== 'gate' && s.metric !== 'native') fail('metric must be gate or native');
+  if (s.treatment !== undefined && s.treatment !== 'placement' && s.treatment !== 'router') fail('treatment must be placement or router');
   const b = s.budget;
   if (!b || ![b.timeout_s, b.cpus, b.memory_gb].every(x => Number.isFinite(x) && x > 0)) fail('budget needs positive timeout_s, cpus and memory_gb');
   return s;

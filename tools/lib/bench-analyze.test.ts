@@ -82,3 +82,14 @@ test('a run stopped at its own deadline is a timeout failure, not an unknown out
   assert.equal(result.unknown_outcomes, 0);
   assert.equal(result.trials.find(t => t.id === 'REL.r1.new')!.failure_class, 'timeout');
 });
+
+test('a router suite tolerates the unequal-execution blocker; a placement suite does not', () => {
+  const ev = { ...evaluation((_, arm) => arm === 'new'), status: 'blocked', comparative_readiness: false, blockers: [{ code: 'unequal_case_or_execution' }] };
+  assert.equal(buildResult(suite, sha('s'), records(), ev, null, {}).evidence_complete, false);
+  const router = buildResult(validateSuite({ ...suite, treatment: 'router' }), sha('s'), records(), ev, null, {});
+  assert.equal(router.evidence_complete, true);
+  assert.equal(router.evaluation.tolerated_blockers, 1);
+  const other = { ...ev, blockers: [{ code: 'unequal_case_or_execution' }, { code: 'trial_evidence_invalid' }] };
+  assert.equal(buildResult(validateSuite({ ...suite, treatment: 'router' }), sha('s'), records(), other, null, {}).evidence_complete, false);
+  assert.throws(() => validateSuite({ ...suite, treatment: 'x' }), /treatment/);
+});
