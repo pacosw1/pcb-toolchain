@@ -27,3 +27,129 @@ Before any new comparison, run exactly one calibration on frozen ESP32-CORE B (t
 Calibration uses `measure 0 ESP32-CORE`: zero means no experiment wall timer and no native `--max-time`, not a zero-second measurement. The existing 80-pass terminal result is the finite work stop. The daemon's configured maximum timeout (21,600 seconds on this host) remains an operational ceiling, not the proposed shared comparison budget. There is one attempt, with no automatic retries. A failed native result, failed configured gate, or operational stop ends this experiment with its diagnostic evidence; do not increase the budget or run sprints after an unverified single result.
 
 Only if this calibration fully verifies will its measured phases determine a shared comparison budget. That budget and comparison policy must be recorded here before launching comparison trials. Until then there is no new single-versus-sprint result or revised LLM decision. All actual runs stay on Hetzner, never CI; only this one frozen board is in scope.
+
+## ESP32-CORE single-versus-sprints follow-up (#1399)
+
+### Calibration registration
+
+This report-only follow-up uses the same frozen ESP32-CORE rev B source from
+`a545d5e18428e03256ea876f45864b25061c1397`, PCB SHA-256
+`b6b97508157893ccca5c5c2cc3e0c90d55691a42d094f9c1015ad8b7f31bdb2b`.
+The previously restored FM25V02A PDF is retained unchanged:
+`3993f988368aa8dc94b79a888234274959b7e4e091c693535530f3f4dddafefd`.
+Pin current toolchain main `228b964205037621c36cbc39f92bd0f6d8301d86`.
+Build its Linux router with Rust 1.93.1; record the resulting binary hash before
+submission. Keep Node v22.23.2 and runtime image
+`sha256:8c1c6d83c4050f4876f21926846e4e1d640b6be5194f448c3e239392c83a20af`.
+All board runs are sequential Hetzner jobs, never CI, on isolated copies.
+
+First run exactly one `measure 0 ESP32-CORE` calibration: seed 0, 80 passes,
+source-lock and return-exemption policy unchanged, two CPUs, eight GiB for the
+whole job including the fresh configured gate. No experiment wall timeout or
+native `--max-time` is added during calibration; the daemon's 21,600-second
+operational ceiling remains. The historical reproduction harness is copied with
+only its resource declaration changed from four to eight GiB; archive that copy
+and its diff. No router, gate, rule or exemption changes are permitted.
+
+The benchmark success definition is deliberately separate from board acceptance:
+require fresh native DRC, opens and schematic parity all zero, and every configured
+geometric/electrical check complete with zero error/failure counts and zero active
+kicad-happy findings. Warnings remain reported separately. Unused/stale RP-001
+exemption entries are counted and named separately; they do not become actual
+geometric violations or get removed. Any other gate error, missing check, stale
+input, incomplete cleanup or timeout is unsuccessful. The historical five stale
+entries were ETH_RSTn, EXP_P04, EXP_P06, SPI_MOSI_S and WDI; each trial's actual
+set must be reported. The unchanged full gate and sprint controller may still
+return failure and no accepted incumbent. Report those official outcomes too.
+
+First benchmark-verified time means the completion of the first fresh gate that
+meets the definition above, measured from job/portfolio start. It is not the
+controller's full-acceptance time. Derive it from retained native, gate and owned
+stage evidence; never substitute a promising score or route completion. Report
+whole-job cgroup CPU, native candidate length/vias, preparation, slicing, native
+and configured verification, client/cache overhead, and terminal cleanup.
+
+If calibration fails for a reason other than stale exemptions, stop and report;
+do not launch comparison trials or change rules. After a qualifying calibration,
+preregister the measured shared budget, CPU limits, trial count and order here
+and in the task record before the first comparison. No comparison trial is
+registered or started by this calibration section.
+
+Calibration binary SHA-256:
+`3f307aa46709d9b843b2cb7faefb971c12db35780d82f0dc509c26a5fbb77f46`.
+Node executable SHA-256:
+`3517c2df0b2f8cd7f422b4b8450ef81c6889f08eb03e281d6de9079b15e6a327`.
+The clean source archive hash is
+`086c78924035e07a86eca067fa63b6799778306d3cc819d5a9a14f7659b336cf`;
+211 router source files match the archive in both measurement copies, and all
+2,723 frozen hardware-design files match the retained #1389 fixture.
+
+### Comparison registration after calibration, before comparison trials
+
+Calibration job `20261105-232134-d5f4f6` completed in 604.200507 seconds with
+670.867728 operation CPU-seconds; the cumulative container counter through its
+terminal report is 672.546428 CPU-seconds. Native routing/verification took
+569.293923 seconds and the fresh configured gate 34.477024 seconds. Native
+DRC/opens/parity and all configured error/failure counts are zero except the five
+unchanged stale RP-001 entries; active kicad-happy findings are zero. The candidate
+has 956 tracks, 201 vias and 2,225 mm of track, SHA-256
+`e9464aaa21ec7792469d02c4cd7244314ab9e4dd1655ad960536a3b709c499bf`.
+The original gate still exits 1 and the harness reports ERROR. The daemon records
+command exit 2, complete child/container cleanup and no OOM. Its client log stream
+disconnected; results-only recovery succeeded without resubmitting the job.
+Calibration is excluded from the comparison sample.
+
+Set the shared wall budget to **960 seconds**, calculated as
+`ceil(1.5 * 604.200507 / 60) * 60`. Register exactly five sequential trials:
+
+| Order / label | Mode | CPUs | Wall limit | Reserved CPU ceiling |
+| --- | --- | ---: | ---: | ---: |
+| 1 / single-a | single | 2 | 960 s | 1,920 CPU-s |
+| 2 / sprint-a | sprints | 2 | 960 s | 1,920 CPU-s |
+| 3 / sprint-b | sprints | 2 | 960 s | 1,920 CPU-s |
+| 4 / single-b | single | 2 | 960 s | 1,920 CPU-s |
+| 5 / single-equal-cpu | single | 1 | 1,920 s | 1,920 CPU-s |
+
+Each gets eight GiB and retries zero. The first four are the primary matched
+wall/resource comparison in ABBA order. The fifth separates wall allowance from
+the same reserved CPU ceiling; actual CPU consumption is measured, not assumed
+equal. Labels do not claim cold caches. Do not flush the shared cache, change
+inputs, rerun a failed label, increase its budget, or substitute a newer solver.
+Record actual upload/cache, queue and client overhead and shared-host limitations.
+
+Keep the original harness policies: single seed 0, 80 passes, native max-time
+`wall_limit - 30`; sprints seeds 0/1/2/3, via cost 3, two workers, two-pass slices,
+80 passes per variant and the existing 30-second verification reserve. The native
+and configured verification cost can exceed that reserve, so late candidates may
+not finish; this is a measured limitation of the current mode, not a reason to
+change its policy during the experiment. Wrapper/owned-process cancellation and
+cleanup reserves remain unchanged. Only the resource declarations differ from
+the historical reproduction harness, as documented above.
+
+Use the calibration's benchmark success definition for each finished candidate.
+A candidate must complete native and fresh configured checks within its trial's
+wall budget, with zero actual error/failure counts and only stale RP-001 entries
+excluded from the benchmark count. An unfinished or timed-out verification never
+counts. A completed qualifying candidate can still count when later portfolio
+work reaches its normal budget end, provided the parent records terminal evidence
+and complete cleanup; daemon hard-timeout, OOM or incomplete cleanup makes the
+trial unsuccessful. Preserve every official gate/controller status and the null
+full-acceptance time when stale entries prevent acceptance. The controller is not
+modified to stop or accept on the benchmark-only definition.
+
+Report first benchmark verification, total operation wall, all-child cgroup CPU
+(operation delta plus cumulative counter through the terminal report), selected
+qualifying length/vias, preparation/slicing/native/gate cost and overhead. Select
+benchmark quality among qualifying candidates by length, then vias, then variant
+ID, matching the existing winner order. Do not score unverified checkpoints.
+Single first-verification time is the terminal-operation upper bound; sprint time
+is its candidate's `sprint.verify.end` event, even when the official result is
+false solely because of stale exemptions. Post-report teardown and client-side
+packing CPU are not measured. Two repetitions per primary mode are descriptive,
+not statistical proof; no speedup threshold or model benefit is assumed.
+
+**Known current-mode difference:** `iotroute run` includes automatic reference-plane
+feedback and rerouting, used by this calibration. `sprint-finish` writes and checks
+a finalized route without that feedback loop. Keep both unchanged. This comparison
+measures current modes, not isolated scheduler speedup with identical feedback.
+Any result must retain this limitation when discussing the large-board LLM no-go.

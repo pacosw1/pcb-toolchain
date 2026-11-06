@@ -4,7 +4,7 @@ import { lstatSync, readdirSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import { readObject as readSharedObject, sha256File } from './json-file.ts';
 import { verify } from './pcb-evidence.ts';
-import { boardConfig, context as boardContext } from './pcb-workflow.ts';
+import { context as boardContext, observedConfig } from './pcb-workflow.ts';
 import { stockPopulationCurrent } from './part-stock.ts';
 import { jsonDumps, PyError } from './py-compat.mjs';
 import { caught, isFile, isRelativeTo, pathExists, resolvePath, which } from './py-path.ts';
@@ -222,7 +222,7 @@ export async function nextAction(rootPath: string, board: string, options: NextO
     if (options.designContract && identifier !== board) stale('explicit design next subject must be its design_id');
     return designNext(root, identifier, path, base, options);
   }
-  const context = plain<Context>(boardContext(root, board)), { cfg } = boardConfig(root, board), checkMode = cfg.get('stage') === 'G5' ? '--fresh' : '--changed';
+  const context = plain<Context>(boardContext(root, board)), { cfg, pending } = observedConfig(root, board), checkMode = cfg.get('stage') === 'G5' ? '--fresh' : '--changed';
   const { selected, rejected } = latestRun(root, board, cfg.get('project') as string, base, options.readers);
   const missing = context.blockers.find(row => ['missing_native_input', 'missing_context_source'].includes(row.rule));
   const output: Decision = { schema_version: 1, board, project: context.project, revision: context.revision, frozen: context.frozen, scope: 'next_decision_only',
@@ -233,6 +233,7 @@ export async function nextAction(rootPath: string, board: string, options: NextO
     Object.assign(output, { state, blocker: { code, message, ...details }, next_action: { kind, ...command(root, argv) } }); return output;
   };
   const check = (code: string, message: string, details: Fields = {}) => finish('needs_check', code, message, 'check', ['check', board, checkMode, '--follow', '--json'], details);
+  if (pending) return finish('blocked', 'pending_gate', 'Board has only a pending gate' + (missing ? '; required board input is missing: ' + missing.path : ''), 'inspect_required_source', ['context', board, '--json']);
   let selectedState: RunState | null = null;
   if (selected) {
     const { folder, manifest } = selected;

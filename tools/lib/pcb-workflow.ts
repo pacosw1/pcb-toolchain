@@ -18,6 +18,8 @@ const SHARED_SOURCES = ['STATUS', 'REQUIREMENTS', 'INTERFACES', 'CONNECTORS', 'D
 const PACKET_SOURCES = ['STATUS.md', 'DOC-RECONCILIATION.md', 'BOM-VERIFIED.csv', 'SCHEMATIC.md'];
 const KICAD_PYTHON_MAC = '/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3';
 
+const PENDING_GATE = 'gate.pending.json';
+
 type Dict = Map<string, unknown>;
 interface BoardConfig { folder: string; cfg: Dict; project: string }
 interface Blocker { rule: string; path?: string; evidence?: string }
@@ -30,10 +32,20 @@ export function sha(path: string): string {
   }
 }
 
-export function boardConfig(root: string, board: string): BoardConfig {
+/** Every operation goes through this: a board without a gate.json is refused. */
+export const boardConfig = (root: string, board: string): BoardConfig => configOf(root, board, 'gate.json');
+
+/** For reading state only: a board with just gate.pending.json is described as pending, and nothing runs on it. */
+export function observedConfig(root: string, board: string): BoardConfig & { pending: boolean } {
+  const folder = joinPath(root, BOARDS, board);
+  const pending = !isFile(joinPath(folder, 'gate.json')) && isFile(joinPath(folder, PENDING_GATE));
+  return { ...configOf(root, board, pending ? PENDING_GATE : 'gate.json'), pending };
+}
+
+function configOf(root: string, board: string, gate: string): BoardConfig {
   if (!BOARD_ID.test(board)) throw new PyError('ValueError', 'invalid board ID');
   const folder = joinPath(root, BOARDS, board);
-  const cfg = jsonOf(joinPath(folder, 'gate.json'));
+  const cfg = jsonOf(joinPath(folder, gate));
   const name = cfg instanceof Map ? cfg.get('project') : null;
   if (!(cfg instanceof Map) || typeof name !== 'string' || !name) throw new PyError('ValueError', 'gate configuration requires a project');
   const project = resolvePath(joinPath(folder, name));
@@ -170,7 +182,7 @@ function boardCommands(root: string, board: string, manifest: string, reviewed: 
 
 export function context(rootPath: string, board: string): object {
   const root = resolvePath(rootPath);
-  const { folder, cfg, project } = boardConfig(root, board);
+  const { folder, cfg, project, pending } = observedConfig(root, board);
   const revision = registryRevision(root, board);
   const focus = joinPath(root, 'FOCUS.md');
   const focusText = pathExists(focus) ? textOf(focus) : '';
@@ -184,16 +196,17 @@ export function context(rootPath: string, board: string): object {
   const reviewed = isFile(manifestPath);
   if (reviewed) sources.push(manifestPath);
   blockers.push(...sources.filter(path => !isFile(path)).map(path => ({ rule: 'missing_context_source', path: relativeTo(path, root) })));
+  if (pending) blockers.push({ rule: 'pending_gate', path: relativeTo(joinPath(folder, PENDING_GATE), root) });
   return {
-    schema_version: 1n, board, revision, project: relativeTo(project, root), stage: get(cfg, 'stage', 'G4'),
+    schema_version: 1n, board, revision, project: relativeTo(project, root), stage: get(cfg, 'stage', 'G4'), ...(pending ? { gate_state: 'pending' } : {}),
     frozen: isFrozen(focusText, board), source_of_truth: 'KiCad', configured_checks: get(cfg, 'checks', new Map()), blockers,
     previous_gate: gate,
     engineering: {
       manifest, state: reviewed ? 'requires_native_instance_verification' : 'missing_review', sha256: reviewed ? sha(manifestPath) : null,
       qualified: false, stock_current: false, inspect_command: `tools/pcb parts --json status ${board}`,
     },
-    commands: boardCommands(root, board, manifest, reviewed),
-    next_action: missing.length ? 'restore missing native inputs'
+    commands: pending ? {} : boardCommands(root, board, manifest, reviewed),
+    next_action: pending ? 'finish the pending board design' : missing.length ? 'restore missing native inputs'
       : blockers.some(blocker => blocker.rule === 'missing_context_source') ? 'complete missing board packet evidence' : 'run current input checks',
     source_files: sources.map(path => ({ path: relativeTo(path, root), sha256: isFile(path) ? sha(path) : null })),
     focus: focusText,

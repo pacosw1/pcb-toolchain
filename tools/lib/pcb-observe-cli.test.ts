@@ -8,6 +8,44 @@ import { tmpdir } from 'node:os';
 import { holdLock } from './file-lock.ts';
 import { iotrouteBin, iotrouteMissing } from './iotroute-bin.ts';
 
+const pendingBoard = (root: string): { bin: string; args: string[] } => {
+  const folder = join(root, 'hardware-design/boards/X-C');
+  mkdirSync(folder, { recursive: true });
+  mkdirSync(join(root, 'hardware-design/boards/X/cad/X-C'), { recursive: true });
+  writeFileSync(join(folder, 'gate.pending.json'), '{"project":"../X/cad/X-C/X-C","stage":"G3"}');
+  for (const extension of ['kicad_sch', 'kicad_pro']) writeFileSync(join(root, `hardware-design/boards/X/cad/X-C/X-C.${extension}`), '');
+  return { bin: fileURLToPath(new URL('../../bin/pcb', import.meta.url)), args: ['--project', root] };
+};
+
+test('context describes a pending gate with its no-PCB blocker and offers no operation', () => {
+  const root = mkdtempSync(join(tmpdir(), 'pcb-pending-'));
+  try {
+    const { bin, args } = pendingBoard(root);
+    const context = JSON.parse(execFileSync(bin, [...args, 'context', 'X-C', '--json'], { encoding: 'utf8' }));
+    assert.equal(context.gate_state, 'pending');
+    assert.equal(context.stage, 'G3');
+    assert.deepEqual(context.commands, {});
+    const rules = context.blockers.map((row: { rule: string; path: string }) => `${row.rule} ${row.path}`);
+    assert.ok(rules.includes('pending_gate hardware-design/boards/X-C/gate.pending.json'), rules.join());
+    assert.ok(rules.includes('missing_native_input hardware-design/boards/X/cad/X-C/X-C.kicad_pcb'), rules.join());
+    assert.equal(existsSync(join(root, 'hardware-design/boards/X/cad/X-C/X-C.kicad_pcb')), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('next blocks a pending gate on inspection while operations still refuse it', () => {
+  const root = mkdtempSync(join(tmpdir(), 'pcb-pending-'));
+  try {
+    const { bin, args } = pendingBoard(root);
+    const next = JSON.parse(execFileSync(bin, [...args, 'next', 'X-C', '--json'], { encoding: 'utf8' }));
+    assert.equal(next.state, 'blocked');
+    assert.equal(next.blocker.code, 'pending_gate');
+    assert.match(next.blocker.message, /X-C\.kicad_pcb/);
+    assert.equal(next.next_action.kind, 'inspect_required_source');
+    assert.equal(next.next_action.argv[1], 'context');
+    assert.notEqual(spawnSync(bin, [...args, 'check', 'X-C', '--json'], { encoding: 'utf8' }).status, 0);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('installed launcher reads run status and byte-cursored events without Python', () => {
   const root = mkdtempSync(join(tmpdir(), 'pcb-observe-'));
   try {

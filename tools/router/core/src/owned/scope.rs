@@ -499,18 +499,24 @@ impl Scope {
 
     fn kill_failed_group(&self, stage: &Stage, pid: i32, until: Instant) -> Result<(), Failure> {
         let drain_until = (until + DRAIN).min(Instant::now() + DRAIN);
-        while !native::peek_exit(pid)? && Instant::now() < drain_until {
+        while Instant::now() < drain_until {
+            if native::peek_exit(pid)? {
+                // KILL does not make every member waitable at the same instant.
+                // Keep the unreaped leader reserving the group identity while
+                // late exits become adopted zombies and are reaped. A one-shot
+                // scan followed by a live-only check can strand those zombies.
+                self.reap_adopted(stage, pid, drain_until)?;
+                if live_members(pid, pid, drain_until, true)?.is_empty() {
+                    self.reap(stage, pid)?;
+                    return Ok(());
+                }
+            }
             thread::sleep(SETTLE_POLL);
         }
         if !native::peek_exit(pid)? {
             return Err(Failure::runtime("owned leader remains alive after KILL"));
         }
-        self.reap_adopted(stage, pid, drain_until)?;
-        self.reap(stage, pid)?;
-        if !live_members(pid, pid, drain_until, false)?.is_empty() {
-            return Err(Failure::runtime("owned group still has live members after KILL"));
-        }
-        Ok(())
+        Err(Failure::runtime("owned group still has unreaped members after KILL"))
     }
 
     /// Any stage failure: keep the first cause, kill the subtree at once, and settle with what could be confirmed.
