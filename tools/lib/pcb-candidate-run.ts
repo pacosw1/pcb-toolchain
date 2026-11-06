@@ -41,12 +41,12 @@ const finish = (folder: string, result: Row): number => {
 const sameIdentity = (run: Candidate): boolean => sameValue(pcbIdentity(run.sourceNative, run.pours), pcbIdentity(run.native, run.pours));
 const sourceUnchanged = (run: Candidate): boolean => sameValue(sourceState(run.root, run.board, run.extraInputs), run.sources);
 
-/** The gate.json "post_verify" hooks. Placeholders: {node}, {kicad_python}, {candidate}, {run}, {operation}. */
+/** The gate.json "post_verify" and "place_check" hooks. Placeholders: {node}, {kicad_python}, {candidate}, {run}, {operation}. */
 export function postVerifyCommands(hooks: unknown, folder: string, candidate: string, node: string, env: NodeJS.ProcessEnv): { stage: string; command: string[]; env: NodeJS.ProcessEnv }[] {
   const values: [string, string][] = [['{node}', node], ['{kicad_python}', pythonNative()], ['{candidate}', candidate], ['{run}', folder], ['{operation}', join(folder, 'operation')]];
   const fill = (text: unknown): string => values.reduce((value, [key, replacement]) => value.replaceAll(key, replacement), String(text));
   return ((hooks ?? []) as Hook[]).map(hook => {
-    if (!hook || typeof hook !== 'object' || !hook.stage || !Array.isArray(hook.run) || !hook.run.length) throw new Error('gate.json post_verify entries need a stage and a run argv');
+    if (!hook || typeof hook !== 'object' || !hook.stage || !Array.isArray(hook.run) || !hook.run.length) throw new Error('gate.json hook entries need a stage and a run argv');
     return { stage: hook.stage, command: hook.run.map(fill), env: { ...env, ...Object.fromEntries(Object.entries(hook.env ?? {}).map(([key, value]) => [key, fill(value)])) } };
   });
 }
@@ -211,6 +211,16 @@ async function postChecks(run: Candidate, changed: string[], identity: boolean):
     if ((await candidateLayoutCheck(root, run.workspace, manifest, output, run.emit, screens)).status !== 'passed') {
       return finish(folder, { status: 'failed', exit_code: 1, scope: 'design_layout_screen', operation, candidate_verified: false, qualified: false,
         cause: 'candidate violates declared placement or test access requirements', report: output, continuation_allowed: false, ...bound(run, changed, identity) });
+    }
+  }
+  if (operation === 'edit' && manifest.kind === 'place') {
+    // The board's own placement rules, before the full gate and before any route spends time on this placement.
+    const hooks = boardConfig(root, board).cfg.get('place_check');
+    for (const hook of postVerifyCommands(plainJson(hooks), folder, run.native, manifest.node, run.env)) {
+      if (await execute(folder, hook.stage, hook.command, run.workspace, hook.env)) {
+        return finish(folder, { status: 'failed', exit_code: 1, scope: 'candidate_place_check', operation, candidate_verified: false,
+          cause: `placement check ${hook.stage} failed; see operation/${hook.stage}.log`, continuation_allowed: false, ...bound(run, changed, identity) });
+      }
     }
   }
   return null;

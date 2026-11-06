@@ -87,7 +87,7 @@ test('duplicate IDs and path escapes are errors, through a link too', t => {
 
 test('gate and route schemas are validated, and a missing stage is a finding and not G4', t => {
   const p = project(t);
-  goodBoard(p, 'BAD', { stage: 'G9', pipelin: 'tools/x.sh', release: { fab: 'fab' }, post_verify: [{ stage: 'x' }] });
+  goodBoard(p, 'BAD', { stage: 'G9', pipelin: 'tools/x.sh', release: { fab: 'fab' }, post_verify: [{ stage: 'x' }], place_check: [{ stage: 'y' }] });
   p.write(`${BOARDS}/BAD/route.json`, { ...ROUTE, schema: 'old', backend: 'fastroute', layers: ['Top'], extra: 1, stages: [{ name: 'a', only_nets: [], skip_nets: [] }, { name: 'a' }] });
   goodBoard(p, 'NOSTAGE', { stage: undefined, checks: { erc: true } });
   p.write(`${BOARDS}/NOSTAGE/route.json`, '{not json');
@@ -96,7 +96,7 @@ test('gate and route schemas are validated, and a missing stage is a finding and
   const { findings, boards } = audit(p);
   const details = (board: string, type: string): string[] => findings.filter(finding => finding.board === board && finding.type === type).map(finding => finding.detail);
   assert.deepEqual(details('BAD', 'gate_schema').sort(), [
-    'post_verify entries need a stage and a run argv', 'release needs a maker and a fab', 'unknown gate stage G9', 'unknown key pipelin',
+    'place_check entries need a stage and a run argv', 'post_verify entries need a stage and a run argv', 'release needs a maker and a fab', 'unknown gate stage G9', 'unknown key pipelin',
   ]);
   for (const text of ['schema must be iot-lab.route.v1', 'route.json: unknown key extra', 'layers: Top is not a copper layer name', 'duplicate stage name a', 'stages[0]: only_nets and skip_nets cannot both be set']) {
     assert.ok(details('BAD', 'route_schema').includes(text), text);
