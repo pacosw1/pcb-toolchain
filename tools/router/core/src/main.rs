@@ -7,6 +7,7 @@
 //!            [--resume-save FILE] [--resume FILE] (resume.rs: negotiation state at a pass boundary)
 //!            [--yield-after-passes N] (requires --resume-save; unfinished state exits 3 without finalization)
 //!            [--stall-passes N] (stop after N passes that do not beat the best pass; default off)
+//!            [--tune TARGETS.json] (tune.rs: opt-in length / skew meanders on router-routed nets after the route; OUT.tune.json)
 //!
 //! MODEL.json comes from `iotroute model` (src/model, schema iot-lab.route-model.v0). Every clearance is checked against
 //! exact geometry (pads as their bounding rectangle, tracks as capsules, vias as circles) with the per-net width and
@@ -53,6 +54,7 @@ mod reffill;
 mod reuse;
 mod resume;
 mod seed;
+mod tune;
 mod write;
 
 const EPS: f64 = 0.002;
@@ -4305,7 +4307,7 @@ fn keep_route_nets(order: &mut Vec<usize>, nets: &[Net], model: &Value) {
 
 fn route_cli(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("usage: iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--hole-clr 0.28] [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S] [--door-hist 2.0] [--check RESULT.json] [--reuse SEED.json [--reuse-near MM] [--reuse-recover near|changed]] [--congestion MAP.json [--cong-cell 1.0] [--cong-free 0|1]] [--seed N] [--checkpoint FILE [--source-sha HEX]] [--resume-save FILE] [--resume FILE] [--yield-after-passes N] [--stall-passes N]");
+        eprintln!("usage: iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--hole-clr 0.28] [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S] [--door-hist 2.0] [--check RESULT.json] [--reuse SEED.json [--reuse-near MM] [--reuse-recover near|changed]] [--congestion MAP.json [--cong-cell 1.0] [--cong-free 0|1]] [--seed N] [--checkpoint FILE [--source-sha HEX]] [--resume-save FILE] [--resume FILE] [--yield-after-passes N] [--stall-passes N] [--tune TARGETS.json]");
         std::process::exit(2);
     }
     let mut o = Opts { pitch: 0.05, passes: 40, plane_clr: DEF_PLANE_CLR, hth: DEF_HOLE_TO_HOLE, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2,
@@ -4329,6 +4331,7 @@ fn route_cli(args: &[String]) {
     let mut resume_save: Option<String> = None;
     let mut yield_after: Option<usize> = None;
     let mut source_sha: Option<String> = None;
+    let mut tune_path: Option<String> = None;
     let mut i = 3;
     while i + 1 < args.len() {
         let v = &args[i + 1];
@@ -4374,6 +4377,7 @@ fn route_cli(args: &[String]) {
                 }));
             }
             "--source-sha" => source_sha = Some(v.clone()),
+            "--tune" => tune_path = Some(v.clone()),
             "--stall-passes" => o.stall_passes = v.parse().unwrap(),
             "--return-via" => {
                 let p: Vec<f64> = v.split(',').map(|s| s.parse().unwrap()).collect();
@@ -4388,6 +4392,12 @@ fn route_cli(args: &[String]) {
         }
         i += 2;
     }
+    if args.last().is_some_and(|s| s == "--tune") {
+        eprintln!("--tune requires a targets file"); std::process::exit(2);
+    }
+    let tune_targets = tune_path.as_ref().map(|tp| tune::read_targets(tp).unwrap_or_else(|e| {
+        eprintln!("--tune {tp}: {e}"); std::process::exit(2)
+    }));
     if args.last().is_some_and(|s| s == "--yield-after-passes") {
         eprintln!("--yield-after-passes requires a positive pass count"); std::process::exit(2);
     }
@@ -5059,6 +5069,18 @@ fn route_cli(args: &[String]) {
     // v6 fix 3a: shared returns, the ones no signal via needs are removed
     let pruned = prune_returns(&mut ctx);
     eprintln!("returns: {pruned} return via(s) removed (every signal via keeps a GND via within {} mm)", o.return_r);
+    // opt-in length / skew tuning (tune.rs): meanders on router-routed nets, each kept only when legal
+    if let Some(targets) = &tune_targets {
+        let tt = std::time::Instant::now();
+        let t = tune::tune(&mut ctx, targets, &state);
+        for n in &t.notes {
+            eprintln!("{n}");
+        }
+        eprintln!("tune: {:.1} s", tt.elapsed().as_secs_f64());
+        notes.extend(t.notes);
+        let rp = std::path::Path::new(&args[2]).with_extension("tune.json");
+        std::fs::write(&rp, serde_json::to_string_pretty(&t.report).unwrap()).expect("write tune report");
+    }
     let mut pour_fails: Vec<Fail> = Vec::new();
     for fl in pour::check(ctx.bd) {
         let pr = &ctx.bd.pours[fl.pour];
@@ -5402,3 +5424,5 @@ mod tests_critical;
 
 #[cfg(test)]
 mod tests_seed;
+#[cfg(test)]
+mod tests_tune;

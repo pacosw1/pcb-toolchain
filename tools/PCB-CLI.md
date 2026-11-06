@@ -189,6 +189,9 @@ replaced. The router's own counts are never the verdict. `--spec` is optional; t
 `"route"` (needs `keep` lock-nets) strips it and routes those nets first, on one layer with no via, then freezes them so the
 rest of the board routes around them (`iotroute run --route-crystals`, core `critical.rs`). Pairs stay locked either way.
 `"crystals":"route"` cannot combine with `reuse`; `--route-crystals` also refuses `--ref-reuse`. The critical stage needs a fresh route.
+Optional, default off: `"tune": true` runs the post-route length / skew tuning stage (meanders on router-routed nets short of a DRU
+`length` min or `skew` max; hand-routed locked copper is never edited; tools/router/DESIGN.md 5f), and `"seed": N` passes `--seed N`
+to the core (another route of the same board, for paired benchmarks).
 
 An optional `sprints` object runs a bounded portfolio in **one daemon job**:
 

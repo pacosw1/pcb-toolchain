@@ -26,7 +26,7 @@ import { observeRoute, retryKey } from '../lib/route-decision.ts';
 import { generateEscapeForCandidate } from '../lib/route-decision-escape.ts';
 import { scatter } from './bench.ts';
 import { writeBoard } from './board-io.ts';
-import { LENGTH_PATIENCE, Measured, RANKS, RouteOutcome, runJson, runLoop, TimeoutExpired, deepCopy, type Num, type Pose, type Rank, type RouteResult, type SearchResult } from './compact.ts';
+import { LENGTH_PATIENCE, Measured, RANKS, ROUTE_PICKS, RouteOutcome, runJson, runLoop, TimeoutExpired, deepCopy, type Num, type Pose, type Rank, type RoutePick, type RouteResult, type SearchResult } from './compact.ts';
 import { NO_RESULT, bestLine, routeHandoff, stepOutcome } from './compact-route.ts';
 import { checkProblem, reviewServices, type ReviewedProblem } from './engineering-problem.ts';
 import { GateWorkspace, boardId, measure, measureKey, routeStep, routerCpu } from './iotroute-step.ts';
@@ -46,6 +46,7 @@ const SPEC: Spec = {
   '--snapshots': 'text', '--router': 'text', '--passes': 'int', '--repair': 'switch', '--repair-mode': 'text', '--repair-rank': 'text', '--repair-routes': 'int',
   '--repair-per-round': 'int', '--read-args': 'text', '--diagnostic-budget': 'float', '--route-args': 'text', '--virtual-first': 'switch',
   '--max-routes': 'int', '--k-cap': 'float', '--shrink': 'float', '--tol': 'float', '--rank': 'text', '--length-patience': 'int',
+  '--route-top': 'int', '--route-top-budget': 'float', '--route-top-pick': 'text',
 };
 
 export interface Args {
@@ -54,7 +55,7 @@ export interface Args {
   feedback_max_mm: number; congestion_feedback: boolean; param: string[]; scatter: number | null; gnd_vias: boolean; snapshots: string | null; router: string;
   passes: number; repair: boolean; repair_mode: string; repair_rank: string; repair_routes: number; repair_per_round: number; read_args: string;
   diagnostic_budget: number | null; route_args: string; virtual_first: boolean; max_routes: number; k_cap: number | null; shrink: number; tol: number;
-  rank: Rank | null; length_patience: number;
+  rank: Rank | null; length_patience: number; route_top: number; route_top_budget: number | null; route_top_pick: RoutePick;
 }
 
 function choice(a: Parsed, name: string, allowed: readonly string[], fallback: string): string {
@@ -81,6 +82,8 @@ export function parseArgs(argv: readonly string[]): Args {
     route_args: a.text('--route-args') ?? '', virtual_first: a.has('--virtual-first'), max_routes: a.int('--max-routes') ?? 0, k_cap: a.float('--k-cap') ?? null,
     shrink: a.float('--shrink') ?? 0.85, tol: a.float('--tol') ?? 0.05, rank: a.has('--rank') ? choice(a, '--rank', RANKS, 'halo') as Rank : null,
     length_patience: a.int('--length-patience') ?? LENGTH_PATIENCE,
+    route_top: a.int('--route-top') ?? 1, route_top_budget: a.float('--route-top-budget') ?? null,
+    route_top_pick: choice(a, '--route-top-pick', ROUTE_PICKS, 'first') as RoutePick,
   };
 }
 
@@ -101,6 +104,8 @@ export function settle(a: Args): void {
     if (!a.seeded_policy) throw new Error('displacement cap requires seeded policy');
     a.param.push(`max_displacement=${a.max_displacement}`);
   }
+  if (a.route_top < 1 || a.route_top > a.retain_candidates) throw new Error('--route-top must be 1..--retain-candidates');
+  if (a.route_top_budget !== null && (!Number.isFinite(a.route_top_budget) || a.route_top_budget <= 0)) throw new Error('--route-top-budget must be positive');
   a.rank ??= 'length';
   if (a.length_patience < 0) throw new Error('--length-patience must be 0 or more');
 }
@@ -144,8 +149,9 @@ export class Compaction {
     this.gate = new GateWorkspace(a.outdir, this.iotrouteBoard, snapshot);
   }
 
-  stepDir(n: number): string {
-    const folder = join(resolve(this.a.outdir), `step-${n}`);
+  /** Slot 0 is the step itself; a further routed candidate (--route-top) keeps its files in step-N/alt-SLOT. */
+  stepDir(n: number, slot = 0): string {
+    const folder = join(resolve(this.a.outdir), `step-${n}`, ...(slot ? [`alt-${slot}`] : []));
     mkdirSync(folder, { recursive: true });
     return folder;
   }
@@ -265,8 +271,21 @@ export class Compaction {
     return this.audited(q, n, readTyped<SearchResult>(result));
   }
 
-  write(q: ReviewedProblem, pose: Pose, k: number, n: number): string {
-    const folder = join(this.stepDir(n), 'b');
+  private fullDeadline: number | null = null;
+
+  /** Route-top: a cap on the time of the next candidate; null gives back the run's deadline. */
+  limit(seconds: number | null): void {
+    if (seconds === null) {
+      if (this.fullDeadline !== null) this.deadline = this.fullDeadline;
+      this.fullDeadline = null;
+      return;
+    }
+    this.fullDeadline ??= this.deadline;
+    this.deadline = Math.min(this.fullDeadline, now() + seconds);
+  }
+
+  write(q: ReviewedProblem, pose: Pose, k: number, n: number, slot = 0): string {
+    const folder = join(this.stepDir(n, slot), 'b');
     mkdirSync(folder, { recursive: true });
     const output = join(folder, `${this.name}.kicad_pcb`);
     writeBoard(this.a.board, q, pose, output, { outlineScale: k });
@@ -347,9 +366,9 @@ export class Compaction {
     return result;
   }
 
-  async route(path: string, n: number): Promise<RouteResult> {
+  async route(path: string, n: number, slot = 0): Promise<RouteResult> {
     const { a } = this;
-    const d = this.stepDir(n);
+    const d = this.stepDir(n, slot);
     if (this.problem.engineering) {
       const output = join(d, 'engineering-pre-route.json');
       const checked = this.engineeringScreen(path, output);
@@ -419,11 +438,13 @@ export async function main(argv: string[]): Promise<number> {
   const driver = new Compaction(a, problem, deadline);
   const run = await runLoop(problem, a.size, {
     search: (q, n) => driver.search(q as ReviewedProblem, n),
-    write: (q, pose, k, n) => driver.write(q as ReviewedProblem, pose, k, n),
-    route: (path, n) => driver.route(path, n),
+    write: (q, pose, k, n, slot) => driver.write(q as ReviewedProblem, pose, k, n, slot),
+    route: (path, n, slot) => driver.route(path, n, slot),
+    limit: seconds => driver.limit(seconds),
   }, {
     s0: a.s0, budget: Math.max(0, deadline - now()), target: a.target, shrink: a.shrink, tol: a.tol, log: line => console.log(line), realFirst: !a.virtual_first,
     diagnosticBudget: a.diagnostic_budget, kCap: a.k_cap, rank: a.rank as Rank, lengthPatience: a.rank === 'length' ? a.length_patience : null,
+    routeTop: a.route_top, routeTopBudget: a.route_top_budget, routeTopPick: a.route_top_pick,
   });
   writeFileSync(join(a.outdir, 'run.json'), jsonDumps({ ...runJson(run), problem, size: a.size }));
   console.log('VERDICT', run.verdict);

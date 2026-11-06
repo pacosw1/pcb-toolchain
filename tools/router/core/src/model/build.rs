@@ -9,7 +9,7 @@ use super::output::{BoardMin, Class, HoleRules, Model, Net, PlaneClearance, Rule
 use super::pairs::PairRules;
 use super::planes::{plane_reach, reference_fill, set_plane_ref, zone_outlines};
 use super::returns::{RpScope, copper_thickness, return_rule, set_gate_exemptions, set_return_nets, set_return_scope, via_length};
-use super::rules::apply_rules;
+use super::rules::apply_rules_with;
 use super::thermal::{ThermalRules, apply_thermal_vias};
 use crate::kicad::board::{Board, RoutedCopper};
 use crate::kicad::pad::Pad as BoardPad;
@@ -26,6 +26,8 @@ pub struct Inputs<'a> {
     pub ratings: &'a PinRatings,
     pub rp_scope: Option<RpScope>,
     pub return_exempt: bool,
+    /// `--tune`: DRU `length (min ...)` is owned by the tuning stage of `iotroute run --tune`, not refused
+    pub tune: bool,
 }
 
 fn classes(files: &BoardFiles) -> BTreeMap<String, Class> {
@@ -72,7 +74,7 @@ fn count_input_vias(board: &Board, nets: &mut BTreeMap<String, Net>) {
 }
 
 pub fn build(inputs: Inputs) -> Result<Model, String> {
-    let Inputs { board, filled, files, ratings, rp_scope, return_exempt } = inputs;
+    let Inputs { board, filled, files, ratings, rp_scope, return_exempt, tune } = inputs;
     let planes = &files.planes;
     let plane_layers: BTreeSet<String> = planes.plane_layers.iter().cloned().collect();
     let classes = classes(files);
@@ -83,7 +85,7 @@ pub fn build(inputs: Inputs) -> Result<Model, String> {
 
     let pairs: Vec<(String, String)> = files.pairs.iter().map(|p| (p.p.clone(), p.n.clone())).collect();
     let pair_nets: BTreeSet<String> = pairs.iter().flat_map(|(p, n)| [p.clone(), n.clone()]).collect();
-    let outcome = apply_rules(&files.rules, &mut nets, &pair_nets, &plane_layers)?;
+    let outcome = apply_rules_with(&files.rules, &mut nets, &pair_nets, &plane_layers, tune)?;
     let mut report = outcome.report;
     let keepouts = read_keepouts(board);
     let (mut zones, zone_sources) = read_zones(board, &nets, &outcome.zone_rules);
