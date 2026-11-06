@@ -185,6 +185,10 @@ replaced. The router's own counts are never the verdict. `--spec` is optional; t
 {"schema":"iot-lab.iotroute-policy.v1","iters":80,"max_time_s":null,"keep":"lock-nets","return_exempt":false,"layers":[],"nets":[]}
 ```
 
+`"crystals"` is optional: `"lock"` (default) keeps the candidate's copper of the DRU via_count 0 nets (crystals) as before;
+`"route"` (needs `keep` lock-nets) strips it and routes those nets first, on one layer with no via, then freezes them so the
+rest of the board routes around them (`iotroute run --route-crystals`, core `critical.rs`). Pairs stay locked either way.
+
 An optional `sprints` object runs a bounded portfolio in **one daemon job**:
 
 ```json
