@@ -101,7 +101,10 @@ fn helper_stage(fixture: &Fixture, mode: &str) -> Value {
     let status = fixture.command(&[exe.to_str().unwrap(), "--ignored", "--exact", "stage_helper", "--nocapture"])
         .env("OWNED_HELPER_MODE", mode).env("OWNED_HELPER_FOLDER", &fixture.folder)
         .stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
-    assert!(status.success(), "helper {mode}: {:?} {}", status, fs::read_to_string(fixture.path("helper.log")).unwrap_or_default());
+    assert!(status.success(), "helper {mode}: {:?}\nroot receipt: {}\nhelper reply: {}\n{}", status,
+        fs::read_to_string(fixture.path("result.json")).unwrap_or_default(),
+        fs::read_to_string(fixture.path("helper.json")).unwrap_or_default(),
+        fs::read_to_string(fixture.path("helper.log")).unwrap_or_default());
     serde_json::from_slice(&fs::read(fixture.path("helper.json")).unwrap()).unwrap()
 }
 
