@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { auditLayout, type Finding } from './project-layout.ts';
 import { boardConfig } from './pcb-workflow.ts';
+import { routePlanErrors } from './route-plan-schema.ts';
 
 type Raw = Record<string, unknown>;
 const BOARDS = 'hardware-design/boards';
@@ -299,6 +300,33 @@ test('the audit always exits 0 with a JSON summary and --strict decides on one b
   const none = run('--layout');
   assert.equal(none.status, 0);
   assert.equal(none.report.summary.by_type.registry_schema, 1);
+});
+
+test('project-check refuses inherited iotroute threads before a native run', t => {
+  const p = project(t);
+  goodBoard(p, 'BAD');
+  p.registry([entry('BAD')]);
+  p.write(`${BOARDS}/BAD/route.json`, { ...ROUTE, budget: { threads: 2 } });
+  const bin = fileURLToPath(new URL('../pcb', import.meta.url));
+  const done = spawnSync(bin, ['--project', p.root, 'project-check', '--layout', '--strict', 'BAD'], { encoding: 'utf8' });
+  assert.equal(done.status, 1, done.stderr);
+  const report = JSON.parse(done.stdout);
+  assert.ok(report.findings.some((finding: Finding) => finding.type === 'route_schema' && finding.detail === 'stage main: threads has no iotroute meaning'));
+});
+
+test('iotroute backend admission honors stage overrides and names unsupported options and features', () => {
+  const features = new Set(['rule_compiler', 'via_off_small_pads', 'via_halo', 'routing_rules']);
+  const base = { ...ROUTE, budget: { threads: 2 }, stages: [{ name: 'main', threads: 0, unlock_nets: [], via_skip: [] }] };
+  assert.deepEqual(routePlanErrors(base, features), [], 'zero overrides the inherited thread budget');
+  assert.deepEqual(routePlanErrors({ ...base, features: { rule_compiler: true, via_off_small_pads: true, via_halo: true } }, features), []);
+  assert.deepEqual(routePlanErrors({ ...base, stages: [{ name: 'main', threads: 3, unlock_nets: ['A'], via_skip: ['B'] }], features: { routing_rules: false, via_halo: false } }, features), [
+    'stage main: threads has no iotroute meaning',
+    'stage main: unlock_nets has no iotroute meaning',
+    'stage main: via_skip has no iotroute meaning',
+    'feature routing_rules has no iotroute meaning',
+    'feature via_halo cannot be off: iotroute always does this',
+  ]);
+  assert.deepEqual(routePlanErrors({ ...base, backend: 'tracemaker', stages: [{ name: 'main', threads: 3, unlock_nets: ['A'], via_skip: ['B'] }], features: { routing_rules: false, via_halo: false } }, features), []);
 });
 
 test('a planned physical pending board needs schematic indexes and a matching non-active revision', t => {

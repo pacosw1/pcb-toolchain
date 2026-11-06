@@ -10,6 +10,8 @@ const STAGE_NAMES = ['only_nets', 'skip_nets', 'plane_nets', 'unlock_nets', 'via
 const KEEPOUT_KEYS = ['name', 'inside', 'outside', 'layers'];
 const POUR_KEYS = ['name', 'net', 'layer', 'shape', 'grow_mm', 'priority', 'connection', 'minus', 'clearance_mm', 'thermal_gap_mm', 'spoke_mm'];
 const WIDTH_KEYS = ['name', 'box', 'layers', 'width_mm'];
+// Keep backend admission aligned with route_run/iotroute.rs::check_plan.
+const IOTROUTE_FEATURES = new Set(['rule_compiler', 'via_off_small_pads', 'via_halo']);
 
 type Raw = Record<string, unknown>;
 const isObject = (value: unknown): value is Raw => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -106,6 +108,14 @@ export function routePlanErrors(plan: unknown, features: ReadonlySet<string>): s
       if (raw.name && seen.has(raw.name)) fail(`duplicate stage name ${String(raw.name)}`);
       seen.add(raw.name);
       stage(raw, place);
+      if (plan.backend === 'iotroute') {
+        const threads = raw.threads ?? (isObject(plan.budget) ? plan.budget.threads : 0) ?? 0;
+        for (const [set, option] of [
+          [typeof threads === 'number' && threads > 0, 'threads'],
+          [Array.isArray(raw.unlock_nets) && raw.unlock_nets.length > 0, 'unlock_nets'],
+          [Array.isArray(raw.via_skip) && raw.via_skip.length > 0, 'via_skip'],
+        ] as const) if (set) fail(`stage ${String(raw.name)}: ${option} has no iotroute meaning`);
+      }
     });
   }
   list(plan, 'pours', 'pours').forEach((raw, index) => pour(raw, `pours[${index}]`));
@@ -115,6 +125,10 @@ export function routePlanErrors(plan: unknown, features: ReadonlySet<string>): s
     else for (const [key, value] of Object.entries(plan.features)) {
       if (!features.has(key)) fail(`unknown feature ${key}`);
       else if (typeof value !== 'boolean') fail(`features.${key} must be true or false`);
+      if (plan.backend === 'iotroute' && typeof value === 'boolean') {
+        if (!IOTROUTE_FEATURES.has(key)) fail(`feature ${key} has no iotroute meaning`);
+        else if (!value) fail(`feature ${key} cannot be off: iotroute always does this`);
+      }
     }
   }
   if ('reuse' in plan && keys(plan.reuse, ['from', 'nets'], 'reuse')) {
