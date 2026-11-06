@@ -232,7 +232,12 @@ The DRC still judges the whole board, so `nets` belongs with `keep: all` on a bo
 board with such exemptions: a route that gives an exempt net its returns leaves the exemption stale, and the gate fails on the stale entry.
 
 `keep: lock-nets` (default) removes all tracks and vias of the candidate and keeps only the copper of the
-diff-pair nets and the DRU `via_count 0` nets (crystals), locked. `keep: all` keeps and locks all copper and
+diff-pair nets and the DRU `via_count 0` nets (crystals), locked. `route_pairs: true` (opt-in, default false, only with `keep: lock-nets`)
+removes the diff-pair copper too and routes the pairs first with the pair router (`iotroute run --route-pairs`,
+tools/router/core/src/run/pairs.rs): DRU pair width and gap, one layer, no via, fan stubs at the pads, locked; then the core
+routes the rest around them. A pair it cannot route (more than 4 pads per net, P/N pads over 3 mm apart, wrong polarity, no
+path) or whose new copper KiCad DRC faults keeps its candidate copper as without the field; `OUT.iotroute/result.json`
+`stages.lock.pairs` lists each pair as routed or kept, with why. Crystals stay kept. `keep: all` keeps and locks all copper and
 routes only the open connections. The binary comes from a cache folder per sha256 of the core sources
 (`~/Library/Caches/iot-lab/iotroute/<sha>`); cargo builds it there when it is missing.
 
