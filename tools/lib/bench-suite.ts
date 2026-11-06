@@ -5,17 +5,21 @@ import { sha256File } from './json-file.ts';
 export const SUITE = 'iot-lab.bench-suite.v1';
 const PLACEHOLDER = /\{([a-z_]+)\}/g;
 const KNOWN = new Set(['board', 'seed', 'timeout_s', 'cpus', 'memory_gb', 'input']);
+/** Filled while a trial runs: the trial's scratch folder, and the run id and folder of the previous step that sealed a run. */
+const RUNTIME = new Set(['work', 'prev_run', 'prev_run_path']);
 const SHA = /^[0-9a-f]{64}$/;
 
-export interface Arm { id: string; argv: string[]; env?: Record<string, string>; toolchain_sha256?: string }
+export interface Arm { id: string; argv?: string[]; steps?: string[][]; env?: Record<string, string>; toolchain_sha256?: string }
 export interface SuiteBoard { family: string; board: string; split: 'development' | 'holdout'; input: { path: string; sha256: string } }
 export interface Budget { timeout_s: number; cpus: number; memory_gb: number }
 export interface Suite { schema: typeof SUITE; suite_id: string; arms: [Arm, Arm]; boards: SuiteBoard[]; seeds: number[]; budget: Budget }
 
 export interface PlannedTrial {
   id: string; arm: string; family: string; board: string; split: string; case: string; replicate: number; seed: number;
-  argv: string[]; env: Record<string, string>; input: { path: string; sha256: string };
+  argv: string[]; steps: string[][]; env: Record<string, string>; input: { path: string; sha256: string };
 }
+
+export const armSteps = (arm: Arm): string[][] => arm.steps ?? (arm.argv ? [arm.argv] : []);
 
 const fail = (message: string): never => { throw new Error(`suite: ${message}`); };
 
@@ -28,8 +32,16 @@ export function validateSuite(value: unknown): Suite {
   if (s.arms[0].id === s.arms[1].id) fail('arm ids must differ');
   for (const arm of s.arms) {
     if (!/^[A-Za-z0-9._-]+$/.test(arm.id ?? '')) fail('arm id must be letters, digits, . _ -');
-    if (!Array.isArray(arm.argv) || !arm.argv.length || arm.argv.some(part => typeof part !== 'string')) fail(`arm ${arm.id}: argv must be a nonempty string array`);
-    for (const part of arm.argv) for (const [, name] of part.matchAll(PLACEHOLDER)) if (!KNOWN.has(name!)) fail(`arm ${arm.id}: unknown placeholder {${name}}`);
+    if ((arm.argv === undefined) === (arm.steps === undefined)) fail(`arm ${arm.id}: give either argv or steps`);
+    const steps = armSteps(arm);
+    if (!steps.length || steps.some(step => !Array.isArray(step) || !step.length || step.some(part => typeof part !== 'string'))) fail(`arm ${arm.id}: argv or each step must be a nonempty string array`);
+    steps.forEach((step, index) => {
+      for (const part of step) for (const [, name] of part.matchAll(PLACEHOLDER)) {
+        if (KNOWN.has(name!)) continue;
+        if (RUNTIME.has(name!) && arm.steps) { if (index === 0 && name !== 'work') fail(`arm ${arm.id}: {${name}} needs an earlier step`); continue; }
+        fail(`arm ${arm.id}: unknown placeholder {${name}}`);
+      }
+    });
     if (arm.toolchain_sha256 !== undefined && !SHA.test(arm.toolchain_sha256)) fail(`arm ${arm.id}: toolchain_sha256 must be a SHA-256`);
   }
   if (!Array.isArray(s.boards) || !s.boards.length) fail('boards must be nonempty');
@@ -62,7 +74,7 @@ export function verifyInputs(suite: Suite, root: string): void {
 }
 
 function substitute(part: string, values: Record<string, string>): string {
-  return part.replace(PLACEHOLDER, (_, name: string) => values[name] ?? fail(`no value for {${name}}`));
+  return part.replace(PLACEHOLDER, (whole, name: string) => values[name] ?? (RUNTIME.has(name) ? whole : fail(`no value for {${name}}`)));
 }
 
 /** One trial per arm, board and seed. Arms interleave inside each pair so slow drift hits both alike. */
@@ -75,9 +87,11 @@ export function expandTrials(suite: Suite): PlannedTrial[] {
           board: board.board, seed: String(seed), timeout_s: String(suite.budget.timeout_s), cpus: String(suite.budget.cpus),
           memory_gb: String(suite.budget.memory_gb), input: board.input.path,
         };
+        const planned = armSteps(arm).map(step => step.map(part => substitute(part, values)));
         trials.push({
           id: `${board.board}.r${index + 1}.${arm.id}`, arm: arm.id, family: board.family, board: board.board, split: board.split, case: board.board,
-          replicate: index + 1, seed, argv: arm.argv.map(part => substitute(part, values)), env: arm.env ?? {}, input: board.input,
+          replicate: index + 1, seed,
+          steps: planned, argv: planned[planned.length - 1]!, env: arm.env ?? {}, input: board.input,
         });
       }
     });

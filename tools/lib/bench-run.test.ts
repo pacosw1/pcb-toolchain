@@ -56,7 +56,7 @@ test('spawnExecutor follows a command to its run folder, and reports a command t
     const script = join(root, 'fake.sh');
     writeFileSync(script, '#!/bin/sh\necho \'{"run_id":"run-abc","type":"terminal"}\'\n');
     chmodSync(script, 0o755);
-    const trial = { id: 't', arm: 'base', family: 'A', board: 'ENV', split: 'development', case: 'ENV', replicate: 1, seed: 1, argv: [script], env: {}, input: { path: 'e', sha256: sha('e') } };
+    const trial = { id: 't', arm: 'base', family: 'A', board: 'ENV', split: 'development', case: 'ENV', replicate: 1, seed: 1, argv: [script], steps: [], env: {}, input: { path: 'e', sha256: sha('e') } };
     const context = { root, runsDir: runs, timeoutMs: 10_000 };
     const sealed = await spawnExecutor(trial, context);
     assert.equal(sealed.status, 'sealed');

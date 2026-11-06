@@ -7,7 +7,7 @@ import { dirname, join, relative } from 'node:path';
 import { POLICY } from './outcome-controls.ts';
 import { evaluateStudy, type OutcomeServices } from './placement-outcomes.ts';
 import { sha256File } from './json-file.ts';
-import { buildStudy, runSuite, TRIAL_RECORD, type Executor } from './bench-run.ts';
+import { buildStudy, runSuite, spawnExecutor, TRIAL_RECORD, type Executor } from './bench-run.ts';
 import { buildResult } from './bench-analyze.ts';
 import { SUITE, validateSuite, verifyInputs } from './bench-suite.ts';
 
@@ -23,18 +23,19 @@ const services: OutcomeServices = {
   thermal: { discharge: () => { throw new Error('no thermal'); }, validateCapability: () => ({ inputs: {} }) },
 };
 
-function sealedRun(root: string, name: string, board: string, input: string, passed: boolean): string {
+interface Chain { candidateText?: string; sourceSha?: string; fromRun?: string }
+function sealedRun(root: string, name: string, board: string, input: string, passed: boolean, chain: Chain = {}): string {
   const folder = join(root, 'runs', name), rel = `hardware-design/boards/${board}/native.kicad_pcb`, native = join(folder, 'workspace', rel);
   mkdirSync(dirname(native), { recursive: true });
-  writeFileSync(native, fp(board));
-  const files: Row = { [rel]: sha256File(join(root, input)), 'tools/pcbtool.py': 'c'.repeat(64) };
+  writeFileSync(native, chain.candidateText ?? fp(board));
+  const files: Row = { [rel]: chain.sourceSha ?? sha256File(join(root, input)), 'tools/pcbtool.py': 'c'.repeat(64) };
   for (const extension of ['.kicad_sch', '.kicad_pro', '.kicad_dru']) {
     const path = native.replace(/\.kicad_pcb$/, extension);
     writeFileSync(path, `original ${extension}`);
     files[rel.replace(/\.kicad_pcb$/, extension)] = sha256File(path);
   }
   const command = ['python3', 'tools/pcbtool.py', 'route', rel, 'spec.json'];
-  write(join(folder, 'run.json'), { root: '/x', board, project: 'native', run_id: name, operation: 'route', created_at: '2026-10-16T00:00:00Z', spec: { route: {} }, gate_config_sha256: 'd'.repeat(64) });
+  write(join(folder, 'run.json'), { root: '/x', board, project: 'native', run_id: name, operation: 'route', created_at: '2026-10-16T00:00:00Z', spec: { route: {} }, gate_config_sha256: 'd'.repeat(64), ...(chain.fromRun ? { from_run: { result_sha256: chain.fromRun } } : {}) });
   write(join(folder, 'operation/source.json'), { files });
   write(join(folder, 'operation/result.json'), { candidate: `/x/.gate/cli/${name}/workspace/${rel}`, workspace: `/x/.gate/cli/${name}/workspace`, candidate_sha256: sha256File(native),
     candidate_verified: passed, identity_preserved: true, source_unchanged: true, protected_source_changes: [], status: passed ? 'passed' : 'failed', cause: 'fixture' });
@@ -80,5 +81,55 @@ test('a bench study passes the real evaluator and the proposal arm shows its ext
     assert.equal(result.overall.only_b_ok, 2);
     assert.ok(result.trials.every(item => item.evidence_valid));
     assert.equal(result.trials.find(item => item.id === 'ENV.r2.baseline')!.failure_class, 'native_errors');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a chained trial (placer step, then a continued route) passes the real evaluator and binds its sealed parent', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'bench-chain-')));
+  try {
+    const pins: Row[] = [];
+    for (const board of ['ENV', 'REL']) {
+      mkdirSync(join(root, 'inputs', board), { recursive: true });
+      const path = join(root, 'inputs', board, 'native.kicad_pcb');
+      writeFileSync(path, fp(board));
+      pins.push({ path: `inputs/${board}/native.kicad_pcb`, sha256: sha256File(path) });
+    }
+    const say = (id: string) => ['/bin/sh', '-c', `echo '{"run_id":"${id}"}'`];
+    const suite = validateSuite({
+      schema: SUITE, suite_id: 'chain',
+      arms: [{ id: 'baseline', argv: say('b-{board}-{seed}') },
+        { id: 'proposal', steps: [['/bin/sh', '-c', 'echo placed > "$0/placement.json"', '{work}'], say('p-{board}-{seed}'),
+          ['/bin/sh', '-c', 'test "$0" = "p-$1-$2" && echo \'{"run_id":"c-\'$1\'-\'$2\'"}\'', '{prev_run}', '{board}', '{seed}']] }],
+      boards: [{ family: 'A', board: 'ENV', split: 'development', input: pins[0] }, { family: 'B', board: 'REL', split: 'holdout', input: pins[1] }],
+      seeds: [1, 2], budget: { timeout_s: 30, cpus: 2, memory_gb: 2 },
+    });
+    for (const [index, board] of ['ENV', 'REL'].entries()) {
+      for (const seed of [1, 2]) {
+        sealedRun(root, `b-${board}-${seed}`, board, pins[index]!.path, seed === 1);
+        const text = fp(board).replace(/\(at (10|20) 10\)/, '(at 11 10)');
+        const parent = sealedRun(root, `p-${board}-${seed}`, board, pins[index]!.path, true, { candidateText: text });
+        const parentSha = sha256File(join(parent, 'result.json'));
+        sealedRun(root, `c-${board}-${seed}`, board, pins[index]!.path, true, { sourceSha: sha256File(join(parent, 'workspace', `hardware-design/boards/${board}/native.kicad_pcb`)), fromRun: parentSha });
+      }
+    }
+    const out = join(root, 'out');
+    const records = await runSuite(suite, { root, runsDir: join(root, 'runs'), out, executor: spawnExecutor });
+    const proposal = records.filter(item => item.arm === 'proposal');
+    assert.ok(proposal.every(item => item.status === 'sealed' && item.run_id!.startsWith('c-') && item.parent_run && item.placement_input));
+    assert.ok(records.filter(item => item.arm === 'baseline').every(item => !item.parent_run));
+    assert.equal(readFileSync(join(out, 'work', 'ENV.r1.proposal', 'placement.json'), 'utf8'), 'placed\n');
+    writeFileSync(join(root, 'study.json'), JSON.stringify(buildStudy(suite, records)));
+    const report = evaluateStudy(root, 'study.json', 'chain', services) as unknown as Row;
+    assert.deepEqual(report.blockers, []);
+    const result = buildResult(suite, 'f'.repeat(64), records, report as any, null, {});
+    assert.ok(result.trials.every(item => item.evidence_valid));
+    assert.equal(result.overall.b.successes, 4);
+    assert.equal(result.overall.a.successes, 2);
+    // a placement input that is not the sealed parent's candidate must be refused
+    const study = buildStudy(suite, records) as { trials: Row[] };
+    const forged = study.trials.find(item => item.parent_run)!;
+    forged.placement_input = pins[0];
+    writeFileSync(join(root, 'forged.json'), JSON.stringify(study));
+    assert.notDeepEqual((evaluateStudy(root, 'forged.json', 'chain', services) as unknown as Row).blockers, []);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

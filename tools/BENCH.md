@@ -26,9 +26,33 @@ tools/pcb bench compare DIR_A/result.json DIR_B/result.json [--arm-a ID] [--arm-
 
 - Exactly two arms: the first is the baseline, the second the proposal. Positive differences favor the proposal.
 - Placeholders in `argv`: `{board} {seed} {timeout_s} {cpus} {memory_gb} {input}`. Unknown ones are refused.
+- An arm gives either one `argv` or ordered `steps` (see Chained arms).
 - Both a development and a holdout board are required; a family cannot be in both. Input hashes are checked against the files before anything runs.
 - The same seeds run for both arms, interleaved per pair. Trials run one at a time (they share the machine); a finished trial's record in `DIR/trials/` is kept, so rerunning `run` resumes.
-- Each arm's argv must end in a `--json` pcb run that prints its `run_id`; the sealed result is read from `PCB_RUNS_DIR` (default `.gate/cli`).
+- Each arm's argv (or last step) must end in a `--json` pcb run that prints its `run_id`; the sealed result is read from `PCB_RUNS_DIR` (default `.gate/cli`).
+
+## Chained arms (`steps`)
+
+A placer arm needs a chain: placer, then the placement applied as a candidate run, then a route that continues from it.
+Give the arm `steps` instead of `argv`: each step is its own argv, run in order in the project.
+
+```json
+{"id": "placer", "steps": [
+  ["tools/placer/iotplace", "run", "{board}", "--seed", "{seed}", "--out", "{work}/placement.json"],
+  ["tools/pcb", "edit", "{board}", "--kind", "place", "--spec", "{work}/placement.json", "--json"],
+  ["tools/pcb", "route", "{board}", "--router", "iotroute", "--from-run", "{prev_run}", "--timeout", "{timeout_s}", "--json"]]}
+```
+
+- Besides the suite placeholders, steps may use `{work}` (a scratch folder per trial, `DIR/work/<trial>`), and from the second step on
+  `{prev_run}` (run id) and `{prev_run_path}` (run folder) of the latest earlier step that sealed a run.
+- Only the last step must seal a run. Earlier steps need to print a `--json` `run_id` only if a later step uses `{prev_run}`;
+  a step that fails (or cannot supply `{prev_run}`) makes the trial a failure with no sealed run.
+- The whole trial shares one deadline, `budget.timeout_s`, placer time included.
+- The trial record stores the final sealed run, its `parent_run` `{path, sha256}` (the latest earlier sealed run) and a per-trial
+  `placement_input` `{path, sha256}`: that parent's candidate file in its workspace. `analyze` writes both into the study, and the
+  evaluator checks `placement_input` against the sealed parent's candidate bytes (a mismatch is a blocker). Single-`argv` arms keep
+  the board's pinned input and have no parent.
+- Arms must be comparable: put the baseline's chain in the same shape if it also places; the evaluator checks equal controls.
 
 ## What the result says
 

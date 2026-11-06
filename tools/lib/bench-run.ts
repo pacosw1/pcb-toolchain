@@ -12,8 +12,9 @@ export type TrialStatus = 'sealed' | 'timeout' | 'no_run';
 export interface TrialRecord {
   schema: typeof TRIAL_RECORD; id: string; arm: string; status: TrialStatus; run_id: string | null; run_path: string | null;
   result_sha256: string | null; wall_s: number; exit_code: number | null; cause: string | null; command: string[];
+  parent_run?: { path: string; sha256: string }; placement_input?: { path: string; sha256: string } | null;
 }
-export interface ExecContext { root: string; runsDir: string; timeoutMs: number }
+export interface ExecContext { root: string; runsDir: string; timeoutMs: number; work?: string }
 export type Executor = (trial: PlannedTrial, context: ExecContext) => Promise<TrialRecord>;
 
 const GRACE_MS = 60_000;
@@ -33,34 +34,78 @@ function runIdOf(text: string): string | null {
   return null;
 }
 
-/** Spawn the trial's argv in the project, follow it to its terminal event, and locate the sealed run. SIGINT asks for owned cleanup first. */
-export const spawnExecutor: Executor = (trial, context) => new Promise(done => {
+interface StepOutcome { code: number | null; stdout: string; stderr: string; timedOut: boolean; error: string | null }
+
+function runStep(argv: string[], env: Record<string, string>, context: ExecContext, timeoutMs: number): Promise<StepOutcome> {
+  return new Promise(done => {
+    const [command, ...args] = argv;
+    const child = spawn(command!, args, { cwd: context.root, env: { ...process.env, ...env, PCB_RUNS_DIR: context.runsDir }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '', stderr = '', timedOut = false;
+    child.stdout.on('data', chunk => { stdout += String(chunk); });
+    child.stderr.on('data', chunk => { stderr = (stderr + String(chunk)).slice(-4000); });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGINT');
+      setTimeout(() => child.kill('SIGKILL'), GRACE_MS).unref();
+    }, Math.max(1, timeoutMs));
+    const finish = (code: number | null, error: string | null): void => { clearTimeout(timer); done({ code, stdout, stderr, timedOut, error }); };
+    child.on('error', error => finish(null, error.message));
+    child.on('close', code => finish(code, null));
+  });
+}
+
+const fill = (part: string, values: Record<string, string>): string => part.replace(/\{(work|prev_run|prev_run_path)\}/g, (whole, name: string) => values[name] ?? whole);
+
+interface Sealed { id: string; folder: string; path: string; sha: string }
+
+function sealedOf(stdout: string, context: ExecContext): Sealed | null {
+  const id = runIdOf(stdout);
+  if (!id) return null;
+  const folder = join(context.runsDir, id), result = join(folder, 'result.json');
+  return existsSync(result) ? { id, folder, path: relative(context.root, folder), sha: sha256File(result) } : null;
+}
+
+/** The candidate a sealed run produced, as the file inside its workspace (not the daemon's path, which may be stale). */
+function candidateOf(parent: Sealed, context: ExecContext): { path: string; sha256: string } | null {
+  try {
+    const operation = JSON.parse(readFileSync(join(parent.folder, 'operation/result.json'), 'utf8')) as { candidate?: string; workspace?: string };
+    if (!operation.candidate || !operation.workspace) return null;
+    const file = join(parent.folder, 'workspace', relative(operation.workspace, operation.candidate));
+    return existsSync(file) ? { path: relative(context.root, file), sha256: sha256File(file) } : null;
+  } catch { return null; }
+}
+
+/** Run the trial's steps in order in the project; only the last must seal a run. A step may read the previous sealed run through {prev_run}.
+ *  The whole trial shares one deadline. SIGINT asks for owned cleanup first. The final run's parent is the last earlier step that sealed a run. */
+export const spawnExecutor: Executor = async (trial, context) => {
   const started = performance.now();
-  const [command, ...args] = trial.argv;
-  const child = spawn(command!, args, { cwd: context.root, env: { ...process.env, ...trial.env, PCB_RUNS_DIR: context.runsDir }, stdio: ['ignore', 'pipe', 'pipe'] });
-  let stdout = '', stderr = '', timedOut = false;
-  child.stdout.on('data', chunk => { stdout += String(chunk); });
-  child.stderr.on('data', chunk => { stderr = (stderr + String(chunk)).slice(-4000); });
-  const timer = setTimeout(() => {
-    timedOut = true;
-    child.kill('SIGINT');
-    setTimeout(() => child.kill('SIGKILL'), GRACE_MS).unref();
-  }, context.timeoutMs);
-  const finish = (code: number | null, cause: string | null): void => {
-    clearTimeout(timer);
-    const wall_s = (performance.now() - started) / 1000;
-    const runId = runIdOf(stdout);
-    const folder = runId ? join(context.runsDir, runId) : null;
-    const result = folder ? join(folder, 'result.json') : null;
-    if (folder && result && existsSync(result)) {
-      done(record(trial, { status: timedOut ? 'timeout' : 'sealed', run_id: runId, run_path: relative(context.root, folder), result_sha256: sha256File(result), wall_s, exit_code: code, cause }));
-    } else {
-      done(record(trial, { status: timedOut ? 'timeout' : 'no_run', run_id: runId, wall_s, exit_code: code, cause: cause ?? (stderr.trim() || 'no sealed result') }));
+  const deadline = started + context.timeoutMs;
+  const work = context.work ? join(context.work, trial.id) : join(context.runsDir, '..', 'bench-work', trial.id);
+  mkdirSync(work, { recursive: true });
+  const steps = trial.steps?.length ? trial.steps : [trial.argv];
+  let previous: Sealed | null = null, parent: Sealed | null = null, last: StepOutcome | null = null, sealed: Sealed | null = null;
+  for (const [index, step] of steps.entries()) {
+    const values: Record<string, string> = { work, ...(previous ? { prev_run: previous.id, prev_run_path: previous.folder } : {}) };
+    const argv = step.map(part => fill(part, values));
+    const unfilled = argv.find(part => /\{(prev_run|prev_run_path)\}/.test(part));
+    const wall_s = (): number => (performance.now() - started) / 1000;
+    if (unfilled) return record(trial, { wall_s: wall_s(), cause: `step ${index + 1} needs a previous sealed run that step ${index} did not produce`, command: trial.argv });
+    last = await runStep(argv, trial.env, context, deadline - performance.now());
+    sealed = sealedOf(last.stdout, context);
+    if (index < steps.length - 1 && (last.timedOut || last.error)) {
+      return record(trial, { status: last.timedOut ? 'timeout' : 'no_run', wall_s: wall_s(), exit_code: last.code, cause: `step ${index + 1} ${last.error ?? 'reached the deadline'}` });
     }
-  };
-  child.on('error', error => finish(null, error.message));
-  child.on('close', code => finish(code, timedOut ? 'deadline reached' : null));
-});
+    if (index === steps.length - 1) break;
+    if (sealed) { parent = sealed; previous = sealed; }
+    if (!sealed && last.code !== 0) return record(trial, { wall_s: wall_s(), exit_code: last.code, cause: `step ${index + 1} failed: ${last.stderr.trim() || 'no output'}`, command: trial.argv });
+  }
+  const wall_s = (performance.now() - started) / 1000;
+  const outcome = last!;
+  const cause = outcome.error ?? (outcome.timedOut ? 'deadline reached' : null);
+  if (!sealed) return record(trial, { status: outcome.timedOut ? 'timeout' : 'no_run', run_id: runIdOf(outcome.stdout), wall_s, exit_code: outcome.code, cause: cause ?? (outcome.stderr.trim() || 'no sealed result') });
+  const chain = parent ? { parent_run: { path: parent.path, sha256: parent.sha }, placement_input: candidateOf(parent, context) } : {};
+  return record(trial, { status: outcome.timedOut ? 'timeout' : 'sealed', run_id: sealed.id, run_path: sealed.path, result_sha256: sealed.sha, wall_s, exit_code: outcome.code, cause, ...chain });
+};
 
 export const recordPath = (out: string, id: string): string => join(out, 'trials', `${id}.json`);
 
@@ -76,7 +121,7 @@ export async function runSuite(suite: Suite, options: RunOptions): Promise<Trial
   mkdirSync(join(options.out, 'trials'), { recursive: true });
   const trials = expandTrials(suite);
   const records: TrialRecord[] = [];
-  const context: ExecContext = { root: options.root, runsDir: options.runsDir, timeoutMs: Math.round(suite.budget.timeout_s * 1000) };
+  const context: ExecContext = { root: options.root, runsDir: options.runsDir, timeoutMs: Math.round(suite.budget.timeout_s * 1000), work: join(options.out, 'work') };
   for (const [index, trial] of trials.entries()) {
     const kept = readRecord(options.out, trial.id);
     const current = kept ?? await options.executor(trial, context);
@@ -95,7 +140,8 @@ export function buildStudy(suite: Suite, records: TrialRecord[]): Record<string,
     if (!item || item.status !== 'sealed' || !item.run_path || !item.result_sha256) return [];
     return [{
       id: trial.id, kind: 'cli_run', path: item.run_path, sha256: item.result_sha256, arm: trial.arm, split: trial.split, family: trial.family,
-      case: trial.case, replicate: trial.replicate, placement_input: trial.input, execution_policy: 'operation/execution-policy.json',
+      case: trial.case, replicate: trial.replicate, placement_input: item.parent_run ? item.placement_input ?? null : trial.input,
+      ...(item.parent_run ? { parent_run: item.parent_run } : {}), execution_policy: 'operation/execution-policy.json',
     }];
   });
   const families = (split: string) => [...new Set(suite.boards.filter(board => board.split === split).map(board => board.family))];
