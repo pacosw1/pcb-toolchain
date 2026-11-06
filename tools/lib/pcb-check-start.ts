@@ -8,6 +8,7 @@ import { iotrouteBin } from './iotroute-bin.ts';
 import { runDir, utc } from './pcb-runs.ts';
 import { boardConfig, sha } from './pcb-workflow.ts';
 import { isFile, resolvePath, which } from './py-path.ts';
+import { admitAction, type ActionRequest } from './pcb-action.ts';
 import { attach, folderFor, read } from './pcb-cycle.ts';
 import { CANDIDATE, candidateFields, OPERATIONS, type CandidateRequest } from './pcb-candidate-admission.ts';
 import { parentCandidate } from './pcb-candidate.ts';
@@ -52,6 +53,7 @@ export async function startCheck(options: CheckOptions): Promise<string> {
   const fromRun = parentFolder ? { folder: parentFolder, result_sha256: sha(join(parentFolder, 'result.json')) } : undefined;
   if (fromRun) { verify(fromRun.folder); if (!CANDIDATE.has(operation)) parentCandidate(root, action === 'inspect' && cycleFolder ? read(join(cycleFolder, 'cycle.json')).board : options.board, fromRun); }
   const candidate = OPERATIONS.has(operation) ? candidateFields(root, operation, options.board, options, parentFolder) : {};
+  const actionRecord = admitAction({ root, board: options.board, operation, timeout_s: options.timeout, ...candidate, ...(fromRun ? { from_run: fromRun } : {}) } as ActionRequest);
   const node = which(process.env.NODE ?? 'node');
   if (!node) throw new Error('Node.js is required to run the existing gate');
   mkdirSync(base, { recursive: true });
@@ -63,7 +65,7 @@ export async function startCheck(options: CheckOptions): Promise<string> {
   const command = OPERATIONS.has(operation) ? [node, '--experimental-strip-types', '--no-warnings', fileURLToPath(new URL('../pcb-operation.ts', import.meta.url)), folder]
     : operation === 'doctor' ? [node, join(root, 'tools/doctor.mjs'), '--gate-only']
     : operation === 'readiness' ? [node, join(root, 'tools/check-release-readiness.mjs'), ...(options.arguments ?? [])]
-    : operation === 'blocks' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/blocks.ts'), ...(options.arguments ?? [])]
+    : operation === 'blocks' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/blocks.ts'), ...(options.arguments ?? []), ...(action === 'bind' ? ['--output', join(folder, 'operation/binding.json')] : [])]
     : operation === 'placement' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/engineering_constraints.ts'), ...(options.arguments ?? []), '--root', backendRoot, '--json', '--output', join(folder, 'operation/report.json')]
     : operation === 'routing' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/route_decision.ts'), ...(options.arguments ?? []), '--root', backendRoot, '--json', '--output', join(folder, 'operation/report.json')]
     : operation === 'parts' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/part_evidence.ts'), ...(options.arguments ?? []), '--root', backendRoot, '--json', '--output', join(folder, 'operation/report.json'), ...(action === 'inspect' ? ['--cache', join(folder, 'operation/cache')] : [])]
@@ -78,7 +80,7 @@ export async function startCheck(options: CheckOptions): Promise<string> {
   const manifest = { schema_version: 1, run_id: basename(folder), board, project: configInfo?.cfg.get('project') ?? null,
     created_at: utc(), root, command, timeout_s: options.timeout, heartbeat_s: options.heartbeat,
     ...(design ? { design_id: design.id, design_stage: design.stage, design_contract: { path: design.path, sha256: design.hash, content: design.content } } : {}),
-    ...candidate, ...(fromRun ? { from_run: fromRun } : {}),
+    ...candidate, ...(actionRecord ? { action: actionRecord } : {}), ...(fromRun ? { from_run: fromRun } : {}),
     operation, node, gate_config_sha256: config ? sha(config) : null,
     ...(['readiness', 'blocks', 'outcomes', 'schematic', 'design', 'parts', 'routing', 'placement', 'ml'].includes(operation) ? { arguments: options.arguments ?? [] } : {}), ...(cycleFolder ? { cycle: basename(cycleFolder) } : {}) };
   atomicJson(join(folder, 'run.json'), manifest);

@@ -111,3 +111,30 @@ Two identical current failures produce `stuck` and a cited cause to resolve befo
 another attempt. Missing inputs becoming present expire the old blocker. No
 lifecycle assessment promotes stock, procurement, physical qualification or
 production approval.
+
+## Admitted candidate actions
+
+The supervisor records an `iot-lab.candidate-action.v1` action in `run.json` for
+explicit edits, route attempts and diagnosed repairs. It captures the canonical
+source revision at request admission, the mutation parameters, execution timeout and reviewed-input
+hashes, the required design prerequisite stage, and the requested reference,
+net, layer and item scope. The owned child rechecks this record before design or
+native probes and again before executing the mutation. A source change while a
+request waits, an expanded scope, a changed request or a mismatched prerequisite
+stage stops that run. Its snapshot must also match the admitted source revision.
+Start a new request after inspecting changed inputs; an old action is not refreshed
+silently. Continuations still bind their separately verified parent candidate.
+
+Placement uses the existing schematic prerequisite; route and repair use the
+existing placement prerequisite. Reviewed design prerequisites remain conditional
+on a supplied or registered design contract, and a valid G3 gate may still route.
+This action record does not fill missing engineering coverage. Through vias,
+via moves and net clearing cover copper across the stack. Route-json actions
+retain whole-board copper scope because stage filters, width edits and pours can
+span it; their exact plan remains hash-bound. Repair retains its diagnosed item
+IDs and the existing source-bound diagnosis and protected-copper checks.
+
+The record guards requests executed through the supervisor. Its hash is not a
+secret authorization token, and it cannot prevent an unrestricted filesystem
+writer from replacing the record or editing CAD directly. It does not replace
+native verification, the full configured gate or guarded adoption.

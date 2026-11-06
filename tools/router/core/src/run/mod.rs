@@ -164,7 +164,7 @@ impl Run<'_> {
             let (nets, count) = fail_lines(&text);
             let mut model = ModelFile::read(&self.model)?;
             let (soft, raised, set_hard) = model.raise(&nets)?;
-            rounds.push(Round { round: k + 1, planes_fail_lines: count, fail_nets: nets, raised, set_hard, next_core: None });
+            rounds.push(Round { round: k + 1, planes_fail_lines: count, fail_nets: nets, raised, set_hard, next_core: None, next_core_seconds: None });
             if soft.is_empty() || k == ROUNDS {
                 break;
             }
@@ -173,7 +173,12 @@ impl Run<'_> {
             fs::create_dir_all(&again).map_err(|e| format!("{}: {e}", again.display()))?;
             let candidate = again.join(out.file_name().expect("OUT has a name"));
             let (stages, _) = self.attempt(&candidate, &again, &[])?;
+            rounds.last_mut().expect("a round").next_core_seconds = Some(stages.core.seconds);
             rounds.last_mut().expect("a round").next_core = Some(stages.core.claim);
+            if k == 0 {
+                // Keep the first pass/length-recovery log before the selected feedback log replaces it.
+                fs::copy(work.join("route.log"), work.join("route-initial.log")).map_err(|e| format!("preserve initial route log: {e}"))?;
+            }
             self.copy_results(&again, work, &["route.json", "route.log", "write.log"])?;
             fs::copy(&candidate, out).map_err(|e| format!("{}: {e}", out.display()))?;
             place_sidecars(&self.src, out)?;

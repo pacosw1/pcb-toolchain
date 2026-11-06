@@ -1,0 +1,337 @@
+{
+  "schema": "pcb.mechanical-bind-1330.v1",
+  "baseline_source": "228b964205037621c36cbc39f92bd0f6d8301d86",
+  "integrated_source_base": "dba19431f7184582008d02e1f2a901f000ce9709",
+  "fixture_commit": "be07935b74613204a597bb0f7d03029c933a1117",
+  "qualified": false,
+  "stock_refreshed": false,
+  "scope": [
+    "native mechanical classification",
+    "owned draft binding artifact"
+  ],
+  "parts": [
+    {
+      "project": "before-project",
+      "run_id": "run-5Qdw9Z",
+      "elapsed_s": 1.141,
+      "status": "failed",
+      "cleanup": true,
+      "report_status": "blocked",
+      "qualified": false,
+      "stock_current": false,
+      "release_approved": false,
+      "part_count": 0,
+      "mechanical": [],
+      "blockers": [
+        {
+          "code": "runtime",
+          "detail": "native symbol has no selected unit pins"
+        }
+      ],
+      "report_sha256": "76642055ad60efb6e822e8752ee272634ded6a5234a5cae73d5336b66c50ceae"
+    },
+    {
+      "project": "project",
+      "run_id": "run-Sl2u3W",
+      "elapsed_s": 1.265,
+      "status": "failed",
+      "cleanup": true,
+      "report_status": "blocked",
+      "qualified": false,
+      "stock_current": false,
+      "release_approved": false,
+      "part_count": 56,
+      "mechanical": [
+        {
+          "ref": "H3",
+          "classification": {
+            "basis": "pinless_definition_and_unconnected_npth_only",
+            "locations": [
+              {
+                "path": "hardware-design/boards/POE-ETHERNET/cad/POE-ETHERNET/POE-ETHERNET.kicad_sch",
+                "unit": 1
+              }
+            ],
+            "pad_count": 1
+          },
+          "required": false
+        },
+        {
+          "ref": "H4",
+          "classification": {
+            "basis": "pinless_definition_and_unconnected_npth_only",
+            "locations": [
+              {
+                "path": "hardware-design/boards/POE-ETHERNET/cad/POE-ETHERNET/POE-ETHERNET.kicad_sch",
+                "unit": 1
+              }
+            ],
+            "pad_count": 1
+          },
+          "required": false
+        }
+      ],
+      "blockers": [
+        {
+          "code": "missing_part_review",
+          "detail": "no reviewed native part-use manifest",
+          "path": "hardware-design/registry/part-reviews/POE-ETHERNET.json",
+          "references": [
+            "C1",
+            "C10",
+            "C11",
+            "C12",
+            "C13",
+            "C14",
+            "C15",
+            "C16",
+            "C17",
+            "C18",
+            "C19",
+            "C20",
+            "C3",
+            "C4",
+            "C5",
+            "C6",
+            "C7",
+            "C8",
+            "C9",
+            "FB1",
+            "J1",
+            "J2",
+            "J3",
+            "R1",
+            "R10",
+            "R11",
+            "R12",
+            "R13",
+            "R14",
+            "R2",
+            "R3",
+            "R4",
+            "R5",
+            "R6",
+            "R7",
+            "R8",
+            "R9",
+            "U1",
+            "U2",
+            "Y1"
+          ]
+        }
+      ],
+      "report_sha256": "b090b2402f5fc9d6a21aefac2af800d31c12b4fb547aa9e7f26a26985dc5424a"
+    }
+  ],
+  "bindings": [
+    {
+      "project": "before-project",
+      "run_id": "run-dHeeaB",
+      "elapsed_s": 0.495,
+      "status": "passed",
+      "cleanup": true,
+      "binding_artifact": null,
+      "binding_sha256": null,
+      "binding_file_sha256": null,
+      "sealed_file_sha256": null
+    },
+    {
+      "project": "project",
+      "run_id": "run-72wc3o",
+      "elapsed_s": 0.519,
+      "status": "passed",
+      "cleanup": true,
+      "binding_artifact": "/var/tmp/mechanical-bind-1330/project/.gate/cli/run-72wc3o/operation/binding.json",
+      "binding_sha256": "d954ff15bb6ff31ed8b7e700af4bbb0944d67f008f426bf6b5c6f927b3fae22f",
+      "binding_file_sha256": "773d93ed50321e65b90e7a954e8e71ec563e7fc56bfac9dbaed0e21ac37acbf6",
+      "sealed_file_sha256": "773d93ed50321e65b90e7a954e8e71ec563e7fc56bfac9dbaed0e21ac37acbf6",
+      "qualified": false,
+      "copper_reuse_approved": false,
+      "refs": {
+        "L1": "L2",
+        "C7": "C18",
+        "U2": "U4",
+        "C2": "C19",
+        "C3": "C20",
+        "C1": "C21",
+        "C6": "C22"
+      },
+      "net_map": {
+        "/U2_SW": "/BUCK-3V3-AP63203/U2_SW",
+        "VDD_3V3": "VDD_3V3",
+        "/U2_BST": "/BUCK-3V3-AP63203/U2_BST",
+        "VIN_5V": "5V_SYS",
+        "GND": "GND"
+      },
+      "transform": {
+        "rotation_quarters": 0,
+        "translation_mm": [
+          "6.93",
+          "19.85"
+        ]
+      },
+      "target_inputs": {
+        "DOOR-RELAY.kicad_pcb": "26da4e60f5e80297d0246735b074ab0f0b782a362ee4e40cdf6527970cd7dbbe",
+        "DOOR-RELAY.kicad_pro": "ea38b1163091005ef050ad65a06da7d0ea12f3c6058f1212670792dbde428b54",
+        "DOOR-RELAY.kicad_dru": "66afe1c5aab36113b59021429aa03df32fb5897fba6a01c2590b7090d1e2fa86",
+        "DOOR-RELAY.kicad_sch": "fa24f061ebc55479f5e52b9852988df7bb51cb6de5e842ad6c7130d759cc469f"
+      },
+      "source_sha256": "43d32bd78050526281ea19a4490a26098d3d0db4d742ca9ca24852b903aaf1b3"
+    }
+  ],
+  "cad_hash_checks": [
+    {
+      "project": "before-project",
+      "path": "hardware-design/boards/POE-ETHERNET/cad/POE-ETHERNET/POE-ETHERNET.kicad_pcb",
+      "sha256": "999edb88cd9b061e587f36dd0bee1efb9ad35c10ce02c74cb73ad6bf3ea63e8c",
+      "unchanged": true
+    },
+    {
+      "project": "before-project",
+      "path": "hardware-design/boards/POE-ETHERNET/cad/POE-ETHERNET/POE-ETHERNET.kicad_sch",
+      "sha256": "ef116bbd3bb0b251cb17bc321c4562671fa33e503ac7c8e3605e56eca3e324ed",
+      "unchanged": true
+    },
+    {
+      "project": "before-project",
+      "path": "hardware-design/boards/POE-ETHERNET/cad/POE-ETHERNET/POE-ETHERNET.kicad_pro",
+      "sha256": "565c01522c8769b85e7122c79ac185cf9636d94111f21bed676b0f03d4e8c81a",
+      "unchanged": true
+    },
+    {
+      "project": "before-project",
+      "path": "hardware-design/boards/POE-ETHERNET/cad/POE-ETHERNET/POE-ETHERNET.kicad_dru",
+      "sha256": "29fe603e48cf4f974a143fb786b0b82a86de244d9ea1d9f25db83d541cabc2f3",
+      "unchanged": true
+    },
+    {
+      "project": "before-project",
+      "path": "hardware-design/boards/DOOR-RELAY/cad/DOOR-RELAY/DOOR-RELAY.kicad_pcb",
+      "sha256": "26da4e60f5e80297d0246735b074ab0f0b782a362ee4e40cdf6527970cd7dbbe",
+      "unchanged": true
+    },
+    {
+      "project": "before-project",
+      "path": "hardware-design/boards/DOOR-RELAY/cad/DOOR-RELAY/DOOR-RELAY.kicad_sch",
+      "sha256": "fa24f061ebc55479f5e52b9852988df7bb51cb6de5e842ad6c7130d759cc469f",
+      "unchanged": true
+    },
+    {
+      "project": "before-project",
+      "path": "hardware-design/boards/DOOR-RELAY/cad/DOOR-RELAY/DOOR-RELAY.kicad_pro",
+      "sha256": "ea38b1163091005ef050ad65a06da7d0ea12f3c6058f1212670792dbde428b54",
+      "unchanged": true
+    },
+    {
+      "project": "before-project",
+      "path": "hardware-design/boards/DOOR-RELAY/cad/DOOR-RELAY/DOOR-RELAY.kicad_dru",
+      "sha256": "66afe1c5aab36113b59021429aa03df32fb5897fba6a01c2590b7090d1e2fa86",
+      "unchanged": true
+    },
+    {
+      "project": "before-project",
+      "path": "hardware-design/blocks/iot-lab.kicad_blocks/BUCK-3V3-AP63203.kicad_block/BUCK-3V3-AP63203.kicad_pcb",
+      "sha256": "606eecdcfc7c4f99fa5ed0a0a04cfe749e7d986d0f7cf3da260142e99129a181",
+      "unchanged": true
+    },
+    {
+      "project": "before-project",
+      "path": "hardware-design/blocks/iot-lab.kicad_blocks/BUCK-3V3-AP63203.kicad_block/BUCK-3V3-AP63203.kicad_sch",
+      "sha256": "4d56f09a4b007ce13d53bc834705bfff37f6a4258b2a9aa52029995858c7db0b",
+      "unchanged": true
+    },
+    {
+      "project": "before-project",
+      "path": "hardware-design/blocks/iot-lab.kicad_blocks/BUCK-3V3-AP63203.kicad_block/BUCK-3V3-AP63203.kicad_pro",
+      "sha256": "d8e5e1d1e979670734a8de0a18bf8a164c78dc19c4445bda4c09a28b7278e28d",
+      "unchanged": true
+    },
+    {
+      "project": "before-project",
+      "path": "hardware-design/blocks/iot-lab.kicad_blocks/BUCK-3V3-AP63203.kicad_block/BUCK-3V3-AP63203.kicad_dru",
+      "sha256": "edd74546c3a662048c2f81cace7014020026bf6586abc6b7333db7df5644bfc7",
+      "unchanged": true
+    },
+    {
+      "project": "project",
+      "path": "hardware-design/boards/POE-ETHERNET/cad/POE-ETHERNET/POE-ETHERNET.kicad_pcb",
+      "sha256": "999edb88cd9b061e587f36dd0bee1efb9ad35c10ce02c74cb73ad6bf3ea63e8c",
+      "unchanged": true
+    },
+    {
+      "project": "project",
+      "path": "hardware-design/boards/POE-ETHERNET/cad/POE-ETHERNET/POE-ETHERNET.kicad_sch",
+      "sha256": "ef116bbd3bb0b251cb17bc321c4562671fa33e503ac7c8e3605e56eca3e324ed",
+      "unchanged": true
+    },
+    {
+      "project": "project",
+      "path": "hardware-design/boards/POE-ETHERNET/cad/POE-ETHERNET/POE-ETHERNET.kicad_pro",
+      "sha256": "565c01522c8769b85e7122c79ac185cf9636d94111f21bed676b0f03d4e8c81a",
+      "unchanged": true
+    },
+    {
+      "project": "project",
+      "path": "hardware-design/boards/POE-ETHERNET/cad/POE-ETHERNET/POE-ETHERNET.kicad_dru",
+      "sha256": "29fe603e48cf4f974a143fb786b0b82a86de244d9ea1d9f25db83d541cabc2f3",
+      "unchanged": true
+    },
+    {
+      "project": "project",
+      "path": "hardware-design/boards/DOOR-RELAY/cad/DOOR-RELAY/DOOR-RELAY.kicad_pcb",
+      "sha256": "26da4e60f5e80297d0246735b074ab0f0b782a362ee4e40cdf6527970cd7dbbe",
+      "unchanged": true
+    },
+    {
+      "project": "project",
+      "path": "hardware-design/boards/DOOR-RELAY/cad/DOOR-RELAY/DOOR-RELAY.kicad_sch",
+      "sha256": "fa24f061ebc55479f5e52b9852988df7bb51cb6de5e842ad6c7130d759cc469f",
+      "unchanged": true
+    },
+    {
+      "project": "project",
+      "path": "hardware-design/boards/DOOR-RELAY/cad/DOOR-RELAY/DOOR-RELAY.kicad_pro",
+      "sha256": "ea38b1163091005ef050ad65a06da7d0ea12f3c6058f1212670792dbde428b54",
+      "unchanged": true
+    },
+    {
+      "project": "project",
+      "path": "hardware-design/boards/DOOR-RELAY/cad/DOOR-RELAY/DOOR-RELAY.kicad_dru",
+      "sha256": "66afe1c5aab36113b59021429aa03df32fb5897fba6a01c2590b7090d1e2fa86",
+      "unchanged": true
+    },
+    {
+      "project": "project",
+      "path": "hardware-design/blocks/iot-lab.kicad_blocks/BUCK-3V3-AP63203.kicad_block/BUCK-3V3-AP63203.kicad_pcb",
+      "sha256": "606eecdcfc7c4f99fa5ed0a0a04cfe749e7d986d0f7cf3da260142e99129a181",
+      "unchanged": true
+    },
+    {
+      "project": "project",
+      "path": "hardware-design/blocks/iot-lab.kicad_blocks/BUCK-3V3-AP63203.kicad_block/BUCK-3V3-AP63203.kicad_sch",
+      "sha256": "4d56f09a4b007ce13d53bc834705bfff37f6a4258b2a9aa52029995858c7db0b",
+      "unchanged": true
+    },
+    {
+      "project": "project",
+      "path": "hardware-design/blocks/iot-lab.kicad_blocks/BUCK-3V3-AP63203.kicad_block/BUCK-3V3-AP63203.kicad_pro",
+      "sha256": "d8e5e1d1e979670734a8de0a18bf8a164c78dc19c4445bda4c09a28b7278e28d",
+      "unchanged": true
+    },
+    {
+      "project": "project",
+      "path": "hardware-design/blocks/iot-lab.kicad_blocks/BUCK-3V3-AP63203.kicad_block/BUCK-3V3-AP63203.kicad_dru",
+      "sha256": "edd74546c3a662048c2f81cace7014020026bf6586abc6b7333db7df5644bfc7",
+      "unchanged": true
+    }
+  ],
+  "generated_at": "2026-11-05T23:51:59.669Z",
+  "door_relay_configured": false,
+  "final_part_run": "run-Sl2u3W",
+  "final_binding_run": "run-72wc3o",
+  "evidence_archive": {
+    "host": "100.93.34.43",
+    "path": "/var/lib/cip/saved-artifacts/mechanical-bind-1330/evidence.tar.gz",
+    "sha256": "ab180db1429d13d9a43dd4347142b476bf8d6fbd1295f183e56246cd63e0195f"
+  }
+}

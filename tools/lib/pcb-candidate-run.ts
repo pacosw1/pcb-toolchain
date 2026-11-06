@@ -8,6 +8,7 @@ import { validateExplicitSpec } from './explicit-spec.ts';
 import { atomicJson, plainJson, readObject, sha256File } from './json-file.ts';
 import { iotroutePolicy } from './outcome-controls.ts';
 import { verifyManifest } from './part-review.ts';
+import { verifyAction } from './pcb-action.ts';
 import { candidateLayoutCheck, designAdmission, type OperationManifest, placementCheck, routesCopper } from './pcb-candidate-screens.ts';
 import { parentCandidate } from './pcb-candidate.ts';
 import { declaredPours, pcbIdentity, type PourSet } from './pcb-identity.ts';
@@ -273,6 +274,7 @@ async function candidateOperation(folder: string, root: string, manifest: Operat
     env: workEnvironment(root, workspace, folder, manifest), spec, pours: declaredPours(manifest as never), emit };
   const blocked = await routingPreflight(run);
   if (blocked !== null) return blocked;
+  verifyAction(manifest, manifest.action, sources);
   const { code, report } = await runTool(run);
   let result: Row;
   if (code) result = { status: 'failed', exit_code: 1, cause: report?.cause ?? `${operation} tool failed`, tool_exit: code };
@@ -306,6 +308,7 @@ export async function runOperation(folderPath: string): Promise<number> {
   const emit: Emit = (kind, data) => operationEvent(folder, kind, data);
   mkdirSync(join(folder, 'operation'), { recursive: true });
   validateExplicitSpec(manifest.operation, manifest.kind, manifest.router, manifest.spec);
+  verifyAction(manifest, manifest.action);
   const design = await designAdmission(root, folder, manifest, emit);
   if (design && design.status !== 'passed') return 1;
   if (manifest.operation === 'release') return release(folder, root, manifest);

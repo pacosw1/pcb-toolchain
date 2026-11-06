@@ -68,7 +68,7 @@ fi
 echo "START: manifest"
 node "$here/scripts/write-bundle-manifest.mjs" "$out" "$version" "$sha"
 COPYFILE_DISABLE=1 tar --no-xattrs -C "$stage" -czf "$here/dist/$name.tar.gz" "$name"   # macOS tar otherwise adds ._* files, visible only on Linux
-got=$(gzip -dc "$here/dist/$name.tar.gz" | LC_ALL=C grep -a -c "/\._" || true)
+got=$(tar -tzf "$here/dist/$name.tar.gz" | LC_ALL=C grep -c "/\._" || true)   # entry names: file text may mention such a path
 [ "$got" = 0 ] || { echo "FAIL: $got ._ entries in the bundle" >&2; exit 1; }
 (cd "$here/dist" && { grep -v "  $name.tar.gz\$" SHA256SUMS 2>/dev/null; shasum -a 256 "$name.tar.gz"; } > SHA256SUMS.new && mv SHA256SUMS.new SHA256SUMS && tail -1 SHA256SUMS)   # a rebuild replaces its line
 rm -rf "$stage"

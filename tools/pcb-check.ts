@@ -80,6 +80,7 @@ async function main(argv: string[]): Promise<number> {
   if (operation === 'routing' && backend.some(arg => /^--(root|output)(=|$)/.test(arg))) throw new Error('routing root and output are owned by the run supervisor');
   if (operation === 'parts' && (backend.length < 2 || !['status', 'inspect', 'selection', 'verify', 'stock'].includes(backend[0]!))) throw new Error('parts requires an action and subject');
   if (operation === 'parts' && backend.some(arg => /^--(root|output|cache)(=|$)/.test(arg))) throw new Error('parts root, output and cache are owned by the run supervisor');
+  if (operation === 'blocks' && backend[0] === 'bind' && backend.some(arg => /^--(root|output)(=|$)/.test(arg))) throw new Error('block binding root and output are owned by the run supervisor');
   if (operation !== 'parts' && operation !== 'routing' && operation !== 'placement' && !CANDIDATE.has(operation) && values['from-run']) throw new Error('--from-run is not supported for this operation');
   if (operation === 'design' && (backend.length < 2 || backend[0] !== 'check')) throw new Error('design requires check and a design ID');
   if (operation === 'design' && backend.some(arg => /^--(root|output)(=|$)/.test(arg))) throw new Error('design root and output are owned by the run supervisor');

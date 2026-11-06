@@ -127,6 +127,26 @@ fn a_project_copy_takes_the_sidecars_it_is_told_to() {
 }
 
 #[test]
+fn a_project_copy_takes_the_whole_sheet_hierarchy_or_stops() {
+    let dir = folder("hierarchy");
+    fs::create_dir_all(dir.join("blocks/deep")).unwrap();
+    fs::write(dir.join("a.kicad_pcb"), "pcb").unwrap();
+    fs::write(dir.join("a.kicad_sch"), r#"(sheet (property "Sheetfile" "blocks/x.kicad_sch"))"#).unwrap();
+    fs::write(dir.join("blocks/x.kicad_sch"), r#"(sheet (property "Sheetfile" "deep/y.kicad_sch"))"#).unwrap();
+    fs::write(dir.join("blocks/deep/y.kicad_sch"), "y").unwrap();
+    fs::write(dir.join("sym-lib-table"), "table").unwrap();
+    let dst = dir.join("run/out/c.kicad_pcb");
+    copy_project(&dir.join("a.kicad_pcb"), &dst, None).unwrap();
+    let out = dst.parent().unwrap();
+    assert_eq!(fs::read_to_string(out.join("blocks/deep/y.kicad_sch")).unwrap(), "y");
+    assert_eq!(fs::read_to_string(out.join("sym-lib-table")).unwrap(), "table");
+    fs::remove_file(dir.join("blocks/deep/y.kicad_sch")).unwrap();
+    let error = copy_project(&dir.join("a.kicad_pcb"), &dst, None).unwrap_err();
+    assert!(error.contains("deep/y.kicad_sch"), "{error}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn a_project_lock_leaves_with_its_board_name_only() {
     let dir = folder("lock");
     let (mine, other) = (dir.join("~a.kicad_pro.lck"), dir.join("~b.kicad_pro.lck"));
