@@ -191,20 +191,29 @@ impl NetState {
     }
 
     /// Demand above the limit over a span.
-    fn excess(&self, model: &Model, s: Span) -> f64 {
+    fn excess(&self, model: &Model, s: Span, soft: f64) -> f64 {
         let nx = model.grid.nx;
         let mut cells = Vec::with_capacity(s.cells());
         for j in s.j0..s.j1 {
             for c in j * nx + s.i0..j * nx + s.i1 {
-                let over = (self.demand[c] - model.threshold).max(0.0);
+                let d = self.demand[c];
+                let clipped = (d - model.threshold).max(0.0);
+                let over = if soft == 0.0 { clipped } else { clipped + soft * d * d / model.threshold };
                 cells.push(model.cell_weights.as_ref().map_or(over, |w| over * w[c]));
             }
         }
         pairwise(&cells)
     }
 
+    /// Clipped overflow only: the sprint score and checkpoints.
     pub fn overflow(&self, model: &Model) -> f64 {
-        self.excess(model, model.grid.all())
+        self.excess(model, model.grid.all(), 0.0)
+    }
+
+    /// Search congestion: overflow plus `cong_soft` * demand^2 / threshold per cell. The quadratic part is not
+    /// clipped, so sparse maps that never cross the threshold still rank, and it penalises peaks over spread.
+    pub fn congestion(&self, model: &Model) -> f64 {
+        self.excess(model, model.grid.all(), model.params.cong_soft)
     }
 
     /// Largest requested fraction of routing capacity, before overflow clipping.
@@ -248,7 +257,7 @@ impl NetState {
             self.undo = Some(Undo { nets: old, saved: None });
             return (dwl, 0.0);
         };
-        let before = self.excess(model, region);
+        let before = self.excess(model, region, model.params.cong_soft);
         let saved = (region, self.copy_of(model, region));
         for (&(k, rec), next) in old.iter().zip(&new) {
             if let Some(s) = rec.stamp {
@@ -263,7 +272,7 @@ impl NetState {
             a.iter().for_each(|&c| self.demand[c] -= model.params.pin_demand);
             b.iter().for_each(|&c| self.demand[c] += model.params.pin_demand);
         }
-        let dcong = self.excess(model, region) - before;
+        let dcong = self.excess(model, region, model.params.cong_soft) - before;
         self.undo = Some(Undo { nets: old, saved: Some(saved) });
         (dwl, dcong)
     }

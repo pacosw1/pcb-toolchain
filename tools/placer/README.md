@@ -692,3 +692,10 @@ It records the source SHA-256 and refuses to overwrite output. It does **not**
 compute RUDY heat, emit PNG/GIF/MP4, render routed boards, or establish DRC or
 qualification. The legacy Python viewer and movie remain until their other
 outputs have separately validated replacements and callers are migrated.
+
+## Unclipped congestion (`--param cong_soft=W`, experimental, default 0)
+
+RUDY overflow is clipped at `limit`, so sparse boards (ENV-SENSE, see reports/2026-11-05-route-score-saturation.md) score 0
+on every candidate. `cong_soft=W` adds `W * demand^2 / threshold` per cell to the annealing congestion term: never clipped,
+convex (penalises peaks over spread), incremental like overflow. Sprint overflow/pressure ranking is unchanged. With W=0 the
+cost is bit-identical to before. Unbenchmarked: no routed-outcome claim.

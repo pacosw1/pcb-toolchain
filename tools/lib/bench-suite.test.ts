@@ -49,3 +49,17 @@ test('input hashes are verified against the files', () => {
     assert.throws(() => verifyInputs(value, root), /differs from its pinned/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('steps keep runtime placeholders for the executor and are validated', () => {
+  const steps = [['placer', '--seed', '{seed}', '--out', '{work}/p.json'], ['tools/pcb', 'route', '{board}', '--from-run', '{prev_run}']];
+  const planned = expandTrials(validateSuite(suite({ arms: [{ id: 'base', argv: ['x', '{board}'] }, { id: 'new', steps }] })));
+  const chained = planned.find(t => t.arm === 'new')!;
+  assert.deepEqual(chained.steps[0], ['placer', '--seed', '1', '--out', '{work}/p.json']);
+  assert.deepEqual(chained.argv, ['tools/pcb', 'route', 'ENV', '--from-run', '{prev_run}']);
+  assert.deepEqual(planned[0]!.steps, [['x', 'ENV']]);
+  const arms = (arm: Record<string, unknown>) => suite({ arms: [{ id: 'base', argv: ['x'] }, { id: 'new', ...arm }] });
+  assert.throws(() => validateSuite(arms({ argv: ['x'], steps: [['y']] })), /either argv or steps/);
+  assert.throws(() => validateSuite(arms({ steps: [['y', '{prev_run}']] })), /needs an earlier step/);
+  assert.throws(() => validateSuite(arms({ argv: ['y', '{prev_run}'] })), /unknown placeholder/);
+  assert.throws(() => validateSuite(arms({ steps: [] })), /nonempty/);
+});
