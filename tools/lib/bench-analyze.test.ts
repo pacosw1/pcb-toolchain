@@ -56,3 +56,19 @@ function rehash(result: BenchResult): string {
   return sha(canonical(body));
 }
 import { canonicalJson as canonical } from './bench-analyze.ts';
+
+test('the native metric counts a clean native result even when the configured gate fails, and reports the gate as secondary', () => {
+  const nativeSuite = validateSuite({ ...suite, metric: 'native' });
+  const evaluationNative: Evaluation = {
+    status: 'passed', comparative_readiness: true, blockers: [],
+    observations: expandTrials(nativeSuite).map(t => ({ id: t.id, full_gate_success: false, evidence_valid: true, status: 'failed',
+      native: { errors: 0, opens: t.arm === 'new' ? 0 : 2, parity: 0 }, failure_class: t.arm === 'new' ? 'configured_or_electrical_check' : 'routing_opens' })),
+  };
+  const result = buildResult(nativeSuite, sha('suite'), records(), evaluationNative, null, {});
+  assert.equal(result.metric, 'native');
+  assert.equal(result.overall.b.successes, 12);
+  assert.equal(result.overall.a.successes, 0);
+  assert.equal(result.secondary.metric, 'gate');
+  assert.equal(result.secondary.overall.b.successes, 0);
+  assert.throws(() => validateSuite({ ...suite, metric: 'other' }), /metric/);
+});

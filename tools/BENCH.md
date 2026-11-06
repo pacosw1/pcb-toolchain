@@ -25,6 +25,7 @@ tools/pcb bench compare DIR_A/result.json DIR_B/result.json [--arm-a ID] [--arm-
 ```
 
 - Exactly two arms: the first is the baseline, the second the proposal. Positive differences favor the proposal.
+- `"metric"`: `"gate"` (default, the full configured gate passed) or `"native"` (native DRC errors, unconnected and parity all 0). The other one is reported as `secondary`.
 - Placeholders in `argv`: `{board} {seed} {timeout_s} {cpus} {memory_gb} {input}`. Unknown ones are refused.
 - An arm gives either one `argv` or ordered `steps` (see Chained arms).
 - Both a development and a holdout board are required; a family cannot be in both. Input hashes are checked against the files before anything runs.

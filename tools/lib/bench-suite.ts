@@ -12,7 +12,9 @@ const SHA = /^[0-9a-f]{64}$/;
 export interface Arm { id: string; argv?: string[]; steps?: string[][]; env?: Record<string, string>; toolchain_sha256?: string }
 export interface SuiteBoard { family: string; board: string; split: 'development' | 'holdout'; input: { path: string; sha256: string } }
 export interface Budget { timeout_s: number; cpus: number; memory_gb: number }
-export interface Suite { schema: typeof SUITE; suite_id: string; arms: [Arm, Arm]; boards: SuiteBoard[]; seeds: number[]; budget: Budget }
+/** gate: the full configured gate passed (default). native: native DRC errors, unconnected and parity all 0, the placer studies' 'verified'. */
+export type Metric = 'gate' | 'native';
+export interface Suite { schema: typeof SUITE; suite_id: string; arms: [Arm, Arm]; boards: SuiteBoard[]; seeds: number[]; budget: Budget; metric?: Metric }
 
 export interface PlannedTrial {
   id: string; arm: string; family: string; board: string; split: string; case: string; replicate: number; seed: number;
@@ -59,6 +61,7 @@ export function validateSuite(value: unknown): Suite {
   if (!Array.isArray(s.seeds) || s.seeds.length < 2 || s.seeds.some(seed => !Number.isInteger(seed)) || new Set(s.seeds).size !== s.seeds.length) {
     fail('seeds must be at least two distinct integers');
   }
+  if (s.metric !== undefined && s.metric !== 'gate' && s.metric !== 'native') fail('metric must be gate or native');
   const b = s.budget;
   if (!b || ![b.timeout_s, b.cpus, b.memory_gb].every(x => Number.isFinite(x) && x > 0)) fail('budget needs positive timeout_s, cpus and memory_gb');
   return s;

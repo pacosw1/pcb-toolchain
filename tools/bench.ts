@@ -71,9 +71,11 @@ function analyzeFolder(out: string, root: string, json: boolean): number {
   else {
     const labels = result.arms as [string, string];
     console.log(`${result.suite_id}: ${result.trials.length} trials, ${result.no_run_trials} with no sealed run, ${result.unknown_outcomes} unknown`);
+    console.log(`verified means: ${result.metric === 'native' ? 'native DRC errors, unconnected and parity all 0' : 'the full configured gate passed'}`);
     console.log(formatAnalysis('overall', result.overall, labels));
     for (const [name, analysis] of Object.entries(result.by_split)) console.log(formatAnalysis(`split ${name}`, analysis, labels));
     for (const [name, analysis] of Object.entries(result.by_case)) console.log(formatAnalysis(`case ${name}`, analysis, labels));
+    console.log(formatAnalysis(`secondary metric (${result.secondary.metric})`, result.secondary.overall, labels));
     if (!result.evidence_complete) console.log(`evidence incomplete: evaluation ${result.evaluation.status}${result.evaluation.error ? ` (${result.evaluation.error})` : ''}, ${result.evaluation.blockers} blockers; verdicts are provisional`);
     console.log(`sealed: ${join(out, 'result.json')} sha256 ${result.result_sha256}`);
   }

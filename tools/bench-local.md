@@ -32,7 +32,31 @@ Trials run with SCRATCH as the working directory, so arms say `tools/pcb ...` an
 Two arms that differ in effort (timeout, iterations) are refused by the evaluator as `unequal_case_or_execution`: change the
 spec or the placement, not the budget.
 
-## Limit found on 2026-11-06: no local route
+## Routing locally: the route image under emulation
+
+A route needs `kicad-cli-nightly` (the pinned KiCad nightly 10.99 with the IPC API). It exists only in image
+`iot-lab-route:10.0-nightly-4fe1ca2060`; the PPA keeps no old builds. Copy that image to this Mac once (about 1.35 GB compressed,
+3.9 GB loaded), then run each arm inside it with `tools/bench-in-route.sh`:
+
+```sh
+ssh HOST "docker save iot-lab-route:10.0-nightly-4fe1ca2060 | gzip -1" | gunzip | docker load
+export BENCH_TOOLCHAIN=~/.local/share/pcb-toolchain/0.2.15/bin
+# arm: ["tools/bench-in-route.sh", ".", "tools/pcb", "route", "{board}", "--router", "iotroute", "--timeout", "{timeout_s}", "--json"]
+```
+
+The container gets the project at the same path, the toolchain's Linux node/iotroute/iotplace, kicad-happy read-only, no network,
+`BENCH_CPUS`/`BENCH_MEM` (default 2 CPUs, 4 GB). Measured 2026-11-06 on an M-series Mac: an ENV-SENSE `pcb route --router iotroute`
+took 65 s and a fresh `pcb check` 10 s. Emulation is slower than the Hetzner box, so compare arms only within one machine; never
+compare a local result with a Hetzner result.
+
+## Which "verified"
+
+That first local ENV-SENSE route had native DRC 0, unconnected 0, parity 0, but the full gate failed: rerouting made the board's
+kicad-happy exemption RP-001 stale. The canonical board passes the gate. So a suite may set `"metric": "native"` to count native
+DRC/unconnected/parity 0 (what the placer reports call verified); the default `"gate"` counts only a full configured-gate pass. The
+result always reports the other metric too, as `secondary`.
+
+## Earlier limit (2026-11-06, before the image copy): no local route
 
 A route needs `kicad-cli-nightly` (the pinned KiCad nightly with the IPC API, built into image `iot-lab-route:10.0-nightly-4fe1ca2060`
 on the Hetzner box; the PPA keeps no old builds). The Mac has only KiCad 10.0.6, so `iotroute run` stops at

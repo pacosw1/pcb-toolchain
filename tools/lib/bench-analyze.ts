@@ -1,7 +1,7 @@
 // Turn trial records and the placement_outcomes evaluation into a sealed paired result, and compare two sealed results.
 import { createHash } from 'node:crypto';
 import { analyze, type Outcome, type Pair, type PairedAnalysis } from './bench-stats.ts';
-import { expandTrials, type PlannedTrial, type Suite } from './bench-suite.ts';
+import { expandTrials, type Metric, type PlannedTrial, type Suite } from './bench-suite.ts';
 import type { TrialRecord } from './bench-run.ts';
 
 export const RESULT = 'iot-lab.bench-result.v1';
@@ -10,16 +10,19 @@ export const COMPARISON = 'iot-lab.bench-comparison.v1';
 type Row = Record<string, unknown>;
 export interface TrialOutcome extends Outcome {
   id: string; arm: string; case: string; replicate: number; split: string; status: string; failure_class: string | null; evidence_valid: boolean;
+  gate_ok: boolean; native_ok: boolean;
 }
 export interface Evaluation { status?: string; comparative_readiness?: boolean; blockers?: unknown[]; observations?: Row[]; error?: string }
 
 export interface BenchResult {
   schema: typeof RESULT;
-  suite_id: string; suite_sha256: string; budget: Suite['budget']; seeds: number[]; arms: string[];
+  suite_id: string; suite_sha256: string; budget: Suite['budget']; seeds: number[]; arms: string[]; metric: Metric;
   evaluation: { status: string; comparative_readiness: boolean; blockers: number; error: string | null; report_sha256: string | null };
   evidence_complete: boolean; unknown_outcomes: number; no_run_trials: number;
   trials: TrialOutcome[];
   overall: PairedAnalysis; by_split: Record<string, PairedAnalysis>; by_case: Record<string, PairedAnalysis>;
+  /** The other metric over the same trials, for reference: gate when the suite measures native, native when it measures gate. */
+  secondary: { metric: Metric; overall: PairedAnalysis };
   inputs: Record<string, string>;
   result_sha256: string;
 }
@@ -41,21 +44,24 @@ export function canonicalJson(value: unknown): string {
 }
 
 /** One outcome per planned trial. A trial with no sealed run, or whose evidence is invalid, is a failure and is counted as unknown or no_run. */
-export function outcomes(trials: PlannedTrial[], records: Map<string, TrialRecord>, evaluation: Evaluation): TrialOutcome[] {
+export function outcomes(trials: PlannedTrial[], records: Map<string, TrialRecord>, evaluation: Evaluation, metric: Metric = 'gate'): TrialOutcome[] {
   const rows = new Map((evaluation.observations ?? []).map(row => [String(row.id), row]));
   return trials.map(trial => {
     const base = { id: trial.id, arm: trial.arm, case: trial.case, replicate: trial.replicate, split: trial.split };
     const item = records.get(trial.id);
     const row = rows.get(trial.id);
     if (!item || item.status !== 'sealed') {
-      return { ...base, ok: false, seconds: null, length_mm: null, vias: null, status: item?.status ?? 'missing', failure_class: item?.status === 'timeout' ? 'timeout' : 'no_run', evidence_valid: false };
+      return { ...base, ok: false, seconds: null, length_mm: null, vias: null, status: item?.status ?? 'missing', failure_class: item?.status === 'timeout' ? 'timeout' : 'no_run', evidence_valid: false, gate_ok: false, native_ok: false };
     }
-    if (!row) return { ...base, ok: false, seconds: null, length_mm: null, vias: null, status: 'unevaluated', failure_class: 'evidence_invalid', evidence_valid: false };
-    const ok = row.full_gate_success === true;
+    if (!row) return { ...base, ok: false, seconds: null, length_mm: null, vias: null, status: 'unevaluated', failure_class: 'evidence_invalid', evidence_valid: false, gate_ok: false, native_ok: false };
+    const native = asRow(row.native);
+    const gateOk = row.full_gate_success === true;
+    const nativeOk = row.evidence_valid === true && native.errors === 0 && native.opens === 0 && native.parity === 0;
+    const ok = metric === 'native' ? nativeOk : gateOk;
     const quality = asRow(row.routed_quality);
     return {
       ...base, ok, seconds: ok ? num(row.elapsed_s) : null, length_mm: ok ? num(quality.routed_track_length_mm) : null, vias: ok ? num(quality.routed_via_count) : null,
-      status: String(row.status ?? 'unknown'), failure_class: typeof row.failure_class === 'string' ? row.failure_class : null, evidence_valid: row.evidence_valid === true,
+      status: String(row.status ?? 'unknown'), failure_class: typeof row.failure_class === 'string' ? row.failure_class : null, evidence_valid: row.evidence_valid === true, gate_ok: gateOk, native_ok: nativeOk,
     };
   });
 }
@@ -79,21 +85,25 @@ const group = (list: TrialOutcome[], key: (item: TrialOutcome) => string): Map<s
 
 export function buildResult(suite: Suite, suiteSha256: string, records: TrialRecord[], evaluation: Evaluation, reportSha256: string | null, inputs: Record<string, string>): BenchResult {
   const planned = expandTrials(suite);
-  const list = outcomes(planned, new Map(records.map(item => [item.id, item])), evaluation);
+  const metric: Metric = suite.metric ?? 'gate';
+  const list = outcomes(planned, new Map(records.map(item => [item.id, item])), evaluation, metric);
+  const other: Metric = metric === 'gate' ? 'native' : 'gate';
+  const otherList = list.map(item => ({ ...item, ok: other === 'gate' ? item.gate_ok : item.native_ok }));
   const [first, second] = suite.arms.map(arm => arm.id) as [string, string];
   const bySplit: Record<string, PairedAnalysis> = {}, byCase: Record<string, PairedAnalysis> = {};
   for (const [name, items] of group(list, item => item.split)) bySplit[name] = analyze(pairsOf(items, first, second));
   for (const [name, items] of group(list, item => item.case)) byCase[name] = analyze(pairsOf(items, first, second));
   const unknown = list.filter(item => !item.evidence_valid).length;
   const body = {
-    schema: RESULT, suite_id: suite.suite_id, suite_sha256: suiteSha256, budget: suite.budget, seeds: suite.seeds, arms: [first, second],
+    schema: RESULT, suite_id: suite.suite_id, suite_sha256: suiteSha256, budget: suite.budget, seeds: suite.seeds, arms: [first, second], metric,
     evaluation: {
       status: evaluation.status ?? 'error', comparative_readiness: evaluation.comparative_readiness === true,
       blockers: (evaluation.blockers ?? []).length, error: evaluation.error ?? null, report_sha256: reportSha256,
     },
     evidence_complete: unknown === 0 && evaluation.comparative_readiness === true, unknown_outcomes: unknown,
     no_run_trials: list.filter(item => item.failure_class === 'no_run' || item.failure_class === 'timeout').length,
-    trials: list, overall: analyze(pairsOf(list, first, second)), by_split: bySplit, by_case: byCase, inputs,
+    trials: list, overall: analyze(pairsOf(list, first, second)), by_split: bySplit, by_case: byCase,
+    secondary: { metric: other, overall: analyze(pairsOf(otherList, first, second)) }, inputs,
   };
   return { ...body, result_sha256: sha256Text(canonicalJson(body)) } as BenchResult;
 }
