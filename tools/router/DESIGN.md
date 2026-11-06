@@ -360,6 +360,12 @@ Not tuned, by policy: fixed copper. Pairs and via_count-0 crystal nets that `--l
 whose short member is hand copper is reported (`route.tune.json` `skipped`), never edited. Router-routed pairs (codex/router-pairs) are
 tuned per leg like single nets, so a bump leaves the pair uncoupled for its width: unverified against `diff_pair_uncoupled`.
 
+KiCad correction round (iotroute run): the core's length is not KiCad's (KiCad 10 leaves out track inside pads and counts vias its
+own way; measured on ENV-SENSE: -3.18 to +0.48 mm per net). After the first tuned board iotroute run runs KiCad DRC on it; for the nets
+named in `skew_out_of_range` / `length_out_of_range` violations it writes KiCad's length minus the core's as `offsets` into tune.json
+and routes again (same model and flags = same route before tuning), keeping the board with fewer DRC errors + unconnected + parity
+(a tie keeps the first). `stages.tune.correction` records offsets, both scores and the choice. Offsets all under 0.01 mm: no rerun.
+
 Output: `route.json` notes `tune: NET before -> after mm (window, rule)` and `route.tune.json` (schema `iot-lab.route-tune-result.v0`:
 per group the skew before / after, per net before, after, window, met or why skipped). The verdict stays KiCad DRC on OUT, which
 evaluates the DRU length and skew rules (`length_out_of_range`, `skew_out_of_range`).

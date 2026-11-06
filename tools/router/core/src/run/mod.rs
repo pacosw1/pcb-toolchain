@@ -272,7 +272,8 @@ impl Run<'_> {
         let offsets: BTreeMap<String, f64> = kicad.iter().filter_map(|(n, k)| core["core_lengths"][n].as_f64().map(|c| (n.clone(), k - c))).collect();
         let score = |d: &DrcCounts| [d.errors, d.unconnected, d.parity];
         let mut correction = record::TuneCorrection { offsets: offsets.clone(), first: score(&first), corrected: None, chosen: "first".into() };
-        if offsets.is_empty() {
+        // no length to correct (KiCad agrees with the core within 0.01 mm): the same route would come back
+        if offsets.values().all(|o| o.abs() < 0.01) {
             return Ok((stages, restored, Some(correction)));
         }
         let targets_path = tune::path_beside(&self.model);
