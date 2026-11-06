@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync,
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
+import { exemptBoard } from './design-exempt-fixture.ts';
 import { holdLock } from './file-lock.ts';
 import { iotrouteBin, iotrouteMissing } from './iotroute-bin.ts';
 
@@ -64,6 +65,7 @@ test('installed launcher reads run status and byte-cursored events without Pytho
     const boardFolder = join(root, 'hardware-design/boards/X');
     mkdirSync(boardFolder, { recursive: true });
     writeFileSync(join(boardFolder, 'gate.json'), '{"project":"cad/X","stage":"G3","checks":{"erc":true}}');
+    exemptBoard(root, 'X');
     const board = JSON.parse(execFileSync(bin, [...args, 'status', 'X', '--json'], options));
     assert.equal(board.board, 'X');
     assert.equal(board.stage, 'G3');
