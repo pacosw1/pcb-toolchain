@@ -10,7 +10,7 @@ use iotplace::kicad::doc::{Board, Copper, Geometry, Graphic, Pad, PadKind};
 use iotplace::model::Model;
 use iotplace::params::Params;
 use iotplace::read::extras::net_codes;
-use iotplace::read::options::Options;
+use iotplace::read::options::{DomainRegion, Options};
 use iotplace::read::out::ProblemOut;
 use iotplace::read::parts::{fp_rect, pad_gap};
 use iotplace::read::project::{DomainClasses, keepout_gaps};
@@ -576,4 +576,57 @@ fn the_board_as_read_is_legal_to_the_evaluator() {
     let pr = fx.read(&plain());
     let bad: Vec<&str> = pr.units.iter().enumerate().filter(|(i, u)| !u.fixed && model_penalty(&pr, &fx, *i) > 0.0).map(|(_, u)| u.name.as_str()).collect();
     assert!(bad.is_empty(), "{bad:?}");
+}
+
+fn region(name: &str, classes: &[&str], parts: &[&str], bounds: Option<[f64; 4]>, clearance: Option<f64>) -> DomainRegion {
+    DomainRegion { name: name.to_string(), classes: classes.iter().map(|c| c.to_string()).collect(), parts: parts.iter().map(|c| c.to_string()).collect(), bounds, margin: 0.0, clearance }
+}
+
+#[test]
+fn a_domain_region_boxes_its_members_and_keeps_every_other_part_out_of_the_grown_box() {
+    let fx = Fixture::new(buck());
+    let off = fx.read(&plain());
+    assert!(off.units.iter().all(|u| u.in_box.is_none() && u.out_boxes.is_empty()), "off by default");
+    let r = region("mains", &[], &["L1"], Some([138.0, 116.0, 146.0, 124.0]), Some(1.0));
+    let pr = fx.read(&Options { domain_regions: vec![r], ..plain() });
+    let l1 = &pr.units[unit_of(&pr, "L1")];
+    assert_eq!(l1.in_box, Some([138.0, 116.0, 146.0, 124.0]));
+    assert!(l1.out_boxes.is_empty());
+    let r2 = &pr.units[unit_of(&pr, "R2")];
+    assert!(r2.in_box.is_none());
+    assert_eq!(r2.out_boxes, vec![[137.0, 115.0, 147.0, 125.0]]);
+}
+
+#[test]
+fn members_come_from_the_net_class_of_their_pads_and_the_box_from_the_members_as_read() {
+    let fx = Fixture::new(buck());
+    let r = region("power", &["POWER"], &[], None, None);
+    let pr = fx.read(&Options { domain_regions: vec![r], ..plain() });
+    let members: Vec<&str> = pr.units.iter().filter(|u| u.in_box.is_some()).flat_map(|u| u.refs.iter().map(String::as_str)).collect();
+    for m in ["L1", "R2", "J2"] {
+        assert!(members.contains(&m), "{m} has a POWER pad");
+    }
+    assert!(!members.contains(&"C1"));
+    let b = pr.units[unit_of(&pr, "L1")].in_box.unwrap();
+    assert!(b[0] <= 139.5 && b[2] >= 144.5 && b[1] <= 118.5 && b[3] >= 157.0, "box {b:?} spans the members");
+}
+
+#[test]
+fn a_domain_region_without_members_or_with_a_box_that_is_too_small_is_an_error() {
+    let fx = Fixture::new(buck());
+    let none = region("x", &["NOPE"], &[], Some([0.0, 0.0, 9.0, 9.0]), None);
+    assert!(fx.read_error(&Options { domain_regions: vec![none], ..plain() }).contains("no part is a member"));
+    let small = region("x", &[], &["L1"], Some([138.0, 116.0, 139.0, 124.0]), None);
+    assert!(fx.read_error(&Options { domain_regions: vec![small], ..plain() }).contains("does not fit"));
+}
+
+#[test]
+fn cli_read_takes_a_domain_regions_file_and_rejects_unknown_keys() {
+    let fx = Fixture::new(buck());
+    let file = fx.folder().join("regions.json");
+    std::fs::write(&file, r#"[{"name":"mains","parts":["L1"],"box":[138,116,146,124],"clearance":1.0}]"#).unwrap();
+    let v = cli_read(&fx, &["--domain-regions", file.to_str().unwrap()]).unwrap();
+    assert!(v["units"].as_array().unwrap().iter().any(|u| u.get("out_boxes").is_some()));
+    std::fs::write(&file, r#"[{"name":"mains","parts":["L1"],"bogus":1}]"#).unwrap();
+    assert!(cli_read(&fx, &["--domain-regions", file.to_str().unwrap()]).is_none());
 }

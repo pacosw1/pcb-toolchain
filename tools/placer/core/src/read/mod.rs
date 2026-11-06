@@ -20,7 +20,7 @@ use crate::dru::fnmatch;
 use crate::geom::Rect;
 use crate::kicad::clusters::{Clusters, contains};
 use crate::kicad::doc::{Board, Copper, CopperItem, Footprint, Pad, PtMm, board_outline, mm};
-use extras::{Index, block_cuts, edges_and_zones, in_boxes, matching_codes, near_rules, net_codes};
+use extras::{Index, block_cuts, domain_regions, edges_and_zones, in_boxes, matching_codes, near_rules, net_codes};
 use grouping::{group_parts, shape_polygon};
 use options::{Members, Options};
 use out::{BoardOut, CopperRow, Net, ProblemOut, Region, RouteRules, Unit, Xy};
@@ -213,6 +213,7 @@ pub fn read_problem(path: &Path, board: &Board, options: &Options) -> crate::Res
     let index = Index { by_ref: &by_ref, unit_of: &unit_of };
     edges_and_zones(board, &mut units, &index, options)?;
     in_boxes(&mut units, &options.in_boxes)?;
+    domain_regions(board, &mut units, &index, &options.domain_regions, &project.rules.domains)?;
     near_rules(&mut units, &index, &options.near)?;
     let kept_keepouts = block_cuts(board, &mut units, keepouts(board, &holes, options));
 

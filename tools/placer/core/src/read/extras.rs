@@ -1,7 +1,7 @@
 //! Rules that attach to units after they exist: edge anchors, rule areas that move with a part, boxes, near rules, block slots.
 
 use super::grouping::bbox_of;
-use super::options::{EdgeAnchor, Near, Options};
+use super::options::{DomainRegion, EdgeAnchor, Near, Options};
 use super::out::{CuRow, Edge, Unit, Xy};
 use super::parts::fp_rect;
 use crate::dru::fnmatch;
@@ -209,4 +209,92 @@ pub fn net_codes(board: &Board) -> HashMap<String, i64> {
 pub fn matching_codes(codes: &HashMap<String, i64>, patterns: &[String]) -> Vec<i64> {
     let hits: BTreeSet<i64> = codes.iter().filter(|(n, _)| patterns.iter().any(|q| fnmatch(n, q))).map(|(_, c)| *c).collect();
     hits.into_iter().collect()
+}
+
+/// Opt-in domain regions: members keep their courtyards in the region box, all other parts out of it grown by the
+/// clearance. A fixed part that is not a member and meets the grown box is an error: no pose could be legal.
+pub fn domain_regions(board: &Board, units: &mut [Unit], index: &Index, regions: &[DomainRegion], rules: &[(String, f64, f64)]) -> crate::Result<()> {
+    let mut member_of: Vec<Option<usize>> = vec![None; units.len()];
+    let mut boxes: Vec<([f64; 4], f64)> = Vec::new();
+    for (n, r) in regions.iter().enumerate() {
+        let is_member = |u: &Unit| {
+            u.refs.iter().any(|x| {
+                r.parts.iter().any(|p| fnmatch(x, p))
+                    || index.by_ref.get(x.as_str()).is_some_and(|fp| {
+                        fp.pads.iter().any(|p| !p.net.is_empty() && board.net_class(&p.net).split(',').any(|c| r.classes.iter().any(|q| fnmatch(c, q))))
+                    })
+            })
+        };
+        let members: Vec<usize> = (0..units.len()).filter(|&i| is_member(&units[i])).collect();
+        if members.is_empty() {
+            return Err(format!("domain region {}: no part is a member", r.name).into());
+        }
+        for &i in &members {
+            if let Some(old) = member_of[i] {
+                return Err(format!("domain regions {} and {}: unit {} is a member of both", regions[old].name, r.name, units[i].name).into());
+            }
+            member_of[i] = Some(n);
+        }
+        let b = match r.bounds {
+            Some(b) => b,
+            None => {
+                let world = members.iter().flat_map(|&i| {
+                    let u = &units[i];
+                    u.rects.iter().enumerate().filter(|(k, _)| !u.ko.contains(k)).map(|(_, q)| Rect::new(u.x + q[0], u.y + q[1], u.x + q[2], u.y + q[3]))
+                });
+                let b = Rect::bounding(world).ok_or_else(|| format!("domain region {}: members have no courtyard", r.name))?;
+                [b.x0 - r.margin, b.y0 - r.margin, b.x1 + r.margin, b.y1 + r.margin]
+            }
+        };
+        let gap = r.clearance.unwrap_or_else(|| {
+            rules.iter().filter(|d| r.classes.iter().any(|c| fnmatch(c, &d.0) || fnmatch(&d.0, c))).map(|d| d.1).fold(0.0, f64::max)
+        });
+        boxes.push((b, gap));
+    }
+    let member_units: Vec<Vec<usize>> = (0..regions.len()).map(|n| (0..units.len()).filter(|&i| member_of[i] == Some(n)).collect()).collect();
+    in_boxes_for(units, &member_units, &boxes, regions)?;
+    for (n, (b, gap)) in boxes.iter().enumerate() {
+        let grown = [b[0] - gap, b[1] - gap, b[2] + gap, b[3] + gap];
+        for u in units.iter_mut().enumerate().filter(|(i, _)| member_of[*i] != Some(n)).map(|(_, u)| u) {
+            if u.nocu && u.rects.is_empty() {
+                continue;
+            }
+            if u.fixed {
+                let hit = u.rects.iter().enumerate().filter(|(k, _)| !u.ko.contains(k)).any(|(_, q)| {
+                    u.x + q[0] < grown[2] && u.x + q[2] > grown[0] && u.y + q[1] < grown[3] && u.y + q[3] > grown[1]
+                });
+                if hit {
+                    return Err(format!("domain region {}: fixed part {} is inside the region plus its {gap} mm clearance", regions[n].name, u.name).into());
+                }
+                continue;
+            }
+            u.out_boxes.push(grown);
+        }
+    }
+    Ok(())
+}
+
+fn in_boxes_for(units: &mut [Unit], members: &[Vec<usize>], boxes: &[([f64; 4], f64)], regions: &[DomainRegion]) -> crate::Result<()> {
+    for (n, group) in members.iter().enumerate() {
+        let b = boxes[n].0;
+        if b[0] >= b[2] || b[1] >= b[3] {
+            return Err(format!("domain region {}: box {b:?} is not x0 y0 x1 y1 with x0 < x1, y0 < y1", regions[n].name).into());
+        }
+        for &i in group {
+            let u = &mut units[i];
+            if u.fixed {
+                continue;
+            }
+            let body: Vec<&[f64; 5]> = u.rects.iter().enumerate().filter(|(k, _)| !u.ko.contains(k)).map(|(_, r)| r).collect();
+            let (w, h) = extent(&body);
+            if w > b[2] - b[0] + 1e-9 || h > b[3] - b[1] + 1e-9 {
+                return Err(format!("domain region {}: unit {} ({w:.3} x {h:.3} mm) does not fit the box {b:?}", regions[n].name, u.name).into());
+            }
+            if u.in_box.is_some_and(|old| old != b) {
+                return Err(format!("domain region {}: unit {} already has the box {:?}", regions[n].name, u.name, u.in_box).into());
+            }
+            u.in_box = Some(b);
+        }
+    }
+    Ok(())
 }

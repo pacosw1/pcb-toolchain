@@ -73,6 +73,8 @@ pub struct Unit {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub in_box: Option<Box4>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub out_boxes: Vec<Box4>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub near: Vec<[f64; 5]>,
 }
 

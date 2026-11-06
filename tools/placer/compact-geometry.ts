@@ -18,7 +18,7 @@ export type Pose = Num[][];
 
 export interface Unit {
   name: string; fixed: boolean; x: Num; y: Num; rects: Rect[];
-  refs?: string[]; box?: Num[] | null; in_box?: Num[] | null;
+  refs?: string[]; box?: Num[] | null; in_box?: Num[] | null; out_boxes?: Num[][];
   [key: string]: unknown;
 }
 export interface Net { name: string; pins: Num[][]; cohesion?: unknown; [key: string]: unknown }
@@ -94,7 +94,7 @@ export function rawScale(pr: Problem): number {
 /** Linear scale of the virtual board: 1 when the grown units fit in `fill` of the board area. */
 export const boardScale = (pr: Problem): number => Math.max(1, rawScale(pr));
 
-/** Copy of the problem with the outline, move box and unit region boxes (in_box) scaled by k about the outline centre.
+/** Copy of the problem with the outline, move box and unit region boxes (in_box, out_boxes) scaled by k about the outline centre.
  *  A region box at the edge stays at the scaled edge: its size grows by k too. At k 1 the problem itself. */
 export function virtual(pr: Problem, k: number): Problem {
   if (k === 1) return pr;
@@ -106,7 +106,10 @@ export function virtual(pr: Problem, k: number): Problem {
   const scaledBox = (b: Num[]): Float[] => [...scaled(b[0], b[1]), ...scaled(b[2], b[3])];
   q.board.outline = pr.board.outline.map(point => scaled(point[0], point[1]));
   if (truthy(pr.move_box)) q.move_box = scaledBox(pr.move_box as Num[]);
-  for (const unit of q.units) if (truthy(unit.in_box)) unit.in_box = scaledBox(unit.in_box as Num[]);
+  for (const unit of q.units) {
+    if (truthy(unit.in_box)) unit.in_box = scaledBox(unit.in_box as Num[]);
+    if (unit.out_boxes) unit.out_boxes = unit.out_boxes.map(scaledBox);
+  }
   return q;
 }
 

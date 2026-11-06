@@ -119,6 +119,13 @@ test('the virtual board scales the unit region box', () => {
   assert.deepEqual(pr.units[0].in_box, [8, 1, 10, 3]);
 });
 
+test('the virtual board scales the keep-out boxes of a domain region', () => {
+  const pr = { units: [{ name: 'R1', out_boxes: [[8, 1, 10, 3]] } as unknown as Unit], nets: [], board: board(10, 4) };
+  const q = virtual(pr, 2);
+  assert.deepEqual((q.units[0].out_boxes as unknown[][]).map(plain), [[11, 0, 15, 4]]);
+  assert.deepEqual(pr.units[0].out_boxes, [[8, 1, 10, 3]]);
+});
+
 test('the schedule shrinks on a pass and bisects after the first fail', () => {
   const schedule = new Schedule(4, 0.85, 0.05);
   assert.equal(schedule.s, 4);

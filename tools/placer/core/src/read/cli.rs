@@ -93,6 +93,12 @@ fn load_members(path: &str) -> crate::Result<Members> {
     Ok(serde_json::from_str(&text)?)
 }
 
+fn load_regions(path: Option<String>) -> crate::Result<Vec<super::options::DomainRegion>> {
+    let Some(path) = path else { return Ok(Vec::new()) };
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+    Ok(serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?)
+}
+
 /// The defaults of the command line, which differ from `Options::default` for the ties.
 pub fn options(f: &Flags) -> crate::Result<Options> {
     let zone_ref = |x: &String| x.split_once('=').map(|(a, b)| (a.to_string(), b.to_string())).ok_or_else(|| format!("bad --zone-ref {x}: use ZONE=REF"));
@@ -120,6 +126,7 @@ pub fn options(f: &Flags) -> crate::Result<Options> {
         w_block: f.number("--w-block", 4.0)?,
         w_comp: f.number("--w-comp", 1.0)?,
         tp_pins: f.has("--tp-pins"),
+        domain_regions: load_regions(f.one("--domain-regions")?.map(String::from))?,
         in_boxes: f.list("--in-box").iter().map(|b| parse_in_box(b)).collect::<crate::Result<_>>()?,
         near: f.list("--near").iter().map(|n| parse_near(n)).collect::<crate::Result<_>>()?,
         auto_clusters: f.has("--auto-clusters").then(|| f.number("--w-clu", 1.0)).transpose()?,

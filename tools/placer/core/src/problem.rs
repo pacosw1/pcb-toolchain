@@ -129,6 +129,9 @@ pub struct Unit {
     pub edge: Option<EdgeAnchor>,
     #[serde(default)]
     pub in_box: Option<Rect>,
+    /// Boxes the courtyards must stay out of (another domain's region, with its clearance).
+    #[serde(default)]
+    pub out_boxes: Vec<Rect>,
     #[serde(default)]
     pub near: Vec<NearRule>,
 }
