@@ -1,6 +1,6 @@
 //! `iotroute run BOARD OUT.kicad_pcb [--pcb IN.kicad_pcb] [--iters N] [--max-time S] [--lock-from SRC.kicad_pcb]
 //!               [--reuse PREV.kicad_pcb [--reuse-fallback full|none] [--reuse-net NET]...] [--seed N] [--stall-passes N] [--checkpoint]
-//!               [--congestion] [--return-exempt] [--ref-reuse] [--diagnose] [--plane-net NET]... [--layer L]... [--net NET]... [--tools DIR] [--json]`
+//!               [--congestion] [--return-exempt] [--ref-reuse] [--diagnose] [--tune] [--plane-net NET]... [--layer L]... [--net NET]... [--tools DIR] [--json]`
 //!
 //! One entry point for the in-house router: model, route, board copy, KiCad DRC (tools/router/DESIGN.md). BOARD is the board ID
 //! (hardware-design/boards/<BOARD>) or that folder. The input is --pcb, else the project board; it is only read. --tools is the
@@ -16,6 +16,10 @@
 //!  5. --diagnose: when OUT has opens, why, for the compaction (diagnose.rs). It never changes the verdict.
 //!  6. When OUT is not clean, the short report of that in OUT.iotroute/stuck.json (crate::stuck), against the report of --reuse PREV
 //!     when it has one. Without --diagnose it has the DRC and the search but no triage.
+//!
+//! --tune (opt-in, DESIGN.md 5f): the model admits DRU `length (min ...)`, the length and skew targets of the .kicad_dru go to
+//! OUT.iotroute/tune.json (tune.rs) and the core adds meanders to the router-routed nets short of them after the route. The DRC on OUT
+//! judges the length and skew rules as before.
 //!
 //! --reuse PREV (partial re-route, DESIGN.md 5c): the seed is PREV's route, the parts moved since, the nets PREV left open or in
 //! a DRC error, and each --reuse-net. --reuse-fallback full (default): when the reuse result is not PASS, the full route of the same input runs too and
@@ -36,6 +40,7 @@ pub mod project;
 pub mod record;
 pub mod reuse;
 pub mod steps;
+pub mod tune;
 mod widths;
 
 use lock::{LockStage, lock_nets, make_locked_input};
@@ -52,7 +57,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use steps::{Steps, last_line, sources_sha};
 
-const USAGE: &str = "usage: iotroute run BOARD OUT.kicad_pcb [--pcb IN] [--iters N] [--max-time S] [--lock-from SRC] [--reuse PREV] [--reuse-fallback full|none] [--reuse-net NET]... [--congestion] [--return-exempt] [--ref-reuse] [--diagnose] [--plane-net NET]... [--layer L]... [--net NET]... [--seed N] [--stall-passes N] [--checkpoint] [--tools DIR] [--json]";
+const USAGE: &str = "usage: iotroute run BOARD OUT.kicad_pcb [--pcb IN] [--iters N] [--max-time S] [--lock-from SRC] [--reuse PREV] [--reuse-fallback full|none] [--reuse-net NET]... [--congestion] [--return-exempt] [--ref-reuse] [--diagnose] [--tune] [--plane-net NET]... [--layer L]... [--net NET]... [--seed N] [--stall-passes N] [--checkpoint] [--tools DIR] [--json]";
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Args {
@@ -79,6 +84,9 @@ pub struct Args {
     pub via_cost: Option<f64>,
     pub stall_passes: Option<u64>,
     pub checkpoint: bool,
+    /// Opt-in post-route length / skew tuning (tune.rs, core tune.rs).
+    #[serde(default)]
+    pub tune: bool,
     pub tools: PathBuf,
     pub json: bool,
 }
@@ -91,7 +99,7 @@ fn value<T: std::str::FromStr>(flag: &str, text: Option<&String>) -> Result<T, S
 pub fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut a = Args {
         board: String::new(), out: String::new(), pcb: None, iters: 80, max_time: None, lock_from: None, reuse: None, reuse_fallback: "full".to_string(), reuse_nets: Vec::new(),
-        congestion: std::env::var("IOTROUTE_CONGESTION").is_ok_and(|v| v == "1"), return_exempt: false, ref_reuse: false, diagnose: false, plane_nets: Vec::new(), layers: Vec::new(), nets: Vec::new(), seed: None, via_cost: None, stall_passes: None, checkpoint: false, tools: PathBuf::from("tools"), json: false,
+        congestion: std::env::var("IOTROUTE_CONGESTION").is_ok_and(|v| v == "1"), return_exempt: false, ref_reuse: false, diagnose: false, plane_nets: Vec::new(), layers: Vec::new(), nets: Vec::new(), seed: None, via_cost: None, stall_passes: None, checkpoint: false, tune: false, tools: PathBuf::from("tools"), json: false,
     };
     let mut positional = Vec::new();
     let mut it = argv.iter();
@@ -115,6 +123,7 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--ref-reuse" => a.ref_reuse = true,
             "--diagnose" => a.diagnose = true,
             "--checkpoint" => a.checkpoint = true,
+            "--tune" => a.tune = true,
             "--json" => a.json = true,
             other if other.starts_with('-') => return Err(format!("{other} is not an option")),
             _ => positional.push(arg.clone()),
@@ -238,7 +247,7 @@ impl Run<'_> {
             return Err("feedback model or input changed during feedback selection".into());
         }
         if let Some(record) = &mut evidence.record { record.chosen = Some(evidence.selected.into()); }
-        self.copy_results(&directory, work, &["route.json", "route.log", "write.log"])?;
+        self.copy_results(&directory, work, &["route.json", "route.log", "write.log", "route.tune.json"])?;
         fs::copy(&board, out).map_err(|e| e.to_string())?;
         place_sidecars(&self.src, out)?; restore_pro(&self.src, out)?;
         evidence.status = "complete"; evidence.elapsed_s = Some(started.elapsed().as_secs_f64());
@@ -281,7 +290,7 @@ impl Run<'_> {
                 // Keep the first pass/length-recovery log before the selected feedback log replaces it.
                 fs::copy(work.join("route.log"), work.join("route-initial.log")).map_err(|e| format!("preserve initial route log: {e}"))?;
             }
-            self.copy_results(&again, work, &["route.json", "route.log", "write.log"])?;
+            self.copy_results(&again, work, &["route.json", "route.log", "write.log", "route.tune.json"])?;
             fs::copy(&candidate, out).map_err(|e| format!("{}: {e}", out.display()))?;
             place_sidecars(&self.src, out)?;
             restore_pro(&self.src, out)?;
@@ -352,7 +361,7 @@ impl Run<'_> {
         let chosen = chosen.expect("at least one attempt");
         record.chosen = Some(chosen.to_string());
         let folder = work.join(format!("a-{chosen}"));
-        self.copy_results(&folder, work, &["route.json", "route.log", "write.log", "congestion.json", "checkpoint.json"])?;
+        self.copy_results(&folder, work, &["route.json", "route.log", "write.log", "congestion.json", "checkpoint.json", "route.tune.json"])?;
         let stages = record.attempts[chosen].stages.clone();
         rec.reuse = Some(record);
         fs::copy(folder.join(out.file_name().expect("OUT has a name")), out).map_err(|e| format!("{}: {e}", out.display()))?;
@@ -435,10 +444,10 @@ fn finish(rec: &mut Record, out: &Path, work: &Path) -> Result<DrcCounts, String
     Ok(drc)
 }
 
-fn lock_step(steps: &Steps, folder: &Path, src: &Path, work: &Path, lock_from: &str) -> Result<(PathBuf, LockStage), String> {
+fn lock_step(steps: &Steps, folder: &Path, src: &Path, work: &Path, lock_from: &str, tune: bool) -> Result<(PathBuf, LockStage), String> {
     let source = absolute(lock_from)?;
     let model = work.join("lock-model.json");
-    let (code, text) = steps.model(folder, &source, &model, &work.join("lock-model.log"), false)?;
+    let (code, text) = steps.model_with(folder, &source, &model, &work.join("lock-model.log"), false, tune)?;
     if code != 0 {
         return Err(format!("iotroute model on --lock-from failed: {}", last_line(&text)));
     }
@@ -502,6 +511,16 @@ fn narrow_model(path: &Path, a: &Args) -> Result<(), String> {
     fs::write(path, model.to_string()).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// --tune: the length and skew targets of the board's .kicad_dru for the nets of the model, written for the core.
+fn write_tune_targets(project: &Path, model: &Path, path: &Path) -> Result<record::TuneStage, String> {
+    let dru = project.with_extension("kicad_dru");
+    let rules = if dru.is_file() { crate::model::dru::parse_rules(&fs::read_to_string(&dru).map_err(|e| format!("{}: {e}", dru.display()))?)? } else { Vec::new() };
+    let value: Value = serde_json::from_str(&fs::read_to_string(model).map_err(|e| format!("{}: {e}", model.display()))?).map_err(|e| format!("{}: {e}", model.display()))?;
+    let targets = tune::targets(&rules, &tune::model_nets(&value))?;
+    fs::write(path, serde_json::to_string_pretty(&targets).map_err(|e| e.to_string())?).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(record::TuneStage { targets: path.display().to_string(), skew_groups: targets.skew.len(), length_targets: targets.length.len(), unknown_rules: targets.unknown.keys().cloned().collect() })
+}
+
 fn prepare<'a>(a: &'a Args, rec: &mut Record, out: &Path, work: &Path) -> Result<Run<'a>, String> {
     if out.extension().and_then(|e| e.to_str()) != Some("kicad_pcb") {
         return Err("OUT must end in .kicad_pcb".to_string());
@@ -525,15 +544,18 @@ fn prepare<'a>(a: &'a Args, rec: &mut Record, out: &Path, work: &Path) -> Result
 
     let mut route_in = src.clone();
     if let Some(lock_from) = &a.lock_from {
-        let (copy, stage) = lock_step(&steps, &folder, &src, work, lock_from)?;
+        let (copy, stage) = lock_step(&steps, &folder, &src, work, lock_from, a.tune)?;
         route_in = copy;
         rec.stages.lock = Some(stage);
     }
     guard::preflight(&route_in, &work.join("preflight.json"))?;
     let model = work.join("model.json");
-    let text = steps.admit(&folder, &route_in, &model, &work.join("model.log"), a.return_exempt)?;
+    let text = steps.admit_with(&folder, &route_in, &model, &work.join("model.log"), a.return_exempt, a.tune)?;
     narrow_model(&model, a)?;
     rec.stages.model = Some(ModelStage { line: text.trim().lines().last().unwrap_or("").to_string(), sha256: sha_file(&model)? });
+    if a.tune {
+        rec.stages.tune = Some(write_tune_targets(&project, &model, &tune::path_beside(&model))?);
+    }
 
     let widths = widths::board_widths(&folder, &model)?;
     let route_in_sha256 = sha_file(&route_in)?;
@@ -729,6 +751,7 @@ esac
         assert_eq!((a.iters, a.reuse.clone(), a.reuse_fallback.as_str(), a.json), (80, None, "full", false));
         let a = args("NET-CORE o.kicad_pcb --reuse p.kicad_pcb --seed 0 --stall-passes 12 --checkpoint --json --max-time 1.5").unwrap();
         assert_eq!((a.reuse.as_deref(), a.seed, a.stall_passes, a.checkpoint, a.max_time), (Some("p.kicad_pcb"), Some(0), Some(12), true, Some(1.5)));
+        assert!(!a.tune && args("NET-CORE o.kicad_pcb --tune").unwrap().tune);
     }
 
     #[test]

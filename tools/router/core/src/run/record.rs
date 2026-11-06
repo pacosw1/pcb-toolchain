@@ -67,6 +67,19 @@ pub struct Stages {
     pub write: Option<WriteStage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ref_gate: Option<RefGate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tune: Option<TuneStage>,
+}
+
+/// --tune: the targets the core was given (run/tune.rs). What the core did is in route.json notes and route.tune.json.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct TuneStage {
+    /// the targets file the core read (`--tune`)
+    pub targets: String,
+    pub skew_groups: usize,
+    pub length_targets: usize,
+    /// rules whose condition the selector could not decide for some net: those nets are not tuned
+    pub unknown_rules: Vec<String>,
 }
 
 /// What the DRC on a board says.

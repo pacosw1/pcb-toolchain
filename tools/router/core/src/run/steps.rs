@@ -108,6 +108,9 @@ pub fn core_args(a: &Args, model: &Path, route: &Path, work: &Path, extra: &[Str
     if let Some(cost) = a.via_cost {
         args.extend(["--via-cost".into(), cost.to_string()]);
     }
+    if a.tune {
+        args.extend(["--tune".to_string(), super::tune::path_beside(model).display().to_string()]);
+    }
     if a.checkpoint {
         args.extend(["--checkpoint".to_string(), work.join("checkpoint.json").display().to_string()]);
         if let Some(sha) = source_sha {
@@ -123,17 +126,29 @@ impl Steps {
     }
 
     pub fn model(&self, folder: &Path, pcb: &Path, out: &Path, log: &Path, return_exempt: bool) -> Result<(i32, String), String> {
+        self.model_with(folder, pcb, out, log, return_exempt, false)
+    }
+
+    /// tune: the model admits DRU `length (min ...)`, which the tuning stage owns (`iotroute model --tune`).
+    pub fn model_with(&self, folder: &Path, pcb: &Path, out: &Path, log: &Path, return_exempt: bool, tune: bool) -> Result<(i32, String), String> {
         let mut command = Command::new(&self.exe);
         command.arg("model").arg(folder).arg("--pcb").arg(pcb).arg("--out").arg(out).arg("--tools").arg(&self.tools);
         if return_exempt {
             command.arg("--return-exempt");
+        }
+        if tune {
+            command.arg("--tune");
         }
         run_logged(command, log)
     }
 
     /// `iotroute model` as a route's admission: a board whose rules the router cannot honour stops here, each rule by name.
     pub fn admit(&self, folder: &Path, pcb: &Path, out: &Path, log: &Path, return_exempt: bool) -> Result<String, String> {
-        let (code, text) = self.model(folder, pcb, out, log, return_exempt)?;
+        self.admit_with(folder, pcb, out, log, return_exempt, false)
+    }
+
+    pub fn admit_with(&self, folder: &Path, pcb: &Path, out: &Path, log: &Path, return_exempt: bool, tune: bool) -> Result<String, String> {
+        let (code, text) = self.model_with(folder, pcb, out, log, return_exempt, tune)?;
         refused(code, &text)?;
         Ok(text)
     }
@@ -227,6 +242,7 @@ mod tests {
         assert_eq!(core(&args("B o.kicad_pcb")), ["m.json", "r.json", "--iters", "80"]);
         let all = core(&args("B o.kicad_pcb --seed 0 --stall-passes 12 --checkpoint"));
         assert_eq!(all[4..], ["--seed", "0", "--stall-passes", "12", "--checkpoint", "w/checkpoint.json", "--source-sha", "sha"]);
+        assert_eq!(core_args(&args("B o.kicad_pcb --tune"), Path::new("w/model.json"), Path::new("r.json"), Path::new("w"), &[], None)[4..], ["--tune", "w/tune.json"]);
     }
 
     #[test]

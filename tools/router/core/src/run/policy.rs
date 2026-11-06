@@ -1,13 +1,14 @@
 //! `iotroute route-policy CANDIDATE.kicad_pcb < SPEC.json`: the --spec of `tools/pcb route --router iotroute`, checked, as run
 //! arguments, one per line. An empty spec or null is the default policy. Exact fields: {"schema", "iters": 1..1000, "max_time_s": null or > 0, "keep": "lock-nets" | "all", "return_exempt": bool}.
 //! keep lock-nets: route from the candidate's pair and crystal copper; keep all: keep and lock all candidate copper, route only
-//! what is open. return_exempt: no return vias for the nets the board's gate exempts from RP-001 (`--return-exempt`); without it a
+//! what is open. tune (default false): the opt-in length / skew tuning stage after the route (`--tune`, DESIGN.md 5f); it adds
+//! meanders to router-routed nets only, never to kept or locked (hand) copper. return_exempt: no return vias for the nets the board's gate exempts from RP-001 (`--return-exempt`); without it a
 //! route that gives such a net its returns leaves the exemption stale, and the gate fails on that.
 use serde_json::Value;
 use std::io::Read;
 
 const SCHEMA: &str = "iot-lab.iotroute-policy.v1";
-const FIELDS: [&str; 9] = ["schema", "iters", "max_time_s", "keep", "return_exempt", "layers", "nets", "reuse", "reuse_nets"];
+const FIELDS: [&str; 10] = ["schema", "iters", "max_time_s", "keep", "return_exempt", "layers", "nets", "reuse", "reuse_nets", "tune"];
 const DEFAULT_ITERS: u64 = 80;
 
 #[derive(Debug, PartialEq)]
@@ -22,6 +23,8 @@ pub struct Policy {
     /// The board of an earlier run to start from, and nets to route again with what it left open: `--reuse`, without the full fallback.
     pub reuse: Option<String>,
     pub reuse_nets: Vec<String>,
+    /// The post-route length / skew tuning stage (`--tune`).
+    pub tune: bool,
 }
 
 /// A list of distinct names, none by default.
@@ -37,7 +40,7 @@ fn names(object: &serde_json::Map<String, Value>, key: &str) -> Result<Vec<Strin
 
 /// The policy of a spec; None for the defaults.
 pub fn policy(spec: Option<&Value>) -> Result<Policy, String> {
-    let Some(spec) = spec else { return Ok(Policy { iters: DEFAULT_ITERS, max_time_s: None, keep_all: false, return_exempt: false, layers: Vec::new(), nets: Vec::new(), reuse: None, reuse_nets: Vec::new() }) };
+    let Some(spec) = spec else { return Ok(Policy { iters: DEFAULT_ITERS, max_time_s: None, keep_all: false, return_exempt: false, layers: Vec::new(), nets: Vec::new(), reuse: None, reuse_nets: Vec::new(), tune: false }) };
     let object = spec.as_object().filter(|o| o.get("schema").and_then(Value::as_str) == Some(SCHEMA)).ok_or_else(|| format!("route --router iotroute requires a {SCHEMA} spec"))?;
     let unknown: Vec<&str> = object.keys().map(String::as_str).filter(|k| !FIELDS.contains(k)).collect();
     if !unknown.is_empty() {
@@ -58,7 +61,8 @@ pub fn policy(spec: Option<&Value>) -> Result<Policy, String> {
         None | Some(Value::Null) => None,
         Some(v) => Some(v.as_str().filter(|path| path.starts_with('/')).ok_or("iotroute policy reuse must be null or an absolute path")?.to_string()),
     };
-    Ok(Policy { iters, max_time_s, keep_all, return_exempt, layers: names(object, "layers")?, nets: names(object, "nets")?, reuse, reuse_nets: names(object, "reuse_nets")? })
+    let tune = object.get("tune").map_or(Some(false), Value::as_bool).ok_or("iotroute policy tune must be true or false")?;
+    Ok(Policy { iters, max_time_s, keep_all, return_exempt, layers: names(object, "layers")?, nets: names(object, "nets")?, reuse, reuse_nets: names(object, "reuse_nets")?, tune })
 }
 
 /// The run arguments of a policy on the candidate board.
@@ -79,6 +83,9 @@ pub fn policy_args(p: &Policy, candidate: &str) -> Vec<String> {
         args.extend(["--reuse".to_string(), reuse.clone(), "--reuse-fallback".to_string(), "none".to_string()]);
     }
     args.extend(p.reuse_nets.iter().flat_map(|net| ["--reuse-net".to_string(), net.clone()]));
+    if p.tune {
+        args.push("--tune".to_string());
+    }
     args
 }
 
@@ -151,6 +158,15 @@ mod tests {
         for spec in [json!({"schema": SCHEMA, "nets": ["/A", "/A"]}), json!({"schema": SCHEMA, "layers": "F.Cu"}), json!({"schema": SCHEMA, "nets": [""]})] {
             assert!(policy(Some(&spec)).is_err(), "{spec}");
         }
+    }
+
+    #[test]
+    fn tune_is_off_unless_the_spec_asks_for_it() {
+        assert!(!policy(Some(&json!({"schema": SCHEMA}))).unwrap().tune);
+        let p = policy(Some(&json!({"schema": SCHEMA, "tune": true}))).unwrap();
+        assert_eq!(policy_args(&p, "c"), ["--iters", "80", "--lock-from", "c", "--tune"]);
+        assert_eq!(policy_args(&policy(Some(&json!({"schema": SCHEMA, "tune": false}))).unwrap(), "c"), ["--iters", "80", "--lock-from", "c"]);
+        assert!(policy(Some(&json!({"schema": SCHEMA, "tune": "yes"}))).is_err());
     }
 
     #[test]
