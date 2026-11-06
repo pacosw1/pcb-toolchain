@@ -18,11 +18,10 @@ different parts, manufacturing release, purchasing, or unmeasured operating rang
 These commands are also callable through the `pcb blocks` command family.
 
 ```sh
-node --experimental-strip-types tools/blocks.ts inventory BASE-PWR
-node --experimental-strip-types tools/blocks.ts inventory ENV-SENSE
+tools/pcb blocks --json inventory BOARD
 node --experimental-strip-types tools/blocks.ts find 'power switch'
 node --experimental-strip-types tools/blocks.ts reuse BLOCK
-node --experimental-strip-types tools/blocks.ts bind BLOCK path/to/target.kicad_pcb --instance /SHEET_UUID > .gate/binding.json
+tools/pcb blocks --json bind BLOCK path/to/target.kicad_pcb --instance /SHEET_UUID
 node --experimental-strip-types tools/blocks.ts native BLOCK --output .gate/block-native/NEW-RUN
 tools/pcb check BOARD --fresh --detach --json
 node --experimental-strip-types tools/blocks.ts qualify BLOCK --binding .gate/binding.json --evidence .gate/block-evidence.json --output .gate/qualification.json
@@ -30,8 +29,15 @@ node --experimental-strip-types tools/blocks.ts status .gate/qualification.json
 node --experimental-strip-types tools/blocks.ts reuse BLOCK --receipt .gate/qualification.json
 ```
 
-Create parent directories before shell redirection. The example identifiers and
-paths are placeholders. `native` requires a new output directory outside the
+The owned bind result names `binding_artifact`, a sealed `operation/binding.json`
+file usable by qualification and placement. `binding_sha256` is its canonical
+binding fingerprint (the value the applicability manifest needs);
+`binding_file_sha256` and `evidence_sha256` bind the pretty-printed file bytes.
+No output redirection or helper-script production flow is needed. The supervisor
+owns that output path and rejects caller `--output`/`--root` overrides. A successful
+binding still has `qualified=false` and `copper_reuse_approved=false`.
+
+The example identifiers and paths are placeholders. `native` requires a new output directory outside the
 block source. It uses `KICAD_CLI` or the standard macOS KiCad executable. Its
 default total deadline is 600 seconds, override with `--timeout`. It prints stage
 starts and honest liveness to stderr, retains native JSON and logs, and owns its

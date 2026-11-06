@@ -65,7 +65,7 @@ export async function startCheck(options: CheckOptions): Promise<string> {
   const command = OPERATIONS.has(operation) ? [node, '--experimental-strip-types', '--no-warnings', fileURLToPath(new URL('../pcb-operation.ts', import.meta.url)), folder]
     : operation === 'doctor' ? [node, join(root, 'tools/doctor.mjs'), '--gate-only']
     : operation === 'readiness' ? [node, join(root, 'tools/check-release-readiness.mjs'), ...(options.arguments ?? [])]
-    : operation === 'blocks' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/blocks.ts'), ...(options.arguments ?? [])]
+    : operation === 'blocks' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/blocks.ts'), ...(options.arguments ?? []), ...(action === 'bind' ? ['--output', join(folder, 'operation/binding.json')] : [])]
     : operation === 'placement' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/engineering_constraints.ts'), ...(options.arguments ?? []), '--root', backendRoot, '--json', '--output', join(folder, 'operation/report.json')]
     : operation === 'routing' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/route_decision.ts'), ...(options.arguments ?? []), '--root', backendRoot, '--json', '--output', join(folder, 'operation/report.json')]
     : operation === 'parts' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/part_evidence.ts'), ...(options.arguments ?? []), '--root', backendRoot, '--json', '--output', join(folder, 'operation/report.json'), ...(action === 'inspect' ? ['--cache', join(folder, 'operation/cache')] : [])]

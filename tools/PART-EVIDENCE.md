@@ -22,7 +22,7 @@ node --experimental-strip-types tools/part_evidence.ts inspect original.pdf --ca
 node --experimental-strip-types tools/part_evidence.ts verify ENV-SENSE --manifest review.json --json --output verification.json
 ```
 
-Python3 and Node.js are required for native identity inspection. PDF inspection
+Native identity inspection uses Node.js; the owned CLI also uses its bundled Rust process helper. PDF inspection
 and page validation require Poppler `pdftotext`/`pdfinfo`; rendering also requires
 `pdftoppm`. Set `PDFTOTEXT`, `PDFINFO`, `PDFTOPPM` to explicit executable paths, or
 use bundled Codex Poppler/PATH. A missing tool produces a blocked receipt with the
@@ -129,6 +129,14 @@ explicitly electrical or mechanical. Translation/rotation alone leaves static
 package evidence reusable; every report still hashes current native source files.
 Whole schematic paths are excluded from reusable symbol hashes, allowing the same
 exact symbol to be used on different boards.
+
+Pinless definitions paired with only unconnected NPTH pads are explicitly reported
+as `mechanical_only`, with their schematic file, selected unit and native basis.
+This classification grants no engineering, package, stock or release approval;
+the existing BOM/DNP `required` flag is unchanged. Electrical, connected, mixed-pad
+or wrong-unit cases remain `native_part_read` blockers. The report names the exact
+reference/file/unit and retains the other readable parts instead of aborting the
+whole inventory. Missing part reviews and unspecified electrical pin types still block.
 
 Native `verify` blocks `unspecified_pin_type` when an explicitly reviewed symbol
 contains actual pins with electrical type `unspecified`, even if their stored

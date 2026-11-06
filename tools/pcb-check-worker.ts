@@ -3,7 +3,9 @@
 import { closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { atomicJson, readObject } from './lib/json-file.ts';
+import { atomicJson, readObject, readPyJson } from './lib/json-file.ts';
+import { verifyBinding, type Binding } from './lib/block-bindings.ts';
+import { fingerprint } from './lib/fingerprint.ts';
 import { now } from './lib/lean-clock.ts';
 import { encodeDeadline } from './lib/lean-workflow.ts';
 import { startOwned, OwnedStageError, type Cleanup, type OwnedResult, type OwnedStage } from './lib/owned-stage.ts';
@@ -115,6 +117,13 @@ async function worker(folderPath: string): Promise<number> {
             const code = outcome.returncode;
             result = OBSERVATIONS.has(manifest.operation) ? observationEvidence(folder, manifest, code, outcomeBinding!, requested) as Preliminary : { status: code === 0 ? 'passed' : code === 2 ? 'error' : 'failed', exit_code: code === 0 ? 0 : code === 2 ? 2 : 1,
               cause: manifest.operation + (code === 0 ? ' completed' : ' failed; inspect original tool evidence'), scope: manifest.operation === 'doctor' ? 'environment' : manifest.operation === 'blocks' ? 'block_evidence' : 'assembly_readiness', operation: manifest.operation, tool_exit: code, artifact_directory: null };
+            if (manifest.operation === 'blocks' && (manifest.arguments as string[] | undefined)?.[0] === 'bind' && code === 0) {
+              const artifact = join(folder, 'operation/binding.json');
+              const binding = readPyJson<Binding>(artifact);
+              if (binding.schema !== 'iot-lab.block-binding.v1' || binding.status !== 'candidate' || binding.qualified !== false || binding.copper_reuse_approved !== false) throw new Error('block binding must remain an unqualified candidate');
+              verifyBinding(binding);
+              Object.assign(result, { binding_artifact: artifact, binding_sha256: fingerprint(binding), binding_file_sha256: sha(artifact), qualified: false, copper_reuse_approved: false });
+            }
             atomicJson(join(folder, 'operation/result.json'), result);
           }
           break;
