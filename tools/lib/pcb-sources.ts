@@ -2,14 +2,14 @@
 // candidate is judged against this exact file list and its hashes.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, lstatSync, mkdirSync, readdirSync, statSync } from 'node:fs';
-import { basename, dirname, extname } from 'node:path';
+import { dirname, extname } from 'node:path';
 import { sha256Text } from './fingerprint.ts';
 import { boardConfig, sha } from './pcb-workflow.ts';
 import { SNAPSHOT_IGNORED, SNAPSHOT_NOT_SOURCE } from './pcb-source-policy.ts';
 import { compare, jsonDumps, PyError } from './py-compat.mjs';
-import { isFile, isRelativeTo, joinPath, pathExists, relativeTo, resolvePath, textOf, withSuffix } from './py-path.ts';
+import { isFile, isRelativeTo, joinPath, pathExists, relativeTo, resolvePath, withSuffix } from './py-path.ts';
 import { sameValue } from './py-values.ts';
-import { forms, type SExpr, type SList } from './sexpr.ts';
+import { schematicDatasheets } from './schematic-datasheets.ts';
 
 const REGISTRY_EVIDENCE = new Set(['evidence', 'datasheets']);
 const PROJECT_FILES = ['FOCUS.md', 'AGENTS.md', 'CLAUDE.md'];
@@ -53,16 +53,6 @@ function snapshotDependencies(root: string, board: string): string[] {
   return (JSON.parse(probe.stdout) as string[]).filter(path => isRelativeTo(path, root) && isFile(path));
 }
 
-/** The exact original datasheets named by each native schematic instance, for the configured semantic checker. */
-function schematicDatasheets(root: string, project: string): string[] {
-  const top = forms(textOf(withSuffix(project, '.kicad_sch')))[0] as SList;
-  const isProperty = (item: SExpr): item is SList => Array.isArray(item) && item.length > 2 && item[0] === 'property' && item[1] === 'Datasheet' && !!item[2];
-  const symbols = top.slice(1).filter((item): item is SList => Array.isArray(item) && item[0] === 'symbol');
-  return symbols.flatMap(symbol => symbol.filter(isProperty))
-    .map(property => joinPath(root, 'hardware-design/registry/datasheets', basename(property[2] as string)))
-    .filter(isFile);
-}
-
 function boardFolders(root: string, board: string): { names: string[]; project: string; datasheets: boolean } {
   const { cfg, project } = boardConfig(root, board);
   const owner = relativeTo(project, joinPath(root, 'hardware-design/boards')).split('/')[0]!;
@@ -81,10 +71,11 @@ export function sourceFiles(rootPath: string, board?: string | null, extraInputs
     if (pathExists(folder)) walkSources(folder, root, board, found);
   }
   if (board && shape) {
-    found.push(...snapshotDependencies(root, board));
+    const dependencies = snapshotDependencies(root, board);
+    found.push(...dependencies);
     const design = joinPath(root, 'hardware-design');
     found.push(...readdirSync(design).map(name => joinPath(design, name)).filter(isFile));
-    if (shape.datasheets) found.push(...schematicDatasheets(root, shape.project));
+    if (shape.datasheets) found.push(...schematicDatasheets(root, [withSuffix(shape.project, '.kicad_sch'), ...dependencies]));
   }
   found.push(...PROJECT_FILES.map(name => joinPath(root, name)).filter(isFile));
   for (const name of extraInputs ?? []) {

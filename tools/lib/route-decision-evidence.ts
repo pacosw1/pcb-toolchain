@@ -32,7 +32,7 @@ interface Receipt {
   provenance?: { inputs?: { path: string; sha256: string | null }[] };
 }
 export const IMPLEMENTATIONS = ['route_decision.ts', 'lib/route-decision.ts', 'lib/route-decision-board.ts',
-  'lib/route-decision-evidence.ts', 'lib/route-decision-escape.ts', 'lib/route-decision-cli.ts', 'lib/board-edit.ts', 'lib/board-json.ts',
+  'lib/route-decision-evidence.ts', 'lib/route-decision-escape.ts', 'lib/route-decision-cli.ts', 'lib/schematic-datasheets.ts', 'lib/board-edit.ts', 'lib/board-json.ts',
   'lib/board-types.ts', 'lib/native-board.ts', 'lib/pcb-workflow.ts', 'lib/json-file.ts', 'lib/fingerprint.ts'];
 export const read = <T extends object = Record<string, unknown>>(file: string): T => readObject<T>(file);
 export const same = (a: unknown, b: unknown): boolean => fingerprint(a) === fingerprint(b);
