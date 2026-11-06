@@ -134,6 +134,7 @@ and unverified findings. Blocked checks cannot silently resolve prior findings.
 
 ```sh
 tools/pcb build BOARD --detach --json
+tools/pcb place BOARD --json
 tools/pcb edit BOARD --kind place --spec /absolute/placement.json --json
 tools/pcb route BOARD --spec /absolute/routes.json --json
 tools/pcb adopt RUN_ID --json
@@ -147,6 +148,8 @@ hashed with the candidate inputs. This check does not sandbox a script or prove
 its external dependencies. It does not create a new board revision.
 A board's `gate.json` can name `place_check` hooks, with the same form as `post_verify`. They run
 after `edit --kind place`, before the full gate. A failing hook fails the run, and the result names its log.
+`place` runs the automatic placer and writes a placement spec to `.gate/place/BOARD.json`. It writes no CAD.
+The placer does not know a board's own placement rules, so adjust the spec before `edit`.
 Placement specs use `{"place":{"R1":[x,y,degrees]}}`; routes use the existing
 `pcbtool` format. Commands run in a separate board/dependency snapshot without
 mutable links into canonical CAD. Historical runs/unrelated evidence are excluded.
