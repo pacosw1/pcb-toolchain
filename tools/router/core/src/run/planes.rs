@@ -27,6 +27,9 @@ pub struct Round {
     pub set_hard: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_core: Option<Option<RouteClaim>>,
+    /// Measured child-process wall time, including core finalization, not just negotiation passes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_core_seconds: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]

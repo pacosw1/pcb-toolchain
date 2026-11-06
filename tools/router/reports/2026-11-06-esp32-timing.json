@@ -1,0 +1,1297 @@
+{
+  "schema": "pcb.esp32-timing-1410.v1",
+  "snapshot_scope": "three completed single operations and completed sprint-a only; no new board runs",
+  "snapshot_provenance": {
+    "schema": "pcb.esp32-timing-snapshot.v1",
+    "collected_at": "2026-11-06T00:15:40Z",
+    "source_host": "100.93.34.43",
+    "source_roots": [
+      "/var/tmp/router-benchmark-1318.esp321389/evidence/after-fix",
+      "/var/tmp/router-benchmark-1318.esp321399/evidence/calibration-1399",
+      "/var/tmp/router-benchmark-1318.esp321399/evidence/single-a",
+      "/var/tmp/router-benchmark-1318.esp321399/evidence/sprint-a"
+    ],
+    "exclusions": [
+      "active trials",
+      "copied CAD workspaces",
+      "source/input boards",
+      "route geometry"
+    ],
+    "archives": [
+      {
+        "path": "completed-1389.tar.gz",
+        "sha256": "1d649d58c48c7490dfb87007bcc00eaaff93527bb55984d678e9249f4e7f00ef"
+      },
+      {
+        "path": "completed-1399.tar.gz",
+        "sha256": "b43873c8e5ce0dd585f263ace57772b5e0f8c72726fc35bd74ad0141f31b7ea6"
+      },
+      {
+        "path": "completed-sprint-a.tar.gz",
+        "sha256": "9776b8a3047f1e0e8ffac8aa13ede279a170eee3ee0c6e78e69c991186bb43c7"
+      }
+    ]
+  },
+  "singles": [
+    {
+      "label": "1389-after-fix-4GiB-gate-OOM",
+      "job": "20261105-222252-211747",
+      "mode": "measure",
+      "cpus": 2,
+      "mem_gb": 4,
+      "queue_s": 1.613,
+      "container_wall_s": 690.043,
+      "operation_wall_s": 687.24393811,
+      "operation_cgroup_cpu_s": 759.832444,
+      "container_minus_operation_s": 2.7990618899999617,
+      "client_observed_s": 619.9962832049999,
+      "client_stream_interrupted": true,
+      "cache": "3692 files, sending 6 (8969 KB)",
+      "pack_upload_wall_s": null,
+      "pack_upload_cpu_s": null,
+      "official_status": "ERROR",
+      "error": "Error: gate exit 1",
+      "source_sha256": "b6b97508157893ccca5c5c2cc3e0c90d55691a42d094f9c1015ad8b7f31bdb2b",
+      "binary_sha256": "5c2eb23dbe5706386c34efecee1149efb968ea64c9f4d11e46bdc72b79d5e550",
+      "candidate_sha256": "e9464aaa21ec7792469d02c4cd7244314ab9e4dd1655ad960536a3b709c499bf",
+      "native_counts": [
+        0,
+        0,
+        0
+      ],
+      "native": {
+        "wall_s": 650.3586298130001,
+        "owned_child_cpu_s": 691.793011
+      },
+      "gate": {
+        "wall_s": 36.176148827999945,
+        "owned_child_cpu_s": 67.141303,
+        "checks": [
+          {
+            "stage": "erc",
+            "wall_s": 9.553812473,
+            "cpu_s": null
+          },
+          {
+            "stage": "drc",
+            "wall_s": 11.227789717,
+            "cpu_s": null
+          },
+          {
+            "stage": "port_labels",
+            "wall_s": 0.958122734,
+            "cpu_s": null
+          },
+          {
+            "stage": "viapads",
+            "wall_s": 8.251922568,
+            "cpu_s": null
+          },
+          {
+            "stage": "planes",
+            "wall_s": 14.463397861,
+            "cpu_s": null
+          },
+          {
+            "stage": "pairs",
+            "wall_s": 16.169341212,
+            "cpu_s": null
+          },
+          {
+            "stage": "paths",
+            "wall_s": 20.869966386,
+            "cpu_s": null
+          },
+          {
+            "stage": "kicad_happy",
+            "wall_s": 23.647075149,
+            "cpu_s": null
+          }
+        ],
+        "check_wall_sum_non_additive_s": 105.1414281
+      },
+      "harness_residual": {
+        "wall_s": 0.7091594689999923,
+        "cpu_s": 0.8981300000000374
+      },
+      "first_core": {
+        "wall_s": 275.5,
+        "precision_s": 0.1,
+        "cpu_s": null,
+        "passes": 15,
+        "pass_times_available": false
+      },
+      "feedback_core": {
+        "wall_s": 315,
+        "precision_s": 1,
+        "cpu_s": null,
+        "passes": [
+          {
+            "pass": 1,
+            "cumulative_s": 10.9,
+            "delta_from_previous_logged_boundary_s": 10.9,
+            "cpu_s": null
+          },
+          {
+            "pass": 2,
+            "cumulative_s": 30.2,
+            "delta_from_previous_logged_boundary_s": 19.3,
+            "cpu_s": null
+          },
+          {
+            "pass": 3,
+            "cumulative_s": 49.3,
+            "delta_from_previous_logged_boundary_s": 19.1,
+            "cpu_s": null
+          },
+          {
+            "pass": 4,
+            "cumulative_s": 74.7,
+            "delta_from_previous_logged_boundary_s": 25.4,
+            "cpu_s": null
+          },
+          {
+            "pass": 5,
+            "cumulative_s": 95.8,
+            "delta_from_previous_logged_boundary_s": 21.1,
+            "cpu_s": null
+          },
+          {
+            "pass": 6,
+            "cumulative_s": 118.1,
+            "delta_from_previous_logged_boundary_s": 22.3,
+            "cpu_s": null
+          },
+          {
+            "pass": 7,
+            "cumulative_s": 139,
+            "delta_from_previous_logged_boundary_s": 20.9,
+            "cpu_s": null
+          },
+          {
+            "pass": 8,
+            "cumulative_s": 157.7,
+            "delta_from_previous_logged_boundary_s": 18.7,
+            "cpu_s": null
+          },
+          {
+            "pass": 9,
+            "cumulative_s": 171.9,
+            "delta_from_previous_logged_boundary_s": 14.2,
+            "cpu_s": null
+          },
+          {
+            "pass": 10,
+            "cumulative_s": 184.3,
+            "delta_from_previous_logged_boundary_s": 12.4,
+            "cpu_s": null
+          },
+          {
+            "pass": 11,
+            "cumulative_s": 192.5,
+            "delta_from_previous_logged_boundary_s": 8.2,
+            "cpu_s": null
+          },
+          {
+            "pass": 12,
+            "cumulative_s": 197.3,
+            "delta_from_previous_logged_boundary_s": 4.8,
+            "cpu_s": null
+          },
+          {
+            "pass": 13,
+            "cumulative_s": 202.4,
+            "delta_from_previous_logged_boundary_s": 5.1,
+            "cpu_s": null
+          },
+          {
+            "pass": 14,
+            "cumulative_s": 204.4,
+            "delta_from_previous_logged_boundary_s": 2,
+            "cpu_s": null
+          },
+          {
+            "pass": 15,
+            "cumulative_s": 208,
+            "delta_from_previous_logged_boundary_s": 3.6,
+            "cpu_s": null
+          },
+          {
+            "pass": 16,
+            "cumulative_s": 209.6,
+            "delta_from_previous_logged_boundary_s": 1.6,
+            "cpu_s": null
+          },
+          {
+            "pass": 17,
+            "cumulative_s": 211,
+            "delta_from_previous_logged_boundary_s": 1.4,
+            "cpu_s": null
+          },
+          {
+            "pass": 18,
+            "cumulative_s": 213.3,
+            "delta_from_previous_logged_boundary_s": 2.3,
+            "cpu_s": null
+          },
+          {
+            "pass": 19,
+            "cumulative_s": 214.5,
+            "delta_from_previous_logged_boundary_s": 1.2,
+            "cpu_s": null
+          },
+          {
+            "pass": 20,
+            "cumulative_s": 215.6,
+            "delta_from_previous_logged_boundary_s": 1.1,
+            "cpu_s": null
+          },
+          {
+            "pass": 21,
+            "cumulative_s": 216,
+            "delta_from_previous_logged_boundary_s": 0.4,
+            "cpu_s": null
+          },
+          {
+            "pass": 22,
+            "cumulative_s": 216.7,
+            "delta_from_previous_logged_boundary_s": 0.7,
+            "cpu_s": null
+          }
+        ],
+        "negotiation_through_last_boundary_s": 216.7,
+        "length_recovery_s": 96.5,
+        "other_core_wall_approx_s": 1.8
+      },
+      "two_core_wall_approx_s": 590.5,
+      "two_core_fraction_approx": 0.8592291139357926,
+      "native_noncore_residual_approx_s": 59.85863,
+      "reference_feedback": [
+        {
+          "round": 1,
+          "planes_fail_lines": 1,
+          "fail_nets": [
+            "/SPI_MISO"
+          ],
+          "raised": [
+            "/SPI_MISO"
+          ],
+          "set_hard": [],
+          "next_core": {
+            "status": "PASS",
+            "converged": true,
+            "iters": 22,
+            "tracks": 926,
+            "vias": 201,
+            "failed": 0
+          }
+        },
+        {
+          "round": 2,
+          "planes_fail_lines": 0,
+          "fail_nets": [],
+          "raised": [],
+          "set_hard": []
+        }
+      ],
+      "model_write_refill_planes_final_drc_split_available": false,
+      "checkpointing": {
+        "requested": false,
+        "wall_s": null,
+        "cpu_s": null
+      }
+    },
+    {
+      "label": "1399-calibration",
+      "job": "20261105-232134-d5f4f6",
+      "mode": "measure",
+      "cpus": 2,
+      "mem_gb": 8,
+      "queue_s": 1.329,
+      "container_wall_s": 608.04,
+      "operation_wall_s": 604.2005066379999,
+      "operation_cgroup_cpu_s": 670.867728,
+      "container_minus_operation_s": 3.8394933620000984,
+      "client_observed_s": 616.5873433639999,
+      "client_stream_interrupted": true,
+      "cache": "3711 files, sending 49 (9522 KB)",
+      "pack_upload_wall_s": null,
+      "pack_upload_cpu_s": null,
+      "official_status": "ERROR",
+      "error": "Error: gate exit 1",
+      "source_sha256": "b6b97508157893ccca5c5c2cc3e0c90d55691a42d094f9c1015ad8b7f31bdb2b",
+      "binary_sha256": "3f307aa46709d9b843b2cb7faefb971c12db35780d82f0dc509c26a5fbb77f46",
+      "candidate_sha256": "e9464aaa21ec7792469d02c4cd7244314ab9e4dd1655ad960536a3b709c499bf",
+      "native_counts": [
+        0,
+        0,
+        0
+      ],
+      "native": {
+        "wall_s": 569.293922999,
+        "owned_child_cpu_s": 605.665241
+      },
+      "gate": {
+        "wall_s": 34.47702420700004,
+        "owned_child_cpu_s": 64.64374600000001,
+        "checks": [
+          {
+            "stage": "erc",
+            "wall_s": 8.822724726,
+            "cpu_s": null
+          },
+          {
+            "stage": "drc",
+            "wall_s": 10.137079596,
+            "cpu_s": null
+          },
+          {
+            "stage": "port_labels",
+            "wall_s": 0.759551703,
+            "cpu_s": null
+          },
+          {
+            "stage": "viapads",
+            "wall_s": 8.546191438,
+            "cpu_s": null
+          },
+          {
+            "stage": "pairs",
+            "wall_s": 19.370318933,
+            "cpu_s": null
+          },
+          {
+            "stage": "planes",
+            "wall_s": 19.852866829,
+            "cpu_s": null
+          },
+          {
+            "stage": "paths",
+            "wall_s": 20.746475658,
+            "cpu_s": null
+          },
+          {
+            "stage": "kicad_happy",
+            "wall_s": 23.28095961,
+            "cpu_s": null
+          }
+        ],
+        "check_wall_sum_non_additive_s": 111.51616849300001
+      },
+      "harness_residual": {
+        "wall_s": 0.4295594319998628,
+        "cpu_s": 0.5587410000000119
+      },
+      "first_core": {
+        "wall_s": 258.7,
+        "precision_s": 0.1,
+        "cpu_s": null,
+        "passes": 15,
+        "pass_times_available": false
+      },
+      "feedback_core": {
+        "wall_s": 258,
+        "precision_s": 1,
+        "cpu_s": null,
+        "passes": [
+          {
+            "pass": 1,
+            "cumulative_s": 8.6,
+            "delta_from_previous_logged_boundary_s": 8.6,
+            "cpu_s": null
+          },
+          {
+            "pass": 2,
+            "cumulative_s": 25.6,
+            "delta_from_previous_logged_boundary_s": 17,
+            "cpu_s": null
+          },
+          {
+            "pass": 3,
+            "cumulative_s": 43.6,
+            "delta_from_previous_logged_boundary_s": 18,
+            "cpu_s": null
+          },
+          {
+            "pass": 4,
+            "cumulative_s": 62,
+            "delta_from_previous_logged_boundary_s": 18.4,
+            "cpu_s": null
+          },
+          {
+            "pass": 5,
+            "cumulative_s": 79.3,
+            "delta_from_previous_logged_boundary_s": 17.3,
+            "cpu_s": null
+          },
+          {
+            "pass": 6,
+            "cumulative_s": 96.9,
+            "delta_from_previous_logged_boundary_s": 17.6,
+            "cpu_s": null
+          },
+          {
+            "pass": 7,
+            "cumulative_s": 114.2,
+            "delta_from_previous_logged_boundary_s": 17.3,
+            "cpu_s": null
+          },
+          {
+            "pass": 8,
+            "cumulative_s": 129.4,
+            "delta_from_previous_logged_boundary_s": 15.2,
+            "cpu_s": null
+          },
+          {
+            "pass": 9,
+            "cumulative_s": 141,
+            "delta_from_previous_logged_boundary_s": 11.6,
+            "cpu_s": null
+          },
+          {
+            "pass": 10,
+            "cumulative_s": 151.8,
+            "delta_from_previous_logged_boundary_s": 10.8,
+            "cpu_s": null
+          },
+          {
+            "pass": 11,
+            "cumulative_s": 159.7,
+            "delta_from_previous_logged_boundary_s": 7.9,
+            "cpu_s": null
+          },
+          {
+            "pass": 12,
+            "cumulative_s": 164.5,
+            "delta_from_previous_logged_boundary_s": 4.8,
+            "cpu_s": null
+          },
+          {
+            "pass": 13,
+            "cumulative_s": 169.1,
+            "delta_from_previous_logged_boundary_s": 4.6,
+            "cpu_s": null
+          },
+          {
+            "pass": 14,
+            "cumulative_s": 170.9,
+            "delta_from_previous_logged_boundary_s": 1.8,
+            "cpu_s": null
+          },
+          {
+            "pass": 15,
+            "cumulative_s": 174.8,
+            "delta_from_previous_logged_boundary_s": 3.9,
+            "cpu_s": null
+          },
+          {
+            "pass": 16,
+            "cumulative_s": 176.4,
+            "delta_from_previous_logged_boundary_s": 1.6,
+            "cpu_s": null
+          },
+          {
+            "pass": 17,
+            "cumulative_s": 177.8,
+            "delta_from_previous_logged_boundary_s": 1.4,
+            "cpu_s": null
+          },
+          {
+            "pass": 18,
+            "cumulative_s": 180,
+            "delta_from_previous_logged_boundary_s": 2.2,
+            "cpu_s": null
+          },
+          {
+            "pass": 19,
+            "cumulative_s": 181.3,
+            "delta_from_previous_logged_boundary_s": 1.3,
+            "cpu_s": null
+          },
+          {
+            "pass": 20,
+            "cumulative_s": 182.5,
+            "delta_from_previous_logged_boundary_s": 1.2,
+            "cpu_s": null
+          },
+          {
+            "pass": 21,
+            "cumulative_s": 182.9,
+            "delta_from_previous_logged_boundary_s": 0.4,
+            "cpu_s": null
+          },
+          {
+            "pass": 22,
+            "cumulative_s": 183.7,
+            "delta_from_previous_logged_boundary_s": 0.8,
+            "cpu_s": null
+          }
+        ],
+        "negotiation_through_last_boundary_s": 183.7,
+        "length_recovery_s": 73.2,
+        "other_core_wall_approx_s": 1.1
+      },
+      "two_core_wall_approx_s": 516.7,
+      "two_core_fraction_approx": 0.8551796867485502,
+      "native_noncore_residual_approx_s": 52.593923,
+      "reference_feedback": [
+        {
+          "round": 1,
+          "planes_fail_lines": 1,
+          "fail_nets": [
+            "/SPI_MISO"
+          ],
+          "raised": [
+            "/SPI_MISO"
+          ],
+          "set_hard": [],
+          "next_core": {
+            "status": "PASS",
+            "converged": true,
+            "iters": 22,
+            "tracks": 926,
+            "vias": 201,
+            "failed": 0
+          }
+        },
+        {
+          "round": 2,
+          "planes_fail_lines": 0,
+          "fail_nets": [],
+          "raised": [],
+          "set_hard": []
+        }
+      ],
+      "model_write_refill_planes_final_drc_split_available": false,
+      "checkpointing": {
+        "requested": false,
+        "wall_s": null,
+        "cpu_s": null
+      }
+    },
+    {
+      "label": "1399-single-a",
+      "job": "20261105-233750-89895b",
+      "mode": "single",
+      "cpus": 2,
+      "mem_gb": 8,
+      "queue_s": 0.026,
+      "container_wall_s": 662.043,
+      "operation_wall_s": 658.767507569,
+      "operation_cgroup_cpu_s": 738.780799,
+      "container_minus_operation_s": 3.275492430999975,
+      "client_observed_s": 615.548657877,
+      "client_stream_interrupted": true,
+      "cache": "3711 files, sending 0 (0 KB)",
+      "pack_upload_wall_s": null,
+      "pack_upload_cpu_s": null,
+      "official_status": "ERROR",
+      "error": "Error: gate exit 1",
+      "source_sha256": "b6b97508157893ccca5c5c2cc3e0c90d55691a42d094f9c1015ad8b7f31bdb2b",
+      "binary_sha256": "3f307aa46709d9b843b2cb7faefb971c12db35780d82f0dc509c26a5fbb77f46",
+      "candidate_sha256": "e9464aaa21ec7792469d02c4cd7244314ab9e4dd1655ad960536a3b709c499bf",
+      "native_counts": [
+        0,
+        0,
+        0
+      ],
+      "native": {
+        "wall_s": 620.647163569,
+        "owned_child_cpu_s": 665.9746779999999
+      },
+      "gate": {
+        "wall_s": 37.578118024000084,
+        "owned_child_cpu_s": 72.11975000000001,
+        "checks": [
+          {
+            "stage": "erc",
+            "wall_s": 9.46777271,
+            "cpu_s": null
+          },
+          {
+            "stage": "drc",
+            "wall_s": 10.561064121,
+            "cpu_s": null
+          },
+          {
+            "stage": "port_labels",
+            "wall_s": 0.909489307,
+            "cpu_s": null
+          },
+          {
+            "stage": "viapads",
+            "wall_s": 9.300474511,
+            "cpu_s": null
+          },
+          {
+            "stage": "pairs",
+            "wall_s": 23.043278284,
+            "cpu_s": null
+          },
+          {
+            "stage": "planes",
+            "wall_s": 23.932135171,
+            "cpu_s": null
+          },
+          {
+            "stage": "paths",
+            "wall_s": 24.422485398,
+            "cpu_s": null
+          },
+          {
+            "stage": "kicad_happy",
+            "wall_s": 26.153786963,
+            "cpu_s": null
+          }
+        ],
+        "check_wall_sum_non_additive_s": 127.790486465
+      },
+      "harness_residual": {
+        "wall_s": 0.5422259759999619,
+        "cpu_s": 0.6863710000000651
+      },
+      "first_core": {
+        "wall_s": 287.2,
+        "precision_s": 0.1,
+        "cpu_s": null,
+        "passes": 15,
+        "pass_times_available": false
+      },
+      "feedback_core": {
+        "wall_s": 271,
+        "precision_s": 1,
+        "cpu_s": null,
+        "passes": [
+          {
+            "pass": 1,
+            "cumulative_s": 10.9,
+            "delta_from_previous_logged_boundary_s": 10.9,
+            "cpu_s": null
+          },
+          {
+            "pass": 2,
+            "cumulative_s": 31.7,
+            "delta_from_previous_logged_boundary_s": 20.8,
+            "cpu_s": null
+          },
+          {
+            "pass": 3,
+            "cumulative_s": 53.6,
+            "delta_from_previous_logged_boundary_s": 21.9,
+            "cpu_s": null
+          },
+          {
+            "pass": 4,
+            "cumulative_s": 71.6,
+            "delta_from_previous_logged_boundary_s": 18,
+            "cpu_s": null
+          },
+          {
+            "pass": 5,
+            "cumulative_s": 89.1,
+            "delta_from_previous_logged_boundary_s": 17.5,
+            "cpu_s": null
+          },
+          {
+            "pass": 6,
+            "cumulative_s": 106.6,
+            "delta_from_previous_logged_boundary_s": 17.5,
+            "cpu_s": null
+          },
+          {
+            "pass": 7,
+            "cumulative_s": 123.9,
+            "delta_from_previous_logged_boundary_s": 17.3,
+            "cpu_s": null
+          },
+          {
+            "pass": 8,
+            "cumulative_s": 139.6,
+            "delta_from_previous_logged_boundary_s": 15.7,
+            "cpu_s": null
+          },
+          {
+            "pass": 9,
+            "cumulative_s": 151.1,
+            "delta_from_previous_logged_boundary_s": 11.5,
+            "cpu_s": null
+          },
+          {
+            "pass": 10,
+            "cumulative_s": 162.1,
+            "delta_from_previous_logged_boundary_s": 11,
+            "cpu_s": null
+          },
+          {
+            "pass": 11,
+            "cumulative_s": 170.1,
+            "delta_from_previous_logged_boundary_s": 8,
+            "cpu_s": null
+          },
+          {
+            "pass": 12,
+            "cumulative_s": 175.5,
+            "delta_from_previous_logged_boundary_s": 5.4,
+            "cpu_s": null
+          },
+          {
+            "pass": 13,
+            "cumulative_s": 180.6,
+            "delta_from_previous_logged_boundary_s": 5.1,
+            "cpu_s": null
+          },
+          {
+            "pass": 14,
+            "cumulative_s": 182.6,
+            "delta_from_previous_logged_boundary_s": 2,
+            "cpu_s": null
+          },
+          {
+            "pass": 15,
+            "cumulative_s": 186.4,
+            "delta_from_previous_logged_boundary_s": 3.8,
+            "cpu_s": null
+          },
+          {
+            "pass": 16,
+            "cumulative_s": 188,
+            "delta_from_previous_logged_boundary_s": 1.6,
+            "cpu_s": null
+          },
+          {
+            "pass": 17,
+            "cumulative_s": 189.4,
+            "delta_from_previous_logged_boundary_s": 1.4,
+            "cpu_s": null
+          },
+          {
+            "pass": 18,
+            "cumulative_s": 191.5,
+            "delta_from_previous_logged_boundary_s": 2.1,
+            "cpu_s": null
+          },
+          {
+            "pass": 19,
+            "cumulative_s": 192.8,
+            "delta_from_previous_logged_boundary_s": 1.3,
+            "cpu_s": null
+          },
+          {
+            "pass": 20,
+            "cumulative_s": 194,
+            "delta_from_previous_logged_boundary_s": 1.2,
+            "cpu_s": null
+          },
+          {
+            "pass": 21,
+            "cumulative_s": 194.5,
+            "delta_from_previous_logged_boundary_s": 0.5,
+            "cpu_s": null
+          },
+          {
+            "pass": 22,
+            "cumulative_s": 195.3,
+            "delta_from_previous_logged_boundary_s": 0.8,
+            "cpu_s": null
+          }
+        ],
+        "negotiation_through_last_boundary_s": 195.3,
+        "length_recovery_s": 74.7,
+        "other_core_wall_approx_s": 1
+      },
+      "two_core_wall_approx_s": 558.2,
+      "two_core_fraction_approx": 0.8473399091280068,
+      "native_noncore_residual_approx_s": 62.447164,
+      "reference_feedback": [
+        {
+          "round": 1,
+          "planes_fail_lines": 1,
+          "fail_nets": [
+            "/SPI_MISO"
+          ],
+          "raised": [
+            "/SPI_MISO"
+          ],
+          "set_hard": [],
+          "next_core": {
+            "status": "PASS",
+            "converged": true,
+            "iters": 22,
+            "tracks": 926,
+            "vias": 201,
+            "failed": 0
+          }
+        },
+        {
+          "round": 2,
+          "planes_fail_lines": 0,
+          "fail_nets": [],
+          "raised": [],
+          "set_hard": []
+        }
+      ],
+      "model_write_refill_planes_final_drc_split_available": false,
+      "checkpointing": {
+        "requested": false,
+        "wall_s": null,
+        "cpu_s": null
+      }
+    }
+  ],
+  "sprint": {
+    "label": "1399-sprint-a",
+    "job": "20261105-234905-945420",
+    "mode": "sprint",
+    "cpus": 2,
+    "mem_gb": 8,
+    "queue_s": 1.419,
+    "container_wall_s": 856.067,
+    "operation_wall_s": 853.380045791,
+    "operation_cgroup_cpu_s": 1666.987981,
+    "container_minus_operation_s": 2.686954208999964,
+    "client_observed_s": 868.593329992,
+    "client_stream_interrupted": false,
+    "cache": "3711 files, sending 0 (0 KB)",
+    "pack_upload_wall_s": null,
+    "pack_upload_cpu_s": null,
+    "official_status": "ERROR",
+    "error": "Error: sprint exit 2",
+    "source_sha256": "b6b97508157893ccca5c5c2cc3e0c90d55691a42d094f9c1015ad8b7f31bdb2b",
+    "binary_sha256": "3f307aa46709d9b843b2cb7faefb971c12db35780d82f0dc509c26a5fbb77f46",
+    "controller_status": "FAIL",
+    "reason": "no verified candidate within the budget",
+    "phase_groups": {
+      "preparation": {
+        "count": 1,
+        "child_wall_sum_non_additive_s": 20.771472710999998,
+        "owned_child_cpu_s": 34.252241999999995
+      },
+      "core_slices": {
+        "count": 32,
+        "child_wall_sum_non_additive_s": 1375.8219725749996,
+        "owned_child_cpu_s": 1345.5320659999995
+      },
+      "native_finish": {
+        "count": 3,
+        "child_wall_sum_non_additive_s": 40.54071694800013,
+        "owned_child_cpu_s": 68.655322
+      },
+      "configured_gate": {
+        "count": 3,
+        "child_wall_sum_non_additive_s": 110.56457680599998,
+        "owned_child_cpu_s": 207.29532
+      }
+    },
+    "verification": [
+      {
+        "variant": "v00",
+        "start_s": 598.270970268,
+        "end_s": 657.4043070800001,
+        "wall_s": 59.13333681200004,
+        "passed": false
+      },
+      {
+        "variant": "v01",
+        "start_s": 657.407995888,
+        "end_s": 657.409867979,
+        "wall_s": 0.0018720909999956348,
+        "passed": false
+      },
+      {
+        "variant": "v03",
+        "start_s": 759.3072233140001,
+        "end_s": 807.1896847380001,
+        "wall_s": 47.882461423999985,
+        "passed": false
+      },
+      {
+        "variant": "v02",
+        "start_s": 807.1897715970001,
+        "end_s": 853.2484567060001,
+        "wall_s": 46.05868510899995,
+        "passed": false
+      }
+    ],
+    "progress_checkpoint_logged": [
+      {
+        "log": "v00/slice-8.log",
+        "writes": 4,
+        "wall_s": 0.048
+      },
+      {
+        "log": "v01/slice-7.log",
+        "writes": 5,
+        "wall_s": 0.085
+      },
+      {
+        "log": "v03/slice-8.log",
+        "writes": 5,
+        "wall_s": 0.036
+      },
+      {
+        "log": "v02/slice-9.log",
+        "writes": 4,
+        "wall_s": 0.032
+      }
+    ],
+    "progress_checkpoint_logged_wall_sum_s": 0.201,
+    "resumable_checkpoint_save_load_s": null,
+    "terminal_length_recovery": [
+      {
+        "log": "v00/slice-8.log",
+        "wall_s": 113.6
+      },
+      {
+        "log": "v01/slice-7.log",
+        "wall_s": 112.4
+      },
+      {
+        "log": "v03/slice-8.log",
+        "wall_s": 79.5
+      },
+      {
+        "log": "v02/slice-9.log",
+        "wall_s": 85
+      }
+    ],
+    "core_slice_cpu_fraction": 0.8071636276542536,
+    "cpu_residual_s": 11.25303100000042,
+    "first_slice_start_s": 20.780925906
+  },
+  "accounting": {
+    "cpu": "whole operation cgroup delta; disjoint owned children use wait4 including reaped descendants; nested scopes must not be added",
+    "wall": "parallel child/check wall durations overlap; only parent wall is end-to-end",
+    "pass_deltas": "from rounded cumulative core clocks; first delta includes core setup; not isolated maze-expansion time",
+    "unavailable": [
+      "pack/upload phase timers",
+      "single model and preflight split",
+      "single writer/refill and final native DRC split",
+      "single reference-screen durations",
+      "first single-core pass log (overwritten)",
+      "single core per-phase CPU",
+      "sprint resumable checkpoint save/load duration"
+    ]
+  },
+  "inputs": [
+    {
+      "path": "1389/after-fix/client.log",
+      "sha256": "d1ec69d476ee9d1bc725a52aeeee089a5386d92b32e2f19660ae217e57f4d8f6",
+      "bytes": 305
+    },
+    {
+      "path": "1389/after-fix/results/job.json",
+      "sha256": "196b02bf4b60f096df74814c9c084ada6dbf126aec8624ce44cb55a2d5f6d063",
+      "bytes": 1526
+    },
+    {
+      "path": "1389/after-fix/results/out/benchmark/gate/events.jsonl",
+      "sha256": "dec23b200e7fea9b78738c98329a636c896693b6d0ac334f497df10f08a38d57",
+      "bytes": 15241
+    },
+    {
+      "path": "1389/after-fix/results/out/benchmark/result.json",
+      "sha256": "d9df6775a219f5430e3b822c8037c08d73aeddd943956ce12b2b64c54826344f",
+      "bytes": 2566
+    },
+    {
+      "path": "1389/after-fix/results/out/route/ESP32-CORE.kicad_pcb.iotroute/ref-r2/route.log",
+      "sha256": "5f3d5f02c28cb2bab605fbe845a47ece4ac5a990d7ff5bd76c39e46f9ddb219f",
+      "bytes": 5415
+    },
+    {
+      "path": "1389/after-fix/results/out/route/ESP32-CORE.kicad_pcb.iotroute/result.json",
+      "sha256": "7000c58e1dd95a0ef58985ee70b9f66deedc2c3c40e82a9e055b4b37da8dd4d3",
+      "bytes": 2536
+    },
+    {
+      "path": "1389/after-fix/results/out/route/ESP32-CORE.kicad_pcb.iotroute/route.log",
+      "sha256": "5f3d5f02c28cb2bab605fbe845a47ece4ac5a990d7ff5bd76c39e46f9ddb219f",
+      "bytes": 5415
+    },
+    {
+      "path": "1389/after-fix/submission.json",
+      "sha256": "8a6d03c8fc2898caf16141cf0c3e18599ee578251564917c652deebe0499c384",
+      "bytes": 1643
+    },
+    {
+      "path": "calibration-1399/client.log",
+      "sha256": "6e4ca4bfc56560452e5d811df10ee60612d34e766af88c33f2cfe62f21e9e8ee",
+      "bytes": 306
+    },
+    {
+      "path": "calibration-1399/results/job.json",
+      "sha256": "fca3ede35721bc12223801bde5016ad54cf78ecab8d3845aea3caf6034dafdcf",
+      "bytes": 1509
+    },
+    {
+      "path": "calibration-1399/results/out/benchmark/gate/events.jsonl",
+      "sha256": "b2448196e3f47537926f2108207a3778b1a9a1a0bb04800841b0320e3f1af407",
+      "bytes": 14266
+    },
+    {
+      "path": "calibration-1399/results/out/benchmark/result.json",
+      "sha256": "5974eeef5c2c958dd90e1cf407d449800522042a3d15d28aceff508d21e7eecc",
+      "bytes": 2574
+    },
+    {
+      "path": "calibration-1399/results/out/route/ESP32-CORE.kicad_pcb.iotroute/ref-r2/route.log",
+      "sha256": "b6dc3913afbd8731710f907a71fd9f388623404b7ee73e343703c5559ffed6d1",
+      "bytes": 5413
+    },
+    {
+      "path": "calibration-1399/results/out/route/ESP32-CORE.kicad_pcb.iotroute/result.json",
+      "sha256": "895f28e4b41a0256484060f71e10a4dd77f6b5d2e0d8392f20daaf9c0943b028",
+      "bytes": 2536
+    },
+    {
+      "path": "calibration-1399/results/out/route/ESP32-CORE.kicad_pcb.iotroute/route.log",
+      "sha256": "b6dc3913afbd8731710f907a71fd9f388623404b7ee73e343703c5559ffed6d1",
+      "bytes": 5413
+    },
+    {
+      "path": "calibration-1399/submission.json",
+      "sha256": "3d463815123429995c854b3754912b510e0c563a8eeff6691d1afe8c570118cb",
+      "bytes": 1664
+    },
+    {
+      "path": "single-a/client.log",
+      "sha256": "f0cf73d744bb324ca72931db96c997d33ec8784f05e6b3f6e8dc4eb186a7ab38",
+      "bytes": 302
+    },
+    {
+      "path": "single-a/results/job.json",
+      "sha256": "88f8200fa32f5e8b9b13d5d3e172f508b77800ae957487b459522d2174b51076",
+      "bytes": 1500
+    },
+    {
+      "path": "single-a/results/out/benchmark/gate/events.jsonl",
+      "sha256": "cf4e657120367cd39c960c03c0dd6e53cd56de623675daf30f9764cece41dfb3",
+      "bytes": 14480
+    },
+    {
+      "path": "single-a/results/out/benchmark/result.json",
+      "sha256": "2c49a207352946cfe9dffa96adfde40c6b73380705919bc356d64ae95b0aa7c7",
+      "bytes": 2616
+    },
+    {
+      "path": "single-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/ref-r2/route.log",
+      "sha256": "a7e4feedecacad25165cd97a287674ea1d7afa8eea0e6418981677b7678f6f36",
+      "bytes": 5415
+    },
+    {
+      "path": "single-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/result.json",
+      "sha256": "644c017156bbd12c3b4f08e6594585ad1cc71f614497e2b62bd5ba2cc6157a11",
+      "bytes": 2536
+    },
+    {
+      "path": "single-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/route.log",
+      "sha256": "a7e4feedecacad25165cd97a287674ea1d7afa8eea0e6418981677b7678f6f36",
+      "bytes": 5415
+    },
+    {
+      "path": "single-a/submission.json",
+      "sha256": "981e3a78d1f1e3dbbc132fb2d7976edadf5f5f642b19909c100f243bfec7992f",
+      "bytes": 1634
+    },
+    {
+      "path": "SOURCES.json",
+      "sha256": "0c6fbc3220d405dec97de4e74ea70c9802e349c829ec3c480d168cf6c96fad0b",
+      "bytes": 969
+    },
+    {
+      "path": "sprint-a/client.log",
+      "sha256": "9dce365accca274c572d7d2c26bf060ed96cc5e6708f8ed7862dc721e861dec3",
+      "bytes": 24327
+    },
+    {
+      "path": "sprint-a/results/job.json",
+      "sha256": "1acc1bbc6685fa63158be34944924db614cf84669eeb34fa770b0b03881c845c",
+      "bytes": 1500
+    },
+    {
+      "path": "sprint-a/results/out/benchmark/result.json",
+      "sha256": "40987d1d245740f23afe76fd25673734bf3a40b6f3e1e12d971c99b0b436910c",
+      "bytes": 968
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/events.jsonl",
+      "sha256": "879c785cede9b92039ed09ac236ba1ea04126396a6e3da7dcd77d329619f0e54",
+      "bytes": 20441
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/owned-stages.json",
+      "sha256": "ff8e41fb317f36428f5de2fd37e1f07c8c675549da5ad553f90ea199b7030ea3",
+      "bytes": 42928
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/result.json",
+      "sha256": "6772cafda9ff99ad6fe683b1521341aa4fd161c972c007397a1ef38f84baad35",
+      "bytes": 2516
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-1.log",
+      "sha256": "4accb0650cd527ce0b95dbd2a07c6853a516b68dc65fb99e44761fd8fcd7b9df",
+      "bytes": 919
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-2.log",
+      "sha256": "01d6933dae18f468c54eab74797708a59805bd5b28a19973ab0da79b3718000a",
+      "bytes": 940
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-3.log",
+      "sha256": "c0eef8ebf8f63b451b3309a4784be76e94a7b2a001b7fc9b3ca51eed8e8f80d0",
+      "bytes": 940
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-4.log",
+      "sha256": "476ec403fec9b177d36eeba09ca328ff07b23b3371484836db3b45a48e398cf1",
+      "bytes": 940
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-5.log",
+      "sha256": "3128e61051eab48058775940d5d10191dced46cd86976c30a3077d7099fa23bd",
+      "bytes": 1028
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-6.log",
+      "sha256": "6666342cff85440cc22d95dcafda0477ab4a413ee9413370d56c20f317fffe66",
+      "bytes": 1010
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-7.log",
+      "sha256": "6d01ae9b40a61e576b830d36415d283012d9e7e791e4d794314385060ba4cfaf",
+      "bytes": 962
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v00/slice-8.log",
+      "sha256": "83ab0541e70bf24138e8c93555feed1f249573368890585da0d7a07d4e80191d",
+      "bytes": 1140
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-1.log",
+      "sha256": "3bc5c9b8c6d9f0c5d8eb3acdae2dd55b848269fd256e88d00537109bdb7202ee",
+      "bytes": 919
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-2.log",
+      "sha256": "2f34f16709e2ea8e6f26e02a5786ee86f2e906c95d4651aad7b6a0ee8c8b8f43",
+      "bytes": 940
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-3.log",
+      "sha256": "bd434b86c8dd8e39c43e031500eee08c47226b601bdbcbc19aeeaf31c16a43e0",
+      "bytes": 943
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-4.log",
+      "sha256": "423287f8f3ee5122839cd2df5087e11ff1842900ae575783a91c4b94acfb75c4",
+      "bytes": 946
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-5.log",
+      "sha256": "f6c3acdb945db96ecc0bd6c9744d76b69c7064e8578b756787246f8b417dbdf6",
+      "bytes": 1063
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-6.log",
+      "sha256": "7e10e2af04f3fc338a40085619720e131ea59bab9b7de944fac0377a3d9d0ca3",
+      "bytes": 1035
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v01/slice-7.log",
+      "sha256": "5e23f9d7f1aea96b87cff70d0cfca9bcd441f4807e8c280cfd7e62a5540225b7",
+      "bytes": 1331
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-1.log",
+      "sha256": "7672b2fdc26d45017d76aafe4487bd674d6d55974d1c767983d04f2e0b21164a",
+      "bytes": 918
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-2.log",
+      "sha256": "c90eb57b040254085b45579141ad597d3da552e28804c77c8fb9789ed46f398c",
+      "bytes": 940
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-3.log",
+      "sha256": "54a20fd2a45762f7bdfa34900d25ca52fe816ed7f8723e08817fe5c66c2dc7f9",
+      "bytes": 940
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-4.log",
+      "sha256": "c0b73562c7bc869dd781af6baeecd1dec09a7880611a56d0b17cd148ba086be4",
+      "bytes": 1009
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-5.log",
+      "sha256": "4326cc79ed14469d8aef9845898a58a2d0bf32e3597fb19462f4c9139e825fd0",
+      "bytes": 1100
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-6.log",
+      "sha256": "6bde0c98e7f0a5dfd5971d0417a2e0c77ca1c337c9519aa314da3fc1e66e8ab6",
+      "bytes": 1014
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-7.log",
+      "sha256": "b22d339fe828218f18067fcda4028b56efc8c64928cffb4009718bd36c608d80",
+      "bytes": 1017
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-8.log",
+      "sha256": "53bb16df392c2b91ce039b48d31b6c0d146243e3271a4015b51d044cfdbd2323",
+      "bytes": 978
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v02/slice-9.log",
+      "sha256": "872ea1639fa30103442bf9aacc5d32c4a1965253f32e752bcf0e6cfe534dba0c",
+      "bytes": 1137
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-1.log",
+      "sha256": "67c2973521838467122f847e76d5c9aafc6df017f5eb18f38a17bf7f391221f4",
+      "bytes": 919
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-2.log",
+      "sha256": "e1e43f956c9687027389c77f1d7a7d6fb5cd550fe94b8514e7c36ba5dd53e210",
+      "bytes": 940
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-3.log",
+      "sha256": "6c3731efd98f2ac037be871aa3f51509f7bd4321e8235da5b0e6cf5d16a4786c",
+      "bytes": 940
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-4.log",
+      "sha256": "434d3035ebf2a83a2b337e8782fbe593420a8ee313d00758cfc05f23bcccd9b1",
+      "bytes": 940
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-5.log",
+      "sha256": "1ce7a05448f888fb61caae030b22aa4ff10a0ea643c17d6118586c1b4997d345",
+      "bytes": 1119
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-6.log",
+      "sha256": "bb58414d6b001fffaba54c34d2d64f8beb44aa34f7e568934290d72adf1fd0b8",
+      "bytes": 1035
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-7.log",
+      "sha256": "4a0ecc0215d247579c561f0c7e398a12bf7ff45cb8117bb998df519579d9830c",
+      "bytes": 977
+    },
+    {
+      "path": "sprint-a/results/out/route/ESP32-CORE.kicad_pcb.iotroute/portfolio/v03/slice-8.log",
+      "sha256": "f512646bf9cc25ddbb012c9b0633b9319531eca1d7a0c2c6487dcd9aa8250c06",
+      "bytes": 1325
+    },
+    {
+      "path": "sprint-a/submission.json",
+      "sha256": "284ba612bdf1e135ab8d840cd5477e1da44b42633b56b4f3a4acf93d70add3d9",
+      "bytes": 1634
+    }
+  ]
+}
