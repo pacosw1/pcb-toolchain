@@ -177,4 +177,6 @@ fn reuse_recover_scope_is_the_changed_region() {
     let moves = vec![1u32, 0, 0];
     assert_eq!(reuse::recover_scope(&bd, &plan, &moves, 1.0), vec![true, false, false], "B is 6 mm from A's copper");
     assert_eq!(reuse::recover_scope(&bd, &plan, &moves, 7.0), vec![true, true, false]);
+    assert_eq!(reuse::recover_changed(&bd, &moves), vec![true, false, false], "feedback does not optimize an untouched nearby net");
+    assert_eq!(reuse::recover_changed(&bd, &[1, 1, 1]), vec![true, true, false], "a revisited signal net can recover; planes stay excluded");
 }

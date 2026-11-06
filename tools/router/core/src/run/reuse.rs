@@ -139,6 +139,86 @@ struct Seed<'a> {
     vias: &'a [Box<RawValue>],
 }
 
+/// An internal feedback seed is bound to the exact input, route and model transition.
+/// This is copper reuse, not permission to resume stale search/history state.
+#[derive(Debug, Clone, Serialize)]
+pub struct FeedbackBinding {
+    pub input_sha256: String,
+    pub source_route_sha256: String,
+    pub source_model_sha256: String,
+    pub model_sha256: String,
+}
+
+/// Only the existing reference-cost raise/hardening on the named signal nets may differ.
+/// Every geometry, rule, width, layer and unrelated policy value must remain identical.
+fn feedback_transition(before: &[u8], after: &[u8], changed: &[String]) -> Result<(), String> {
+    type Object = BTreeMap<String, Box<RawValue>>;
+    let mut expected: Object = serde_json::from_slice(before).map_err(|e| e.to_string())?;
+    let mut current: Object = serde_json::from_slice(after).map_err(|e| e.to_string())?;
+    let string = |key: &str| expected.get(key).and_then(|v| serde_json::from_str::<String>(v.get()).ok());
+    if string("schema").as_deref() != Some("iot-lab.route-model.v0") || string("pcb").is_none() {
+        return Err("feedback reuse requires an admitted native model".into());
+    }
+    if changed.is_empty() || changed.iter().collect::<BTreeSet<_>>().len() != changed.len() {
+        return Err("feedback reuse requires distinct changed nets".into());
+    }
+    let before_nets = expected.remove("nets").ok_or("feedback model has no nets")?;
+    let after_nets = current.remove("nets").ok_or("feedback model has no nets")?;
+    let mut nets: BTreeMap<String, Object> = serde_json::from_str(before_nets.get()).map_err(|e| e.to_string())?;
+    let now: BTreeMap<String, Object> = serde_json::from_str(after_nets.get()).map_err(|e| e.to_string())?;
+    for name in changed {
+        let net = nets.get_mut(name).ok_or_else(|| format!("feedback net {name} is absent"))?;
+        if net.get("ref_soft").map(|v| v.get()) != Some("true") || net.get("plane").map(|v| v.get()) == Some("true") {
+            return Err(format!("feedback net {name} is not a soft signal net"));
+        }
+        let cost = match net.get("ref_cost") {
+            None => 3.0,
+            Some(v) => v.get().parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0).ok_or_else(|| format!("feedback net {name} has invalid reference cost"))?,
+        };
+        if cost < 300.0 {
+            net.insert("ref_cost".into(), serde_json::value::to_raw_value(&(cost * 10.0)).map_err(|e| e.to_string())?);
+        } else {
+            net.insert("ref_soft".into(), serde_json::value::to_raw_value(&false).map_err(|e| e.to_string())?);
+        }
+    }
+    // Compare untouched values as raw JSON: f64 round-tripping must not hide a
+    // geometry/rule change or silently round a high-precision coordinate.
+    let equal = |a: &Object, b: &Object| a.len() == b.len() && a.iter().all(|(k, v)| b.get(k).is_some_and(|w| v.get() == w.get()));
+    if !equal(&expected, &current) || nets.len() != now.len() || !nets.iter().all(|(n, v)| now.get(n).is_some_and(|w| equal(v, w))) {
+        return Err("feedback model changed beyond the named reference-cost transition".into());
+    }
+    Ok(())
+}
+
+/// Build the ordinary reuse seed from this run's current route, before its final
+/// board receipt exists. A new core loads/rechecks copper under the updated model;
+/// no cached maze state, history field or native acceptance is carried forward.
+pub fn feedback_seed(before_model: &[u8], model: &Path, input: &Path, expected_input_sha: &str,
+    previous: &Path, route: &Path, out_json: &Path, changed: &[String]) -> Result<(ReuseRecord, FeedbackBinding), String> {
+    let input_sha = sha_file(input)?;
+    if input_sha != expected_input_sha { return Err("feedback input changed during the run".into()); }
+    let after_model = fs::read(model).map_err(|e| format!("{}: {e}", model.display()))?;
+    feedback_transition(before_model, &after_model, changed)?;
+    let route_bytes = fs::read(route).map_err(|e| format!("{}: {e}", route.display()))?;
+    let raw: serde_json::Value = serde_json::from_slice(&route_bytes).map_err(|e| e.to_string())?;
+    if raw["schema"] != "iot-lab.route-result.v0" || raw["failed"].as_array().is_none_or(|v| !v.is_empty()) {
+        return Err("feedback reuse requires a finalized route without core failures".into());
+    }
+    let earlier: EarlierRoute = serde_json::from_slice(&route_bytes).map_err(|e| e.to_string())?;
+    if earlier.passes < 1 { return Err("feedback route has no completed negotiation".into()); }
+    let source = previous.display().to_string();
+    let sha = sha_file(previous)?;
+    let seed = Seed { failed_nets: changed, moved_refs: &[], passes: earlier.passes, schema: SEED_SCHEMA,
+        source: &source, source_sha256: &sha, tracks: &earlier.tracks, vias: &earlier.vias };
+    fs::write(out_json, serde_json::to_vec(&seed).map_err(|e| e.to_string())?).map_err(|e| format!("{}: {e}", out_json.display()))?;
+    let binding = FeedbackBinding { input_sha256: input_sha,
+        source_route_sha256: crate::sha256::sha256(&route_bytes), source_model_sha256: crate::sha256::sha256(before_model),
+        model_sha256: crate::sha256::sha256(&after_model) };
+    Ok((ReuseRecord { source, source_sha256: sha, moved_refs: Vec::new(), failed_nets: changed.to_vec(), passes: earlier.passes,
+        tracks: earlier.tracks.len(), vias: earlier.vias.len(), seed_sha256: sha_file(out_json)?, fallback: "full".into(),
+        attempts: BTreeMap::new(), chosen: None, incumbent_note: Some("feedback seed only; changed model forbids stale incumbent replay".into()) }, binding))
+}
+
 /// Position in nm, orientation in 0.1 degree, side.
 type Pose = (i64, i64, i64, String);
 
@@ -213,6 +293,83 @@ pub fn seed_from(previous: &Path, work: &Path, route_in: &Path, out_json: &Path,
 mod tests {
     use super::*;
     use crate::run::record::{CoreStage, RouteClaim, WriteStage};
+
+    fn feedback_model(cost: &str) -> String {
+        format!(r#"{{"schema":"iot-lab.route-model.v0","pcb":"input.kicad_pcb","pads":[{{"x":0.30000000000000000001}}],"rules":[{{"min":0.15}}],"nets":{{"A":{{"ref_soft":true,"ref_cost":{cost},"width":0.2}},"B":{{"ref_soft":true,"ref_cost":3.0}}}}}}"#)
+    }
+
+    #[test]
+    fn feedback_reuse_accepts_only_the_existing_named_cost_transition() {
+        let before = feedback_model("3.0");
+        let after = feedback_model("30.0");
+        assert!(feedback_transition(before.as_bytes(), after.as_bytes(), &["A".into()]).is_ok());
+        let hard = feedback_model("300.0");
+        let hardened = hard.replacen("\"ref_soft\":true", "\"ref_soft\":false", 1);
+        assert!(feedback_transition(hard.as_bytes(), hardened.as_bytes(), &["A".into()]).is_ok());
+        assert!(feedback_transition(before.as_bytes(), after.as_bytes(), &[]).is_err());
+        assert!(feedback_transition(before.as_bytes(), after.as_bytes(), &["A".into(), "A".into()]).is_err());
+        assert!(feedback_transition(before.as_bytes(), after.as_bytes(), &["missing".into()]).is_err());
+        assert!(feedback_transition(before.as_bytes(), before.as_bytes(), &["A".into()]).is_err());
+    }
+
+    #[test]
+    fn feedback_reuse_invalidates_geometry_rules_and_unrelated_cost_changes_exactly() {
+        let before = feedback_model("3.0");
+        let after = feedback_model("30.0");
+        for changed in [
+            after.replace("input.kicad_pcb", "other.kicad_pcb"),
+            after.replace("0.30000000000000000001", "0.30000000000000000002"),
+            after.replace("\"min\":0.15", "\"min\":0.2"),
+            after.replace("\"width\":0.2", "\"width\":0.3"),
+            after.replace("\"ref_cost\":3.0", "\"ref_cost\":30.0"),
+            after.replace("\"pcb\":", "\"new_policy\":true,\"pcb\":"),
+        ] {
+            assert!(feedback_transition(before.as_bytes(), changed.as_bytes(), &["A".into()]).is_err(), "{changed}");
+        }
+        let plane = before.replacen("\"width\":0.2", "\"width\":0.2,\"plane\":true", 1);
+        assert!(feedback_transition(plane.as_bytes(), after.as_bytes(), &["A".into()]).is_err());
+    }
+
+    #[test]
+    fn feedback_guard_matches_the_actual_reference_raise_producer() {
+        let path = std::env::temp_dir().join(format!("iotroute-feedback-transition-{}", std::process::id()));
+        for cost in ["3", "30.0", "300.0"] {
+            let before = feedback_model(cost); fs::write(&path, &before).unwrap();
+            let mut model = super::super::planes::ModelFile::read(&path).unwrap();
+            let (changed, _, _) = model.raise(&["A".into()]).unwrap(); model.write(&path).unwrap();
+            assert!(feedback_transition(before.as_bytes(), &fs::read(&path).unwrap(), &changed).is_ok(), "cost {cost}");
+        }
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn internal_feedback_seed_preserves_copper_and_binds_current_inputs_without_old_acceptance() {
+        struct Temp(std::path::PathBuf);
+        impl Drop for Temp { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
+        let temp = Temp(std::env::temp_dir().join(format!("iotroute-feedback-{}", std::process::id())));
+        fs::create_dir_all(&temp.0).unwrap();
+        let (input, board, route, model, seed) = (temp.0.join("input"), temp.0.join("board"), temp.0.join("route.json"), temp.0.join("model.json"), temp.0.join("seed.json"));
+        fs::write(&input, "unchanged native input").unwrap(); fs::write(&board, "written candidate").unwrap();
+        let old = feedback_model("3.0"); fs::write(&model, feedback_model("30.0")).unwrap();
+        let copper = r#"{"schema":"iot-lab.route-result.v0","failed":[],"passes":15,"tracks":[{"net":"B","a":[0.30000000000000000001,1]}],"vias":[{"net":"GND","role":"return"}]}"#;
+        fs::write(&route, copper).unwrap();
+        let input_sha = sha_file(&input).unwrap();
+        let (record, binding) = feedback_seed(old.as_bytes(), &model, &input, &input_sha, &board, &route, &seed, &["A".into()]).unwrap();
+        assert_eq!(record.failed_nets, ["A"]); assert!(record.moved_refs.is_empty());
+        assert_eq!((record.passes, record.tracks, record.vias), (15, 1, 1));
+        assert!(record.attempts.is_empty() && record.chosen.is_none());
+        assert_eq!(binding.model_sha256, sha_file(&model).unwrap());
+        assert_eq!(binding.source_route_sha256, sha_file(&route).unwrap());
+        let bytes = fs::read_to_string(&seed).unwrap();
+        assert!(bytes.contains("0.30000000000000000001"), "raw copper coordinates must not round-trip through f64");
+        let raw: serde_json::Value = serde_json::from_str(&bytes).unwrap();
+        assert_eq!(raw["schema"], SEED_SCHEMA); assert_eq!(raw["failed_nets"], serde_json::json!(["A"]));
+        fs::write(&input, "changed native input").unwrap();
+        assert!(feedback_seed(old.as_bytes(), &model, &input, &input_sha, &board, &route, &seed, &["A".into()]).unwrap_err().contains("input changed"));
+        fs::write(&input, "unchanged native input").unwrap();
+        fs::write(&route, copper.replace("\"failed\":[]", "\"failed\":[{\"net\":\"B\"}]")).unwrap();
+        assert!(feedback_seed(old.as_bytes(), &model, &input, &input_sha, &board, &route, &seed, &["A".into()]).unwrap_err().contains("core failures"));
+    }
 
     fn pose(x: i64, y: i64, turn: i64, layer: &str) -> Pose {
         (x, y, turn, layer.to_string())

@@ -3,6 +3,7 @@
 //! a FAIL line gets a higher price, then it is set hard, and the board is routed again.
 use super::project::gate_path;
 use super::record::RouteClaim;
+use super::reuse::{FeedbackBinding, ReuseRecord};
 use serde::Serialize;
 use serde::Deserialize;
 use serde_json::value::{RawValue, to_raw_value};
@@ -30,6 +31,19 @@ pub struct Round {
     /// Measured child-process wall time, including core finalization, not just negotiation passes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_core_seconds: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reuse: Option<FeedbackReuse>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FeedbackReuse {
+    pub status: &'static str,
+    pub selected: &'static str,
+    pub elapsed_s: Option<f64>,
+    pub binding: Option<FeedbackBinding>,
+    pub record: Option<ReuseRecord>,
+    pub scoped_planes_fail_lines: Option<usize>,
+    pub fallback_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]

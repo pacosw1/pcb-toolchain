@@ -287,3 +287,10 @@ pub(crate) fn recover_scope(bd: &Board, plan: &SeedPlan, moves: &[u32], near: f6
     }
     v
 }
+
+/// Feedback reuse does not authorize optimizing an untouched nearby net. Keep
+/// length recovery on nets actually routed by negotiation; retained copper is
+/// still negotiable when a real conflict causes the router to revisit its net.
+pub(crate) fn recover_changed(bd: &Board, moves: &[u32]) -> Vec<bool> {
+    bd.nets.iter().enumerate().map(|(n, net)| moves[n] > 0 && !net.plane).collect()
+}

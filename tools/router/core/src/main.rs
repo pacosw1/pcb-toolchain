@@ -4299,7 +4299,7 @@ fn keep_route_nets(order: &mut Vec<usize>, nets: &[Net], model: &Value) {
 
 fn route_cli(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("usage: iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--hole-clr 0.28] [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S] [--door-hist 2.0] [--check RESULT.json] [--congestion MAP.json [--cong-cell 1.0] [--cong-free 0|1]] [--seed N] [--checkpoint FILE [--source-sha HEX]] [--resume-save FILE] [--resume FILE] [--yield-after-passes N] [--stall-passes N]");
+        eprintln!("usage: iotroute MODEL.json OUT.json [--pitch 0.05] [--iters 40] [--plane-clr 0.25] [--hole-to-hole 0.45] [--hole-clr 0.28] [--return-r 2.0] [--return-via 0.45,0.2] [--pres-mult 1.5] [--pres-max 1000] [--hist 0.3] [--max-time S] [--door-hist 2.0] [--check RESULT.json] [--reuse SEED.json [--reuse-near MM] [--reuse-recover near|changed]] [--congestion MAP.json [--cong-cell 1.0] [--cong-free 0|1]] [--seed N] [--checkpoint FILE [--source-sha HEX]] [--resume-save FILE] [--resume FILE] [--yield-after-passes N] [--stall-passes N]");
         std::process::exit(2);
     }
     let mut o = Opts { pitch: 0.05, passes: 40, plane_clr: DEF_PLANE_CLR, hth: DEF_HOLE_TO_HOLE, return_r: 2.0, ret_d: 0.45, ret_drill: 0.2,
@@ -4313,6 +4313,7 @@ fn route_cli(args: &[String]) {
     let mut cli_rr = false;
     let mut reuse_path: Option<String> = None;
     let mut reuse_near = 1.0f64;
+    let mut reuse_recover_changed = false;
     let mut cong_path: Option<String> = None;
     let mut cong_cell = 1.0f64;
     let mut cong_free = false;
@@ -4348,6 +4349,11 @@ fn route_cli(args: &[String]) {
             "--recover" => o.no_recover = v == "0",
             "--reuse" => reuse_path = Some(v.clone()),
             "--reuse-near" => reuse_near = v.parse().unwrap(),
+            "--reuse-recover" => reuse_recover_changed = match v.as_str() {
+                "near" => false,
+                "changed" => true,
+                _ => { eprintln!("--reuse-recover requires near or changed"); std::process::exit(2); }
+            },
             "--congestion" => cong_path = Some(v.clone()),
             "--cong-cell" => cong_cell = v.parse().unwrap(),
             "--cong-free" => cong_free = v == "1",
@@ -4378,6 +4384,12 @@ fn route_cli(args: &[String]) {
     }
     if args.last().is_some_and(|s| s == "--yield-after-passes") {
         eprintln!("--yield-after-passes requires a positive pass count"); std::process::exit(2);
+    }
+    if args.last().is_some_and(|s| s == "--reuse-recover") {
+        eprintln!("--reuse-recover requires near or changed"); std::process::exit(2);
+    }
+    if reuse_recover_changed && reuse_path.is_none() {
+        eprintln!("--reuse-recover changed requires --reuse"); std::process::exit(2);
     }
     if yield_after.is_some() && (resume_save.is_none() || o.passes == 0) {
         eprintln!("--yield-after-passes requires --resume-save and a positive --iters limit"); std::process::exit(2);
@@ -4960,9 +4972,11 @@ fn route_cli(args: &[String]) {
     if ctx.audit(0.0).pairs == 0 && !o.no_recover && !checkpoint::stop_asked() {
         let tr = std::time::Instant::now();
         let len0: f64 = net_lengths(ctx.bd).iter().sum();
-        let scope = plan.as_ref().map(|pl| reuse::recover_scope(ctx.bd, pl, &moves, reuse_near));
+        let scope = plan.as_ref().map(|pl| if reuse_recover_changed { reuse::recover_changed(ctx.bd, &moves) }
+            else { reuse::recover_scope(ctx.bd, pl, &moves, reuse_near) });
         if let Some(sc) = &scope {
-            notes.push(format!("reuse: length recovery on {} of {} nets (routed now or within {reuse_near} mm of a change)", sc.iter().filter(|&&b| b).count(), nn));
+            let reason = if reuse_recover_changed { "routed in this attempt only".to_string() } else { format!("routed now or within {reuse_near} mm of a change") };
+            notes.push(format!("reuse: length recovery on {} of {} nets ({reason})", sc.iter().filter(|&&b| b).count(), nn));
         }
         let (k, saved) = match &scope { Some(sc) => recover_length_in(&mut ctx, &order, &state, Some(sc)), None => recover_length(&mut ctx, &order, &state) };
         let len1: f64 = net_lengths(ctx.bd).iter().sum();
