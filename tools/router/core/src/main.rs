@@ -4426,6 +4426,7 @@ fn route_cli(args: &[String]) {
         Some(resume::binding(&model_text, &args[3..]).unwrap_or_else(|e| { eprintln!("resume binding: {e}"); std::process::exit(2) }))
     } else { None };
     let model: Value = serde_json::from_str(&model_text).expect("json");
+    critical::check_reuse(&model, reuse_path.is_some()).unwrap_or_else(|e| { eprintln!("{e}"); std::process::exit(2) });
     iotroute::model::coverage::admit_solver_model(&model).unwrap_or_else(|e| { eprintln!("{e}"); std::process::exit(2) });
     let mut ckpt = ckpt_path.as_ref().map(|p| checkpoint::Writer::new(p, t0, seed, o.passes));
     if let Some(w) = &mut ckpt {

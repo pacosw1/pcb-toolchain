@@ -188,6 +188,7 @@ replaced. The router's own counts are never the verdict. `--spec` is optional; t
 `"crystals"` is optional: `"lock"` (default) keeps the candidate's copper of the DRU via_count 0 nets (crystals) as before;
 `"route"` (needs `keep` lock-nets) strips it and routes those nets first, on one layer with no via, then freezes them so the
 rest of the board routes around them (`iotroute run --route-crystals`, core `critical.rs`). Pairs stay locked either way.
+`"crystals":"route"` cannot combine with `reuse`; `--route-crystals` also refuses `--ref-reuse`. The critical stage needs a fresh route.
 
 An optional `sprints` object runs a bounded portfolio in **one daemon job**:
 

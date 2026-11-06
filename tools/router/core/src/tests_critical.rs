@@ -114,3 +114,12 @@ fn a_critical_net_the_stage_cannot_route_keeps_no_copper() {
     assert!(stage.notes[0].contains("open, left to the negotiation: OSC_IN OSC_OUT"), "{:?}", stage.notes);
     assert!(!ctx.bd.shapes.iter().any(|s| s.alive && (s.net == 0 || s.net == 1) && s.kind != Kind::Pad));
 }
+
+#[test]
+fn critical_stage_refuses_core_reuse_instead_of_silently_skipping() {
+    assert!(critical::check_reuse(&model(), false).is_ok());
+    assert!(critical::check_reuse(&serde_json::json!({}), true).is_ok());
+    assert!(critical::check_reuse(&serde_json::json!({"critical_nets": []}), true).is_ok());
+    let error = critical::check_reuse(&model(), true).unwrap_err();
+    assert!(error.contains("critical_nets") && error.contains("--reuse"), "{error}");
+}

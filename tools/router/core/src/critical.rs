@@ -13,6 +13,14 @@ use super::*;
 /// up to this many nets in a group every order is tried (4! = 24 routes of a few mm each)
 const MAX_PERMUTE: usize = 4;
 
+/// Reuse bypasses the first stage; refuse the combination instead of silently dropping the model's request.
+pub(crate) fn check_reuse(model: &Value, reuse: bool) -> Result<(), String> {
+    if reuse && model["critical_nets"].as_array().is_some_and(|v| !v.is_empty()) {
+        return Err("critical_nets cannot combine with --reuse: the critical stage needs a fresh route".into());
+    }
+    Ok(())
+}
+
 /// The critical nets of the model, in the base order; nets not in `order` (outside a --net stage) are not routed.
 pub(crate) fn critical_nets(model: &Value, nets: &[Net], order: &[usize]) -> Vec<usize> {
     let Some(names) = model["critical_nets"].as_array() else { return Vec::new() };

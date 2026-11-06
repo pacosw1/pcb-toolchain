@@ -135,6 +135,9 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
     if a.route_crystals && a.lock_from.is_none() {
         return Err("--route-crystals needs --lock-from: without it all input copper stays locked".into());
     }
+    if a.route_crystals && (a.reuse.is_some() || a.ref_reuse) {
+        return Err("--route-crystals cannot combine with --reuse or --ref-reuse: the critical stage needs a fresh route".into());
+    }
     let [board, out] = positional.as_slice() else { return Err("BOARD and OUT are needed".to_string()) };
     (a.board, a.out) = (board.clone(), out.clone());
     Ok(a)
@@ -788,6 +791,14 @@ esac
         let mut model = serde_json::json!({"nets": {"/OSC_IN": {}, "/OSC_OUT": {}}});
         set_critical_nets(&mut model, &["/OSC_IN".to_string(), "/GONE".to_string(), "/OSC_OUT".to_string()]);
         assert_eq!(model["critical_nets"], serde_json::json!(["/OSC_IN", "/OSC_OUT"]));
+    }
+
+    #[test]
+    fn route_crystals_refuses_reuse_that_skips_the_critical_stage() {
+        for flag in ["--reuse P", "--ref-reuse"] {
+            let error = args(&format!("A B.kicad_pcb --lock-from S --route-crystals {flag}")).unwrap_err();
+            assert!(error.contains("--route-crystals") && error.contains("reuse"), "{error}");
+        }
     }
 
     #[test]

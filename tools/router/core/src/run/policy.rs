@@ -71,6 +71,9 @@ pub fn policy(spec: Option<&Value>) -> Result<Policy, String> {
     if route_crystals && keep_all {
         return Err("iotroute policy crystals route needs keep lock-nets: keep all locks every candidate track".to_string());
     }
+    if route_crystals && reuse.is_some() {
+        return Err("iotroute policy crystals route cannot combine with reuse: the critical stage needs a fresh route".to_string());
+    }
     Ok(Policy { iters, max_time_s, keep_all, return_exempt, layers: names(object, "layers")?, nets: names(object, "nets")?, reuse, reuse_nets: names(object, "reuse_nets")?, route_crystals })
 }
 
@@ -167,6 +170,13 @@ mod tests {
         for spec in [json!({"schema": SCHEMA, "crystals": "route", "keep": "all"}), json!({"schema": SCHEMA, "crystals": true}), json!({"schema": SCHEMA, "crystals": "free"})] {
             assert!(policy(Some(&spec)).is_err(), "{spec}");
         }
+    }
+
+    #[test]
+    fn crystals_route_refuses_reuse_that_skips_the_critical_stage() {
+        let error = policy(Some(&json!({"schema": SCHEMA, "crystals": "route", "reuse": "/run/B.kicad_pcb"}))).unwrap_err();
+        assert!(error.contains("crystals") && error.contains("reuse"), "{error}");
+        assert!(policy(Some(&json!({"schema": SCHEMA, "crystals": "lock", "reuse": "/run/B.kicad_pcb"}))).is_ok());
     }
 
     #[test]
