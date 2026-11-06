@@ -6,6 +6,7 @@ import { BoardView } from './BoardView'
 import { isWarning, line, STATE_COLOR, type Ev, type RunSummary } from './runs'
 import type { Geometry } from './types'
 import './assets/runs.css'
+import { LoopPanel } from './LoopPanel'
 
 const OP_LABEL: Record<string, string> = { check: 'check', build: 'build', route: 'route' }
 
@@ -308,6 +309,7 @@ export function RunsView({
           onStart={(policy) => start('op.route', { board: gate, policy })}
         />
       ) : null}
+      {desktop && gate ? <LoopPanel gate={gate} /> : null}
       {!run ? (
         <div className="panel placeholder">No run yet for this board.</div>
       ) : (

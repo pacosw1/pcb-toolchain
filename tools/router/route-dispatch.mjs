@@ -256,7 +256,8 @@ function submitAndWatch(plan,inputs,timeoutS,results){
     ?['bash','-c',SPRINT_SCRIPT,'_',`in/${NODE_BIN}`,'--experimental-strip-types','--no-warnings','tools/router/sprint-job.ts',`in/${BIN}`,plan.board,`out/route/${name}.kicad_pcb`,...plan.args]
     :['bash','-c',JOB_SCRIPT,'_',`in/${BIN}`,'run',plan.board,`out/route/${name}.kicad_pcb`,...plan.args];
   const queueWait=process.env.PCB_QUEUE_WAIT_S||String(QUEUE_WAIT_S);
-  const args=['run',plan.board,...inputs.flatMap(f=>['--in',f]),'--timeout',String(plan.sprints?.deadline_s??timeoutS),'--cpus',String(plan.sprints?.parallelism??ROUTE_CPUS),'--mem',String(plan.sprints?.mem_gb??ROUTE_MEM_GB),'--queue-wait',queueWait,'--results',results,'--name',`route-${name}`];
+  const loopLabel=/^loop-[a-f0-9]{16}$/.test(process.env.PCB_ROUTING_LOOP_ID??'')&&/^[1-8]$/.test(process.env.PCB_ROUTING_LOOP_ROUND??'')?`-${process.env.PCB_ROUTING_LOOP_ID}-r${process.env.PCB_ROUTING_LOOP_ROUND}`:'';
+  const args=['run',plan.board,...inputs.flatMap(f=>['--in',f]),'--timeout',String(plan.sprints?.deadline_s??timeoutS),'--cpus',String(plan.sprints?.parallelism??ROUTE_CPUS),'--mem',String(plan.sprints?.mem_gb??ROUTE_MEM_GB),'--queue-wait',queueWait,'--results',results,'--name',`route-${name}${loopLabel}`];
   if(plan.sprints)args.push('--retries','0','--snapshot','board'); // One budget, and all declared gate/semantic inputs.
   if(process.env.REMOTE_IMAGE||plan.sprints)args.push('--image',process.env.REMOTE_IMAGE||SPRINT_IMAGE);
   const [exe,argv,opts]=clientProcess(plan,[...args,'--',...cmd],['ignore','pipe','pipe']);

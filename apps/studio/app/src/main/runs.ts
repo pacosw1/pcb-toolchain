@@ -180,7 +180,7 @@ export function killGroup(pid: number): void {
   }
 }
 
-function toolOf(root: string): string {
+export function toolOf(root: string): string {
   const tool = path.join(root, 'tools', 'pcb')
   if (!isFile(tool)) throw new Error(`${tool} (this project has no tools/pcb)`)
   return tool

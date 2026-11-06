@@ -5,8 +5,8 @@
 // Tools: the pcb MCP tools, WebSearch, and Read/Grep/Glob inside the open project only (agentPolicy.ts). The project
 // root comes from main (the engine's project.open result), never from the renderer's context.
 import { z } from 'zod'
-import { checkToolUse } from './agentPolicy'
-import { toolPath } from './config'
+import { checkToolUse } from './agentPolicy.ts'
+import { toolPath } from './config.ts'
 import type { AgentContext, AgentEvent, BoardParts, Findings, ProjectInfo, RunSummary } from '../preload/types'
 import type { EngineSupervisor } from './engine'
 
@@ -69,18 +69,25 @@ Use the pcb tools to answer from real data: never guess part numbers, counts or 
   Adopt button in the Runs section. Tell the user which run to review and why; never claim it is adopted.
 - After you name a part or a finding, call pcb.show_on_board so the user sees it.
 - Quote gate counts from the tool output. Keep answers short.
+- Only when the user explicitly requests the experimental routing loop, use start_loop, then wait_loop and decide_loop
+  until a terminal state. The existing benchmark no-go still stands; do not promise a speedup. Decisions require reasons.
+  Use the returned revision. A search result is not a verified candidate. Stop at blocked/proposal/repeated-cause boundaries;
+  placement and pin changes need separate explicit reviewed actions. Never expand layers/nets, relax rules, or adopt CAD.
 User messages start with a [context] line: open project, board, gate and the user's board selection.`
 
 export class AgentHost {
   private sessionId: string | null = null
   private abort: AbortController | null = null
   private sdk: typeof import('@anthropic-ai/claude-agent-sdk') | null = null
+  private engine: EngineSupervisor
+  private emit: (e: AgentEvent) => void
+  private projectRoot: () => string | null
 
   constructor(
-    private engine: EngineSupervisor,
-    private emit: (e: AgentEvent) => void,
-    private projectRoot: () => string | null
-  ) {}
+    engine: EngineSupervisor,
+    emit: (e: AgentEvent) => void,
+    projectRoot: () => string | null
+  ) { this.engine = engine; this.emit = emit; this.projectRoot = projectRoot }
 
   get busy(): boolean {
     return this.abort !== null
@@ -204,6 +211,34 @@ export class AgentHost {
             return json(await candidateSummary(started.id, (timeout_s + VERIFY_S + 300) * 1000))
           }
         ),
+        tool('start_loop', 'Start the explicitly requested experimental routing loop. It is disabled by default; benchmarks have not shown a speed advantage. Ordinary isolated candidates and full fresh gates are used. Continue with wait_loop and decide_loop.', {
+          board: z.string().optional(), experimental: z.literal(true), max_rounds: z.number().int().min(1).max(8).default(3),
+          deadline_s: z.number().int().min(30).max(7200).default(900), iters: z.number().int().min(1).max(1000).default(80),
+          keep: z.enum(['all','lock-nets']).default('all'), layers: z.array(z.string()).default([]), nets: z.array(z.string()).default([]),
+          sprints: z.boolean().default(false)
+        }, async ({board,experimental,max_rounds,deadline_s,iters,keep,layers,nets,sprints}) => {
+          const gate=board||ctx.gate;if(!gate)throw new Error('this board revision has no gate')
+          const route={schema:'iot-lab.iotroute-policy.v1',iters,keep,layers,nets,
+            ...(sprints?{sprints:{seeds:[0,1],parallelism:2,deadline_s:Math.min(180,deadline_s-20),verify_reserve_s:30,mem_gb:4}}:{max_time_s:Math.min(300,deadline_s-20)})}
+          return json(await engine.call('loop.start',{board:gate,policy:{experimental,max_rounds,deadline_s,done_when:'verified',route}}))
+        }),
+        tool('wait_loop', 'Wait for the current round to finish and return the next decision boundary or terminal result. Each round uses the existing live viewer. No new round starts here.', {
+          id:z.string(),wait_s:z.number().int().min(1).max(600).default(600)
+        }, async ({id,wait_s})=>json(await engine.call('loop.wait',{id,wait_s}))),
+        tool('decide_loop', 'Record a reason and one validated move at the current revision. Routing moves stay within the admitted policy. Placement/pin proposals stop for separate review. Use stop when no justified continuation remains.', {
+          id:z.string(),revision:z.number().int().positive(),reason:z.string().min(1).max(2000),
+          move:z.discriminatedUnion('kind',[
+            z.object({kind:z.literal('stop')}),z.object({kind:z.literal('reroute_stuck')}),z.object({kind:z.literal('single_reuse')}),
+            z.object({kind:z.literal('change_setting'),setting:z.enum(['passes','time_s','layers']),value:z.union([z.number(),z.array(z.string())])}),
+            z.object({kind:z.literal('widen_region'),nets:z.array(z.string()).min(1)}),
+            z.object({kind:z.literal('move_part'),ref:z.string(),dx_mm:z.number(),dy_mm:z.number()}),
+            z.object({kind:z.literal('move_cluster'),refs:z.array(z.string()).min(2),dx_mm:z.number(),dy_mm:z.number()}),
+            z.object({kind:z.literal('swap_pins'),ref:z.string(),pads:z.array(z.string()).length(2)}),
+            z.object({kind:z.literal('ask_user'),question:z.string().min(1)})
+          ])
+        }, async ({id,revision,reason,move})=>json(await engine.call('loop.decide',{id,revision,decision:{reason,move}}))),
+        tool('cancel_loop', 'Stop the requested loop. The current child must settle; retained candidates are never adopted automatically.',
+          {id:z.string()},async ({id})=>json(await engine.call('loop.cancel',{id}))),
         tool('findings', 'DRC findings (with positions) of an earlier gate run by its id.', { run: z.string() }, async ({ run }) =>
           json(await engine.call('run.findings', { id: run }))
         ),

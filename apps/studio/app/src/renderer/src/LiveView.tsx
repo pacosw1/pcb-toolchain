@@ -23,10 +23,12 @@ interface Run {
 }
 export function LiveView({
   selection,
-  onSelect
+  onSelect,
+  preferredLabel
 }: {
   selection: InspectSelection | null
   onSelect: (s: InspectSelection | null) => void
+  preferredLabel?: string
 }): React.JSX.Element {
   const [runs, setRuns] = useState<Run[]>([]),
     [run, setRun] = useState(''),
@@ -43,13 +45,14 @@ export function LiveView({
     seek = useRef(0)
   useEffect(() => {
     let dead = false
+    if (preferredLabel) { setRun(''); setState(null); setGeo(null) }
     let timer: ReturnType<typeof setTimeout>
     const poll = async (): Promise<void> => {
       try {
         const r = (await window.api.engine.call('live.runs')) as { runs: Run[] }
         if (!dead) {
           setRuns(r.runs)
-          setRun((old) => old || r.runs[0]?.runId || '')
+          setRun((old) => preferredLabel ? (r.runs.some(x => x.runId === old && x.summary.run?.label?.includes(preferredLabel)) ? old : r.runs.find(x => x.summary.run?.label?.includes(preferredLabel))?.runId || '') : old || r.runs[0]?.runId || '')
         }
       } catch (e) {
         if (!dead) setError(String(e))
@@ -61,7 +64,7 @@ export function LiveView({
       dead = true
       clearTimeout(timer)
     }
-  }, [])
+  }, [preferredLabel])
   useEffect(() => {
     if (!run) return
     let dead = false,

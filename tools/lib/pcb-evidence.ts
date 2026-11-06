@@ -56,7 +56,7 @@ export function evidenceFiles(folderPath: string): Record<string, string> {
 }
 
 /** The terminal receipt of a run, once its evidence, verdict and process cleanup all hold. */
-export function verify(folderPath: string): Map<string, unknown> {
+function verifyWithVerdicts(folderPath: string, verdicts: ReadonlySet<string>): Map<string, unknown> {
   const folder = resolvePath(folderPath);
   const result = jsonOf(joinPath(folder, 'result.json'));
   const hashes = get(result, 'evidence_sha256');
@@ -66,6 +66,13 @@ export function verify(folderPath: string): Map<string, unknown> {
     if (!isRelativeTo(path, folder) || !isFile(path) || sha(path) !== digest) throw new PyError('ValueError', `verified run evidence changed: ${name}`);
   }
   const complete = get(get(result, 'cleanup', new Map()), 'complete');
-  if (!VERDICTS.has(get(result, 'status') as string) || !truthy(complete)) throw new PyError('ValueError', 'run did not finish with confirmed process cleanup');
+  if (!verdicts.has(get(result, 'status') as string) || !truthy(complete)) throw new PyError('ValueError', 'run did not finish with confirmed process cleanup');
   return result as Map<string, unknown>;
+}
+
+export function verify(folderPath: string): Map<string, unknown> { return verifyWithVerdicts(folderPath, VERDICTS); }
+
+/** Supervision only: cancellation/timeout receipts never qualify a candidate or permit adoption. */
+export function verifySettled(folderPath: string): Map<string, unknown> {
+  return verifyWithVerdicts(folderPath, new Set(['passed','failed','error','cancelled','timeout']));
 }

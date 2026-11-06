@@ -20,7 +20,8 @@ export const METHOD_TIMEOUT_MS: Record<string, number> = {
   'board.geometry': 2 * 60_000,
   'board.bom': 2 * 60_000,
   'project.open': 60_000,
-  'op.route': 2 * 60_000 // reads the board nets before the run starts
+  'op.route': 2 * 60_000, // reads the board nets before the run starts
+  'loop.wait': 11 * 60_000
 }
 export const timeoutFor = (method: string): number => METHOD_TIMEOUT_MS[method] ?? DEFAULT_TIMEOUT_MS
 

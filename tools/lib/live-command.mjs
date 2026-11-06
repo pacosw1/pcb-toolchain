@@ -48,7 +48,9 @@ export function liveCommand(
       createHash("sha256")
         .update(path.resolve(spool))
         .digest("hex")
-        .slice(0, 16),
+        .slice(0, 16) +
+      (/^loop-[a-f0-9]{16}$/.test(env.PCB_ROUTING_LOOP_ID || "") && /^[1-8]$/.test(env.PCB_ROUTING_LOOP_ROUND || "")
+        ? `-${env.PCB_ROUTING_LOOP_ID}-r${env.PCB_ROUTING_LOOP_ROUND}` : ""),
   );
   return {
     command: [

@@ -18,7 +18,7 @@ import { sha } from './lib/pcb-workflow.ts';
 import { MeasuredSpan } from './lib/timing.ts';
 import { observationEvidence, OBSERVATIONS, producer, requestedInputs, type Requested } from './lib/pcb-outcomes-binding.ts';
 
-interface Manifest extends Row { root: string; board: string; command: string[]; timeout_s: number; heartbeat_s: number; created_at: string; operation: string; gate_config_sha256: string }
+interface Manifest extends Row { root: string; board: string; command: string[]; timeout_s: number; heartbeat_s: number; created_at: string; operation: string; gate_config_sha256: string; loop_context?: { id: string; round: number; deadline_ms: number } }
 type Preliminary = Row & { status: string; exit_code: number; cause: string };
 // route-dispatch's bound on a job daemon queue wait; PCB_QUEUE_WAIT_S tunes both.
 const QUEUE_WAIT_S = 300;
@@ -41,7 +41,8 @@ async function worker(folderPath: string): Promise<number> {
     throw new Error('invalid check manifest');
   if (process.env.IOT_PCB_WORKER_LOCK !== join(folder, 'worker.lock') || !process.env.IOT_LEAN_STAGE_HANDLE)
     throw new Error('check worker requires its admitted owned supervisor');
-  const started = now(), deadline = started + manifest.timeout_s;
+  const started = now(), deadline = started + Math.min(manifest.timeout_s,
+    manifest.loop_context ? Math.max(0, (manifest.loop_context.deadline_ms - Date.now()) / 1000) : manifest.timeout_s);
   let queueBound = 0;
   const journal = new CheckJournal(folder, manifest.created_at, started);
   Object.assign(journal.state, { status: 'running', worker_pid: process.pid, worker_started_clock_s: started });
@@ -82,10 +83,13 @@ async function worker(folderPath: string): Promise<number> {
         requested = await requestedInputs(manifest.operation, manifest.root, manifest.arguments as string[]);
       }
       const env: NodeJS.ProcessEnv = { ...process.env, IOT_LEAN_DEADLINE: encodeDeadline(deadline) };
+      if (manifest.loop_context) Object.assign(env, { PCB_ROUTING_LOOP_ID: manifest.loop_context.id, PCB_ROUTING_LOOP_ROUND: String(manifest.loop_context.round) });
       if (manifest.router === 'iotroute') {
         // Children read this deadline once, so it holds the whole bound; this loop enforces the real one.
         const wait = process.env.PCB_QUEUE_WAIT_S ?? String(QUEUE_WAIT_S);
-        queueBound = Number(wait);
+        // A loop's total deadline includes queue time; ordinary runs retain their
+        // existing queue allowance. The backend still uses its normal bounded wait.
+        queueBound = manifest.loop_context ? 0 : Number(wait);
         Object.assign(env, { IOT_LEAN_DEADLINE: encodeDeadline(deadline + queueBound), PCB_QUEUE_CLOCK: join(folder, QUEUE_CLOCK), PCB_QUEUE_WAIT_S: wait });
       }
       proc = startOwned(manifest.command, { cwd: manifest.root, env, stdin: 'ignore', stdout: log, stderr: log });

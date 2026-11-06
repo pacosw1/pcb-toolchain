@@ -129,3 +129,7 @@ The footer records the source path and content hash. **Print / Save PDF** opens 
 platform print flow. **Native board data** retains the KiCad statistics/stackup/BOM
 inspector. The document reader supports standard Markdown and GFM tables; raw HTML
 is not executed. Existing PDF specs use the PDF viewer.
+
+### Experimental routing controller
+
+Runs includes an explicitly enabled, bounded routing loop shared with the CLI and Studio agent. It records round decisions and reasons, retains verified candidates separately from search results, and reuses the existing live viewer and candidate gates. The benchmark no-go remains; no speedup or automatic adoption is claimed. See [the controller contract](../../tools/ROUTING-LOOP.md).
