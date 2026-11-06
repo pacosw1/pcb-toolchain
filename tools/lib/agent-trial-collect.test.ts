@@ -194,6 +194,17 @@ test('seal: writes by tool, accepted edits, and a violation when the CAD differs
   } finally { t.cleanup(); }
 });
 
+test('outside_tools leaves out what a gate writes under a .gate folder', async () => {
+  const t = finished();
+  try {
+    sealedRun(t);
+    const cache = join(t.out, 'project/hardware-design/boards/X/.gate/check-cache/drc');
+    mkdirSync(cache, { recursive: true });
+    writeFileSync(join(cache, 'drc.json'), '{}');
+    assert.equal((await collectTrial(t.out, fresh)).outside_tools.count, 0);
+  } finally { t.cleanup(); }
+});
+
 test('outside_tools lists files changed or added under hardware-design, by path', async () => {
   const t = finished();
   try {

@@ -85,7 +85,8 @@ function gateFiles(lab: Lab, project: string, board: string): string[] {
     const codes = new Set<string>();
     for (const path of list) if (existsSync(path) && /\.kicad_(sch|pcb|pro|dru|mod|sym)$|-lib-table$/.test(path)) for (const code of readFileSync(path, 'utf8').match(/\bC\d+\b/g) ?? []) codes.add(code);
     const parts = [...codes].flatMap(code => [`hardware-design/registry/cad-assets/${code}`, `hardware-design/blocks/iot-lab.pretty/${code}.kicad_mod`]);
-    lab.extract([...parts, ...missing(list).map(inLab).filter(path => !path.startsWith('..'))], project);
+    const datasheets = list.filter(path => path.endsWith('.kicad_sch') && existsSync(path)).flatMap(path => [...readFileSync(path, 'utf8').matchAll(/\(property "Datasheet" "([^"]+)"/g)].map(match => `hardware-design/registry/datasheets/${basename(match[1]!)}`)).filter(path => lab.has(path));
+    lab.extract([...parts, ...datasheets, ...missing(list).map(inLab).filter(path => !path.startsWith('..'))], project);
   }
   return missing(gateInputs(project, board).files).map(inLab);
 }
@@ -99,6 +100,12 @@ function copyToolchain(toolchain: string, project: string, bin: string | undefin
     for (const name of names) copyFileSync(join(bin, name), join(project, 'bin', name));
   }
   return git(toolchain, 'rev-parse', 'HEAD');
+}
+
+/** The scripts that gate.json names and neither the lab nor the toolchain holds. */
+function missingTools(project: string, board: string): string[] {
+  const named = [...readFileSync(join(project, BOARDS, board, 'gate.json'), 'utf8').matchAll(/"(tools\/[^"\s]+)"/g)].map(match => match[1]!);
+  return [...new Set(named)].filter(path => !existsSync(join(project, path)));
 }
 
 /** Archive the sources that `tools/pcb context` and `next` read. Returns the ones the lab commit does not hold; `next` then reports the board as blocked. */
@@ -136,11 +143,12 @@ export function prepareTrial(options: PrepareOptions): Record<string, any> {
     for (const input of agentCase.inputs) {
       if (!existsSync(join(project, input.path)) || sha256File(join(project, input.path)) !== input.sha256) throw new Error(`input ${input.path} differs from its pinned SHA-256 at lab commit ${commit}`);
     }
+    source.extract(['tools'], project);
     const toolchainSha = copyToolchain(resolve(options.toolchain), project, options.bin && resolve(options.bin));
     const dirty = git(resolve(options.toolchain), 'status', '--porcelain', '--', 'tools') !== '';
     mkdirSync(join(project, '.claude'), { recursive: true });
     atomicJson(join(project, '.claude/settings.json'), { hooks: { PreToolUse: [{ matcher: 'Edit|Write|MultiEdit|NotebookEdit|Bash', hooks: [{ type: 'command', command: 'node tools/hooks/claude-cad-guard.mjs' }] }] } });
-    const missingGateInputs = gateFiles(source, project, board), missingContext = contextFiles(source, project, board);
+    const missingGateInputs = [...gateFiles(source, project, board), ...missingTools(project, board)], missingContext = contextFiles(source, project, board);
     if (agentCase.design_contract_exempt) exempt(project, board);
     const labSeal = sealStatus(project, board).state;
     reseal(project, board, { tool: 'trial-prepare', run_id: null }, 'trial baseline');

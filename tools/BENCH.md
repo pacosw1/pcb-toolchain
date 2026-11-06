@@ -119,6 +119,7 @@ the case, never changed. The lab is not at a fixed place (`~/Documents/iot-lab` 
   `prepare` seals the result and hashes it as the baseline, so the setup's changes do not count against the agent. `prepare.json` records the step.
   `tools/trial-start-unplaced.sh INPUT.kicad_pcb SEED` is the step for a trial from the complete schematic: footprints and outline stay, the placement is scrambled from the seed, all tracks and vias go. It runs in the route image, so its `env` needs `BENCH_TOOLCHAIN`.
 
+- Lab scripts: `prepare` archives the `tools/` folder of the lab, then copies the toolchain over it, so that a board's semantic checks run. The toolchain copy wins for a file that both hold. It also archives the datasheets that the schematic names.
 - `verify_prefix` (optional): a command prefix such as `["tools/bench-in-route.sh", "."]`. `collect` runs the freshness check of the final gate run through it, with `agent.env`.
 
 On a Mac a gate or a route must run in the route image (see `bench-local.md`). The prompt then tells the agent to use `tools/bench-in-route.sh . tools/pcb ...`, `agent.env` sets `BENCH_TOOLCHAIN`, and the case needs `verify_prefix`: tool versions on the host differ from the image, so a check on the host reports every passed run as `stale_inputs`.
