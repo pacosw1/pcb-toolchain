@@ -2,13 +2,14 @@
 //! arguments, one per line. An empty spec or null is the default policy. Exact fields: {"schema", "iters": 1..1000, "max_time_s": null or > 0, "keep": "lock-nets" | "all", "return_exempt": bool}.
 //! keep lock-nets: route from the candidate's pair and crystal copper; keep all: keep and lock all candidate copper, route only
 //! what is open. tune (default false): the opt-in length / skew tuning stage after the route (`--tune`, DESIGN.md 5f); it adds
-//! meanders to router-routed nets only, never to kept or locked (hand) copper. return_exempt: no return vias for the nets the board's gate exempts from RP-001 (`--return-exempt`); without it a
+//! meanders to router-routed nets only, never to kept or locked (hand) copper. seed (default none): `--seed N` of the core (DESIGN.md
+//! 5e: prices and orders, never a rule), so a benchmark can pair runs per seed. return_exempt: no return vias for the nets the board's gate exempts from RP-001 (`--return-exempt`); without it a
 //! route that gives such a net its returns leaves the exemption stale, and the gate fails on that.
 use serde_json::Value;
 use std::io::Read;
 
 const SCHEMA: &str = "iot-lab.iotroute-policy.v1";
-const FIELDS: [&str; 10] = ["schema", "iters", "max_time_s", "keep", "return_exempt", "layers", "nets", "reuse", "reuse_nets", "tune"];
+const FIELDS: [&str; 11] = ["schema", "iters", "max_time_s", "keep", "return_exempt", "layers", "nets", "reuse", "reuse_nets", "tune", "seed"];
 const DEFAULT_ITERS: u64 = 80;
 
 #[derive(Debug, PartialEq)]
@@ -25,6 +26,8 @@ pub struct Policy {
     pub reuse_nets: Vec<String>,
     /// The post-route length / skew tuning stage (`--tune`).
     pub tune: bool,
+    /// `--seed N`.
+    pub seed: Option<u64>,
 }
 
 /// A list of distinct names, none by default.
@@ -40,7 +43,7 @@ fn names(object: &serde_json::Map<String, Value>, key: &str) -> Result<Vec<Strin
 
 /// The policy of a spec; None for the defaults.
 pub fn policy(spec: Option<&Value>) -> Result<Policy, String> {
-    let Some(spec) = spec else { return Ok(Policy { iters: DEFAULT_ITERS, max_time_s: None, keep_all: false, return_exempt: false, layers: Vec::new(), nets: Vec::new(), reuse: None, reuse_nets: Vec::new(), tune: false }) };
+    let Some(spec) = spec else { return Ok(Policy { iters: DEFAULT_ITERS, max_time_s: None, keep_all: false, return_exempt: false, layers: Vec::new(), nets: Vec::new(), reuse: None, reuse_nets: Vec::new(), tune: false, seed: None }) };
     let object = spec.as_object().filter(|o| o.get("schema").and_then(Value::as_str) == Some(SCHEMA)).ok_or_else(|| format!("route --router iotroute requires a {SCHEMA} spec"))?;
     let unknown: Vec<&str> = object.keys().map(String::as_str).filter(|k| !FIELDS.contains(k)).collect();
     if !unknown.is_empty() {
@@ -62,7 +65,11 @@ pub fn policy(spec: Option<&Value>) -> Result<Policy, String> {
         Some(v) => Some(v.as_str().filter(|path| path.starts_with('/')).ok_or("iotroute policy reuse must be null or an absolute path")?.to_string()),
     };
     let tune = object.get("tune").map_or(Some(false), Value::as_bool).ok_or("iotroute policy tune must be true or false")?;
-    Ok(Policy { iters, max_time_s, keep_all, return_exempt, layers: names(object, "layers")?, nets: names(object, "nets")?, reuse, reuse_nets: names(object, "reuse_nets")?, tune })
+    let seed = match object.get("seed") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.as_u64().ok_or("iotroute policy seed must be null or a non-negative integer")?),
+    };
+    Ok(Policy { iters, max_time_s, keep_all, return_exempt, layers: names(object, "layers")?, nets: names(object, "nets")?, reuse, reuse_nets: names(object, "reuse_nets")?, tune, seed })
 }
 
 /// The run arguments of a policy on the candidate board.
@@ -85,6 +92,9 @@ pub fn policy_args(p: &Policy, candidate: &str) -> Vec<String> {
     args.extend(p.reuse_nets.iter().flat_map(|net| ["--reuse-net".to_string(), net.clone()]));
     if p.tune {
         args.push("--tune".to_string());
+    }
+    if let Some(seed) = p.seed {
+        args.extend(["--seed".to_string(), seed.to_string()]);
     }
     args
 }
@@ -167,6 +177,13 @@ mod tests {
         assert_eq!(policy_args(&p, "c"), ["--iters", "80", "--lock-from", "c", "--tune"]);
         assert_eq!(policy_args(&policy(Some(&json!({"schema": SCHEMA, "tune": false}))).unwrap(), "c"), ["--iters", "80", "--lock-from", "c"]);
         assert!(policy(Some(&json!({"schema": SCHEMA, "tune": "yes"}))).is_err());
+    }
+
+    #[test]
+    fn a_seed_reaches_the_run() {
+        let p = policy(Some(&json!({"schema": SCHEMA, "keep": "all", "seed": 3}))).unwrap();
+        assert_eq!(policy_args(&p, "c"), ["--iters", "80", "--seed", "3"]);
+        assert!(policy(Some(&json!({"schema": SCHEMA, "seed": -1}))).is_err());
     }
 
     #[test]
