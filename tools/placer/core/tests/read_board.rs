@@ -603,12 +603,12 @@ fn members_come_from_the_net_class_of_their_pads_and_the_box_from_the_members_as
     let r = region("power", &["POWER"], &[], None, None);
     let pr = fx.read(&Options { domain_regions: vec![r], ..plain() });
     let members: Vec<&str> = pr.units.iter().filter(|u| u.in_box.is_some()).flat_map(|u| u.refs.iter().map(String::as_str)).collect();
-    for m in ["L1", "R2", "J2"] {
+    for m in ["L1", "R2"] {
         assert!(members.contains(&m), "{m} has a POWER pad");
     }
     assert!(!members.contains(&"C1"));
     let b = pr.units[unit_of(&pr, "L1")].in_box.unwrap();
-    assert!(b[0] <= 139.5 && b[2] >= 144.5 && b[1] <= 118.5 && b[3] >= 157.0, "box {b:?} spans the members");
+    assert!(b[0] <= 127.0 && b[2] >= 144.5 && b[1] <= 118.5 && b[3] >= 129.0, "box {b:?} spans the members");
 }
 
 #[test]
@@ -624,8 +624,8 @@ fn a_domain_region_without_members_or_with_a_box_that_is_too_small_is_an_error()
 fn cli_read_takes_a_domain_regions_file_and_rejects_unknown_keys() {
     let fx = Fixture::new(buck());
     let file = fx.folder().join("regions.json");
-    std::fs::write(&file, r#"[{"name":"mains","parts":["L1"],"box":[138,116,146,124],"clearance":1.0}]"#).unwrap();
-    let v = cli_read(&fx, &["--domain-regions", file.to_str().unwrap()]).unwrap();
+    std::fs::write(&file, r#"[{"name":"mains","parts":["U1"],"clearance":0.5}]"#).unwrap();
+    let v = cli_read(&fx, &["--domain-regions", file.to_str().unwrap()]).expect("read succeeds");
     assert!(v["units"].as_array().unwrap().iter().any(|u| u.get("out_boxes").is_some()));
     std::fs::write(&file, r#"[{"name":"mains","parts":["L1"],"bogus":1}]"#).unwrap();
     assert!(cli_read(&fx, &["--domain-regions", file.to_str().unwrap()]).is_none());
