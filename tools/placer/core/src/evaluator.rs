@@ -161,7 +161,7 @@ impl<'m> Evaluator<'m> {
         let (hard, soft) = self.all_pairs();
         Terms {
             hpwl: self.nets.wirelength(self.model),
-            cong: self.nets.overflow(self.model),
+            cong: self.nets.congestion(self.model),
             overlap: hard + self.areas.total(),
             oob: compensated(self.forbidden.iter().copied()),
             spacing: soft,
