@@ -18,6 +18,7 @@ import { Project } from './project.ts'
 import { Registry, currentClient } from './rpc.ts'
 import { routingPolicy, runs } from './runs.ts'
 import type { RoutingPolicy } from './runs.ts'
+import { loopCommand, startRouteLoop } from './routeLoops.ts'
 
 export const ENGINE_VERSION = '0.1.0'
 
@@ -137,6 +138,19 @@ registry.method('op.route', ['board', 'policy', 'timeout_s'], 2, (board: string,
   }
   return runs.start(p.root, 'route', board, { policy, timeoutS: timeoutS ?? undefined }).summary()
 })
+
+// Experimental decision boundaries. These methods are deliberately absent from
+// the read-only web viewer allowlist, and there is no loop adoption method.
+registry.method('loop.start', ['board', 'policy'], 2, (board: string, policy: Record<string, unknown>) => startRouteLoop(needProject().root, board, policy))
+registry.method('loop.list', [], 0, () => loopCommand(needProject().root, 'list'))
+registry.method('loop.status', ['id'], 1, (id: string) => loopCommand(needProject().root, 'status', [id]))
+registry.method('loop.wait', ['id', 'wait_s'], 1, (id: string, waitS = 600) => {
+  if (!Number.isSafeInteger(waitS) || waitS < 1 || waitS > 600) throw new Error('Choose a wait from 1 to 600 seconds.')
+  return loopCommand(needProject().root, 'wait', [id, '--wait', String(waitS)], waitS)
+})
+registry.method('loop.decide', ['id', 'revision', 'decision'], 3, (id: string, revision: number, decision: Record<string, unknown>) =>
+  loopCommand(needProject().root, 'decide', [id, '--revision', String(revision), '--decision-json', JSON.stringify(decision)]))
+registry.method('loop.cancel', ['id'], 1, (id: string) => loopCommand(needProject().root, 'cancel', [id]))
 
 /** The candidate board of a build/route run: project-relative `pcb` (load it with board.geometry), the canonical
  *  `target` file adopt would replace, its gate `metrics`, `verified`, and whether run.adopt would be accepted. */

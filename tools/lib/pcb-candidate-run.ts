@@ -275,9 +275,19 @@ async function candidateOperation(folder: string, root: string, manifest: Operat
   const blocked = await routingPreflight(run);
   if (blocked !== null) return blocked;
   verifyAction(manifest, manifest.action, sources);
+  const inputCandidateSha256 = sha256File(native);
   const { code, report } = await runTool(run);
   let result: Row;
-  if (code) result = { status: 'failed', exit_code: 1, cause: report?.cause ?? `${operation} tool failed`, tool_exit: code };
+  if (code) {
+    // A failed router leaves its input candidate in the private workspace. Bind that
+    // unchanged candidate for continuation; partial router output remains separate,
+    // unverified evidence and can never become adoptable through this path.
+    const identity = sameIdentity(run), source = relativeTo(run.sourceNative, root);
+    const changed = Object.entries(sources.files).filter(([name, digest]) => name !== source && (!isFile(join(workspace, name)) || sha256File(join(workspace, name)) !== digest)).map(([name]) => name);
+    result = { status: 'failed', exit_code: 1, cause: report?.cause ?? `${operation} tool failed`, tool_exit: code,
+      candidate_verified: false, continuation_allowed: operation === 'route' && manifest.router === 'iotroute' && identity && changed.length === 0 && sha256File(native) === inputCandidateSha256,
+      ...bound(run, changed, identity) };
+  }
   else {
     const identity = sameIdentity(run), source = relativeTo(run.sourceNative, root);
     const changed = Object.entries(sources.files).filter(([name, digest]) => name !== source && (!isFile(join(workspace, name)) || sha256File(join(workspace, name)) !== digest)).map(([name]) => name);

@@ -15,7 +15,8 @@ import { parentCandidate } from './pcb-candidate.ts';
 import { verify } from './pcb-evidence.ts';
 import { holdLock } from './file-lock.ts';
 
-export interface CheckOptions extends CandidateRequest { root: string; base: string; board: string; operation?: string; fromRun?: string; arguments?: string[]; timeout: number; heartbeat: number; changed?: boolean; fresh?: boolean; baseline?: string; cycle?: string }
+export interface LoopContext { id: string; round: number; launch_id: string; source_sha256: string; deadline_ms: number }
+export interface CheckOptions extends CandidateRequest { root: string; base: string; board: string; operation?: string; fromRun?: string; arguments?: string[]; timeout: number; heartbeat: number; changed?: boolean; fresh?: boolean; baseline?: string; cycle?: string; loopContext?: LoopContext }
 
 function readDesign(args: string[]) {
   const option = (name: string) => { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : args.find(item => item.startsWith(name + '='))?.slice(name.length + 1); };
@@ -54,6 +55,10 @@ export async function startCheck(options: CheckOptions): Promise<string> {
   if (fromRun) { verify(fromRun.folder); if (!CANDIDATE.has(operation)) parentCandidate(root, action === 'inspect' && cycleFolder ? read(join(cycleFolder, 'cycle.json')).board : options.board, fromRun); }
   const candidate = OPERATIONS.has(operation) ? candidateFields(root, operation, options.board, options, parentFolder) : {};
   const actionRecord = admitAction({ root, board: options.board, operation, timeout_s: options.timeout, ...candidate, ...(fromRun ? { from_run: fromRun } : {}) } as ActionRequest);
+  if (options.loopContext && (operation !== 'route' || !/^loop-[a-f0-9]{16}$/.test(options.loopContext.id)
+      || !Number.isSafeInteger(options.loopContext.round) || options.loopContext.round < 1 || options.loopContext.round > 8
+      || !/^[a-f0-9]{24}$/.test(options.loopContext.launch_id) || options.loopContext.source_sha256 !== actionRecord?.source_revision
+      || !Number.isFinite(options.loopContext.deadline_ms) || options.loopContext.deadline_ms <= Date.now())) throw new Error('invalid or expired loop context');
   const node = which(process.env.NODE ?? 'node');
   if (!node) throw new Error('Node.js is required to run the existing gate');
   mkdirSync(base, { recursive: true });
@@ -81,7 +86,7 @@ export async function startCheck(options: CheckOptions): Promise<string> {
     created_at: utc(), root, command, timeout_s: options.timeout, heartbeat_s: options.heartbeat,
     ...(design ? { design_id: design.id, design_stage: design.stage, design_contract: { path: design.path, sha256: design.hash, content: design.content } } : {}),
     ...candidate, ...(actionRecord ? { action: actionRecord } : {}), ...(fromRun ? { from_run: fromRun } : {}),
-    operation, node, gate_config_sha256: config ? sha(config) : null,
+    operation, node, gate_config_sha256: config ? sha(config) : null, ...(options.loopContext ? { loop_context: options.loopContext } : {}),
     ...(['readiness', 'blocks', 'outcomes', 'schematic', 'design', 'parts', 'routing', 'placement', 'ml'].includes(operation) ? { arguments: options.arguments ?? [] } : {}), ...(cycleFolder ? { cycle: basename(cycleFolder) } : {}) };
   atomicJson(join(folder, 'run.json'), manifest);
   if (cycleFolder) await attach(cycleFolder, folder, { withLock: async (path, work) => {

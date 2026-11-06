@@ -1,4 +1,14 @@
 /* Runs section (phase 5): run list, candidate review, board compare, route form, adopt dialog. */
+.loop-panel input[type='number'], .loop-panel select, .loop-panel textarea {
+  color: var(--text); background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 8px; font: inherit; color-scheme: dark;
+}
+.loop-panel label { display: inline-flex; align-items: center; gap: 6px; margin: 4px 0; }
+.loop-panel textarea { min-width: 320px; }
+.loop-panel table { border-collapse: collapse; text-align: left; }
+.loop-panel th, .loop-panel td { padding: 10px 8px; vertical-align: top; border-bottom: 1px solid var(--border); }
+.loop-panel td p { margin: 6px 0; }
+.loop-panel td button { margin: 0 4px 4px 0; }
 .runsview .parts-body {
   flex-wrap: wrap;
 }

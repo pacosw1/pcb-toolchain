@@ -113,6 +113,8 @@ test('a failing tool stops before the gate and names its operation', needsBinary
   assert.equal(result.status, 'failed');
   assert.equal(result.cause, 'edit tool failed');
   assert.equal(result.tool_exit, 3);
+  assert.equal(result.candidate_verified, false);
+  assert.equal(result.continuation_allowed, false, 'failed edit never grants routing continuation');
   assert.equal(existsSync(join(folder, 'gate')), false);
 });
 
@@ -125,6 +127,16 @@ test('changing protected identity or any other source is rejected before the gat
   const { result } = await edit(project(t, WRITER(MOVED, 0, `writeFileSync('hardware-design/boards/X/gate.json', '{"project":"cad/X","checks":{}}');`)));
   assert.equal(result.status, 'failed');
   assert.deepEqual(result.protected_source_changes, ['hardware-design/boards/X/gate.json']);
+});
+
+test('failed tools cannot make altered identity or protected sources continuable', needsBinary, async t => {
+  const changed = await edit(project(t, WRITER(RESHAPED, 3)));
+  assert.equal(changed.result.candidate_verified, false);
+  assert.equal(changed.result.identity_preserved, false);
+  assert.equal(changed.result.continuation_allowed, false);
+  const altered = await edit(project(t, WRITER(BOARD, 3, `writeFileSync('hardware-design/boards/X/gate.json', '{}');`)));
+  assert.deepEqual(altered.result.protected_source_changes, ['hardware-design/boards/X/gate.json']);
+  assert.equal(altered.result.continuation_allowed, false);
 });
 
 test('canonical source changing during the operation invalidates its verdict', needsBinary, async t => {

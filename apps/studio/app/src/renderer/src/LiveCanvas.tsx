@@ -259,6 +259,7 @@ export function LiveCanvas({
     <div ref={host} className="live-canvas">
       <canvas
         ref={canvas}
+        role="img"
         aria-label="Live solver board. Drag to pan and scroll to zoom. Use the component list for keyboard selection."
         onPointerDown={(e) => {
           const v = view.current
