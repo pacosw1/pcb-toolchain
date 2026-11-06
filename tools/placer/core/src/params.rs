@@ -55,6 +55,9 @@ pub struct Params {
     /// 1 = break equal sprint overflow by unclipped peak utilization. Experimental; no verified-rate gain yet.
     #[serde(default)]
     pub route_pressure: f64,
+    /// Weight of an unclipped quadratic congestion term (demand^2 / threshold per cell). 0 = off (default).
+    #[serde(default)]
+    pub cong_soft: f64,
     // legalizer
     pub legal_step: f64,
     pub legal_radius: f64,
@@ -120,6 +123,7 @@ impl Default for Params {
             clu_gather: 1.0,
             exact_edge: 1.0,
             route_pressure: 0.0,
+            cong_soft: 0.0,
             legal_step: 0.25,
             legal_radius: 5.0,
             legal_passes: 3.0,
@@ -158,6 +162,9 @@ impl Params {
         let params: Self = serde_json::from_value(map)?;
         if params.route_pressure != 0.0 && params.route_pressure != 1.0 {
             return Err("route_pressure must be 0 or 1".into());
+        }
+        if params.cong_soft < 0.0 {
+            return Err("cong_soft must be >= 0".into());
         }
         Ok(params)
     }
