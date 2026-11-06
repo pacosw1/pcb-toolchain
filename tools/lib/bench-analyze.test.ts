@@ -34,7 +34,7 @@ test('trials with no sealed run count as failures, not omissions', () => {
   assert.equal(result.no_run_trials + result.timeout_trials, 6);
   assert.equal(result.overall.pairs, 12);
   assert.equal(result.overall.b.successes, 6);
-  assert.equal(result.evidence_complete, false);
+  assert.equal(result.evidence_complete, true);   // a deadline is a known failure, not missing evidence
 });
 
 test('compare pairs the same cases across two results and refuses a different suite or budget', () => {
