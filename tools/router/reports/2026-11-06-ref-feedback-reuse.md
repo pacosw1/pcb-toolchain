@@ -6,6 +6,11 @@ Native-stage wall/CPU fell in this single shared-host pair; the option remains
 off by default. Both official ESP32 gates still fail on stale exemptions, with
 zero unwaived findings. The first prototype's failed preservation is retained.
 
+Later user-authorized stale-entry cleanup gives both exact candidates a fresh
+full-gate PASS under their reviewed candidate-specific ledgers. See the separate
+[stale-exemption closure](2026-11-06-esp32-stale-exemptions.md). The measured runs
+and their original gate failures below remain unchanged historical records.
+
 ## Why the existing reuse path was not used
 
 `Run::ref_gate` previously called a new full attempt without a seed after a

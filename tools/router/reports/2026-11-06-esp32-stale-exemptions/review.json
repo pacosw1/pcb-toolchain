@@ -1,0 +1,433 @@
+{
+  "schema": "pcb.stale-exemption-review.v1",
+  "authority": "user repo message2776",
+  "basis": "exact corrected1412 candidates, removal of only checker-reported stale entries",
+  "created_at": "2026-11-06T02:57:58.895Z",
+  "original_root": "/var/tmp/ref-feedback-reuse-1412-exact",
+  "cases": [
+    {
+      "label": "esp32-baseline",
+      "project": "/var/tmp/esp32-stale-1446/esp32-baseline/project",
+      "candidate_sha256": "e9464aaa21ec7792469d02c4cd7244314ab9e4dd1655ad960536a3b709c499bf",
+      "original_source_sha256": "b6b97508157893ccca5c5c2cc3e0c90d55691a42d094f9c1015ad8b7f31bdb2b",
+      "ledger_relative": "hardware-design/boards/ESP32-CORE/kicad-happy-exempt.json",
+      "before_sha256": "3c10da13744ed5d072529a1c273cda4c09d6791f3afd704e4067a393f0160a1e",
+      "after_sha256": "8c4ad6563595e67b02a8eb64fdd714fc4e0c7f3c777ad763da7b244a21c91d71",
+      "before_count": 37,
+      "after_count": 32,
+      "removed": [
+        {
+          "rule": "RP-001",
+          "net": "/ETH_RSTn",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (123.310, 112.991), (124.330, 134.880) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/EXP_P04",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (125.393, 101.627) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/EXP_P06",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (115.747, 109.889) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/SPI_MOSI_S",
+          "reason": "SPI to the on-board W25Q128 flash (U5) and the J2 carrier link, <= 40 MHz, 33 R source resistors (R20-R25). Layer change(s) at (158.497, 114.915), (155.775, 118.585) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit and found no room at these (pads, other-net vias and tracks). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (reference-planes.json alt_refs: AC ground through C7/C8 and the decoupling capacitors); si_planes passes (0 failures). Lead decision D6 2026-09-26: best effort for the stitch, exemption with the reason."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/WDI",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (127.202, 101.240), (144.314, 115.173) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        }
+      ],
+      "retained": [
+        {
+          "rule": "RP-001",
+          "net": "/CC2",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (165.976, 123.552) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/ETH_CSn",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (147.333, 112.743) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/ETH_INTn",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (133.462, 139.432), (126.820, 110.636) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/EXP_INTn",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (141.841, 103.736), (164.065, 107.204) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/EXP_P00",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (124.451, 106.813) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/EXP_P01",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (123.868, 105.034) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/EXP_P02",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (126.365, 101.302) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/EXP_P03",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (126.486, 104.260), (121.489, 117.489) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/EXP_P07",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (121.375, 104.424) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/FLASH_CSn",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (137.478, 134.474), (154.385, 116.338) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/I2C_SCL",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (128.924, 117.248), (130.095, 120.385), (151.458, 125.462), (166.218, 111.398) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/I2C_SDA",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (128.771, 119.112), (165.831, 112.381), (128.964, 115.956) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/ILIM_FLTn",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (131.957, 130.604), (125.139, 107.402) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/IO0",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (163.203, 143.105), (169.113, 109.393) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/IO1",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (146.849, 113.681) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/IO2",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (163.098, 104.933) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/IO3",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (168.666, 104.918) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/IO4",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (134.765, 119.664), (150.044, 105.332), (133.194, 119.807) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/IO5",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (134.953, 129.608), (127.343, 129.713), (150.020, 107.913) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/IO6",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (131.273, 123.215) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/IO7",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (132.395, 129.092), (140.003, 128.533), (151.344, 110.725), (126.377, 140.980) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/IO8",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (136.044, 115.745), (135.946, 101.374), (151.351, 113.095) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/IO9",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (130.662, 124.248), (126.172, 119.524) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/PR1",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (144.523, 130.306), (144.120, 131.892) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/RTC_INTn",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (124.015, 125.234), (124.429, 115.745) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/SPI_MISO",
+          "reason": "SPI to the on-board W25Q128 flash (U5) and the J2 carrier link, <= 40 MHz, 33 R source resistors (R20-R25). Layer change(s) at (154.739, 115.374), (137.069, 139.688) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit and found no room at these (pads, other-net vias and tracks). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (reference-planes.json alt_refs: AC ground through C7/C8 and the decoupling capacitors); si_planes passes (0 failures). Lead decision D6 2026-09-26: best effort for the stitch, exemption with the reason."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/SPI_MOSI",
+          "reason": "SPI to the on-board W25Q128 flash (U5) and the J2 carrier link, <= 40 MHz, 33 R source resistors (R20-R25). Layer change(s) at (136.044, 138.899), (154.622, 119.871) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit and found no room at these (pads, other-net vias and tracks). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (reference-planes.json alt_refs: AC ground through C7/C8 and the decoupling capacitors); si_planes passes (0 failures). Lead decision D6 2026-09-26: best effort for the stitch, exemption with the reason."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/SPI_SCLK",
+          "reason": "SPI to the on-board W25Q128 flash (U5) and the J2 carrier link, <= 40 MHz, 33 R source resistors (R20-R25). Layer change(s) at (156.338, 119.161) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit and found no room at these (pads, other-net vias and tracks). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (reference-planes.json alt_refs: AC ground through C7/C8 and the decoupling capacitors); si_planes passes (0 failures). Lead decision D6 2026-09-26: best effort for the stitch, exemption with the reason."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/SPI_SCLK_S",
+          "reason": "SPI to the on-board W25Q128 flash (U5) and the J2 carrier link, <= 40 MHz, 33 R source resistors (R20-R25). Layer change(s) at (155.424, 119.611), (159.412, 113.499) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit and found no room at these (pads, other-net vias and tracks). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (reference-planes.json alt_refs: AC ground through C7/C8 and the decoupling capacitors); si_planes passes (0 failures). Lead decision D6 2026-09-26: best effort for the stitch, exemption with the reason."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/U0RXD",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (146.740, 136.270), (149.267, 121.737) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/U0TXD",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (152.316, 125.517), (156.780, 105.011), (146.875, 122.213) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/USB_PWRn",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (138.167, 123.383), (134.621, 130.531), (130.058, 106.632) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        }
+      ],
+      "changed_files": [
+        "hardware-design/boards/ESP32-CORE/cad/ESP32-CORE/ESP32-CORE.kicad_pcb",
+        "hardware-design/boards/ESP32-CORE/kicad-happy-exempt.json"
+      ],
+      "original_happy_result": {
+        "schema_version": 1,
+        "completed": true,
+        "findings": 0,
+        "stale_exemptions": 5,
+        "exit": 2
+      }
+    },
+    {
+      "label": "esp32-scoped",
+      "project": "/var/tmp/esp32-stale-1446/esp32-scoped/project",
+      "candidate_sha256": "f3dee697ad4d3bd2ecd1cf72d4df3dffbadf4dd7c4d2a30a44c7bbb82035462e",
+      "original_source_sha256": "b6b97508157893ccca5c5c2cc3e0c90d55691a42d094f9c1015ad8b7f31bdb2b",
+      "ledger_relative": "hardware-design/boards/ESP32-CORE/kicad-happy-exempt.json",
+      "before_sha256": "3c10da13744ed5d072529a1c273cda4c09d6791f3afd704e4067a393f0160a1e",
+      "after_sha256": "3fee01897da6491edf9de4cda591862dd3b7ad98098d077787f6d9abae5fed21",
+      "before_count": 37,
+      "after_count": 30,
+      "removed": [
+        {
+          "rule": "RP-001",
+          "net": "/ETH_INTn",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (133.462, 139.432), (126.820, 110.636) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/ETH_RSTn",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (123.310, 112.991), (124.330, 134.880) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/EXP_P02",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (126.365, 101.302) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/EXP_P03",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (126.486, 104.260), (121.489, 117.489) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/EXP_P06",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (115.747, 109.889) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/EXP_P07",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (121.375, 104.424) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/SPI_MOSI_S",
+          "reason": "SPI to the on-board W25Q128 flash (U5) and the J2 carrier link, <= 40 MHz, 33 R source resistors (R20-R25). Layer change(s) at (158.497, 114.915), (155.775, 118.585) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit and found no room at these (pads, other-net vias and tracks). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (reference-planes.json alt_refs: AC ground through C7/C8 and the decoupling capacitors); si_planes passes (0 failures). Lead decision D6 2026-09-26: best effort for the stitch, exemption with the reason."
+        }
+      ],
+      "retained": [
+        {
+          "rule": "RP-001",
+          "net": "/CC2",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (165.976, 123.552) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/ETH_CSn",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (147.333, 112.743) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/EXP_INTn",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (141.841, 103.736), (164.065, 107.204) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/EXP_P00",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (124.451, 106.813) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/EXP_P01",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (123.868, 105.034) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/EXP_P04",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (125.393, 101.627) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/FLASH_CSn",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (137.478, 134.474), (154.385, 116.338) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/I2C_SCL",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (128.924, 117.248), (130.095, 120.385), (151.458, 125.462), (166.218, 111.398) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/I2C_SDA",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (128.771, 119.112), (165.831, 112.381), (128.964, 115.956) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/ILIM_FLTn",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (131.957, 130.604), (125.139, 107.402) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/IO0",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (163.203, 143.105), (169.113, 109.393) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/IO1",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (146.849, 113.681) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/IO2",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (163.098, 104.933) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/IO3",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (168.666, 104.918) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/IO4",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (134.765, 119.664), (150.044, 105.332), (133.194, 119.807) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/IO5",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (134.953, 129.608), (127.343, 129.713), (150.020, 107.913) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/IO6",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (131.273, 123.215) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/IO7",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (132.395, 129.092), (140.003, 128.533), (151.344, 110.725), (126.377, 140.980) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/IO8",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (136.044, 115.745), (135.946, 101.374), (151.351, 113.095) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/IO9",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (130.662, 124.248), (126.172, 119.524) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/PR1",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (144.523, 130.306), (144.120, 131.892) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/RTC_INTn",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (124.015, 125.234), (124.429, 115.745) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/SPI_MISO",
+          "reason": "SPI to the on-board W25Q128 flash (U5) and the J2 carrier link, <= 40 MHz, 33 R source resistors (R20-R25). Layer change(s) at (154.739, 115.374), (137.069, 139.688) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit and found no room at these (pads, other-net vias and tracks). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (reference-planes.json alt_refs: AC ground through C7/C8 and the decoupling capacitors); si_planes passes (0 failures). Lead decision D6 2026-09-26: best effort for the stitch, exemption with the reason."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/SPI_MOSI",
+          "reason": "SPI to the on-board W25Q128 flash (U5) and the J2 carrier link, <= 40 MHz, 33 R source resistors (R20-R25). Layer change(s) at (136.044, 138.899), (154.622, 119.871) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit and found no room at these (pads, other-net vias and tracks). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (reference-planes.json alt_refs: AC ground through C7/C8 and the decoupling capacitors); si_planes passes (0 failures). Lead decision D6 2026-09-26: best effort for the stitch, exemption with the reason."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/SPI_SCLK",
+          "reason": "SPI to the on-board W25Q128 flash (U5) and the J2 carrier link, <= 40 MHz, 33 R source resistors (R20-R25). Layer change(s) at (156.338, 119.161) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit and found no room at these (pads, other-net vias and tracks). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (reference-planes.json alt_refs: AC ground through C7/C8 and the decoupling capacitors); si_planes passes (0 failures). Lead decision D6 2026-09-26: best effort for the stitch, exemption with the reason."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/SPI_SCLK_S",
+          "reason": "SPI to the on-board W25Q128 flash (U5) and the J2 carrier link, <= 40 MHz, 33 R source resistors (R20-R25). Layer change(s) at (155.424, 119.611), (159.412, 113.499) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit and found no room at these (pads, other-net vias and tracks). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (reference-planes.json alt_refs: AC ground through C7/C8 and the decoupling capacitors); si_planes passes (0 failures). Lead decision D6 2026-09-26: best effort for the stitch, exemption with the reason."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/U0RXD",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (146.740, 136.270), (149.267, 121.737) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/U0TXD",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (152.316, 125.517), (156.780, 105.011), (146.875, 122.213) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/USB_PWRn",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (138.167, 123.383), (134.621, 130.531), (130.058, 106.632) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        },
+        {
+          "rule": "RP-001",
+          "net": "/WDI",
+          "reason": "Slow net (static, I2C 400 kHz, UART, strap, open-drain interrupt or a logic-level line; reference-planes.json). Layer change(s) at (127.202, 101.240), (144.314, 115.173) have no free place for a 0.6 mm GND via within 1.0 mm: pcbtool stitch --best-effort (2026-10-15) placed the vias that fit (3 added) and found no room at these (pads, other-net vias and tracks, the U1 module area). The F.Cu run is over the In1 GND plane and the B.Cu run over the In2 VDD_3V3 plane (AC ground via the decoupling capacitors). Slow/static net, lead decision D6 2026-09-26."
+        }
+      ],
+      "changed_files": [
+        "hardware-design/boards/ESP32-CORE/cad/ESP32-CORE/ESP32-CORE.kicad_pcb",
+        "hardware-design/boards/ESP32-CORE/kicad-happy-exempt.json"
+      ],
+      "original_happy_result": {
+        "schema_version": 1,
+        "completed": true,
+        "findings": 0,
+        "stale_exemptions": 7,
+        "exit": 2
+      }
+    }
+  ],
+  "binary_sha256": "1c8fa03450d42b3bc9a6ea4c3566f350e083a877a14ef233372bc8439196cf59",
+  "node_sha256": "3517c2df0b2f8cd7f422b4b8450ef81c6889f08eb03e281d6de9079b15e6a327"
+}
