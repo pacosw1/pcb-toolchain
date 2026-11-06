@@ -139,20 +139,30 @@ export type RouteResult = number[] | RouteOutcome | Measured;
 /** The injected work of a step. search gets the virtual problem; null is no result (a remote timeout), a failed step. */
 export interface Effects {
   search(problem: Problem, step: number): Maybe<SearchResult | null | undefined>;
-  write(problem: Problem, pose: Pose, k: number, step: number): Maybe<string>;
-  route(board: string, step: number): Maybe<RouteResult>;
+  write(problem: Problem, pose: Pose, k: number, step: number, slot?: number): Maybe<string>;
+  route(board: string, step: number, slot?: number): Maybe<RouteResult>;
+  /** Route-top: caps the time of the next write/route to this many seconds; null lifts the cap. */
+  limit?(seconds: number | null): void;
 }
 
 export interface LoopOptions {
   s0?: number; budget?: number; clock?: () => number; target?: number; shrink?: number; tol?: number;
   log?: ((line: string) => void) | null; sMin?: number; realFirst?: boolean; diagnosticBudget?: number | null;
   kCap?: number | null; rank?: Rank; lengthPatience?: number | null;
+  /** Opt-in: route the top K legal retained candidates of a step, each within routeTopBudget seconds (default: the time left / K). */
+  routeTop?: number; routeTopBudget?: number | null; routeTopPick?: RoutePick;
 }
+
+export const ROUTE_PICKS = ['first', 'length'] as const;
+export type RoutePick = (typeof ROUTE_PICKS)[number];
+
+/** Outcome of one retained candidate that was routed. */
+export interface RouteTopRow { slot: number; cost: Num | null; budget_s: number; elapsed_s: number; runs: number[]; unrouted: number | null; passed: boolean; length_mm: Num | null; status: string | null; chosen: boolean }
 
 export interface Step {
   s: number; k: number; tries: number; cost: Num | null; illegal: string[]; phase: string; history: unknown[]; pose: Pose | null;
   halo: Num[]; runs: number[]; unrouted: number | null; passed: boolean; board: string | null; status?: string;
-  measure?: Measure; box_sum?: Num | null; route_decision?: Dict; routed_candidate?: unknown; next_action?: unknown;
+  measure?: Measure; box_sum?: Num | null; route_top?: RouteTopRow[]; route_decision?: Dict; routed_candidate?: unknown; next_action?: unknown;
 }
 
 export interface LoopResult {
@@ -199,6 +209,9 @@ class Loop {
   private readonly target: number;
   private readonly log: ((line: string) => void) | null;
   private readonly rank: Rank;
+  private readonly routeTop: number;
+  private readonly routeTopBudget: number | null;
+  private readonly routeTopPick: RoutePick;
 
   constructor(pr: Problem, size: readonly number[], effects: Effects, options: LoopOptions) {
     this.pr = pr;
@@ -210,6 +223,9 @@ class Loop {
     this.target = options.target ?? 0;
     this.log = options.log ?? null;
     this.rank = options.rank ?? 'halo';
+    this.routeTop = Math.max(1, options.routeTop ?? 1);
+    this.routeTopBudget = options.routeTopBudget ?? null;
+    this.routeTopPick = options.routeTopPick ?? 'first';
   }
 
   over(): boolean {
@@ -238,6 +254,7 @@ class Loop {
       halo: q.units.map(unit => (unit.rects.length ? unit.rects[0][4] : new Float(0))),
     } as Step;
     if (candidate.illegal.length) Object.assign(t, noRoute(), { board: null });
+    else if (this.routeTop > 1) await this.routedTop(t, q, res, n);
     else await this.routed(t, q, candidate.pose as Pose, n);
     this.steps.push(t);
     this.report(t, n);
@@ -274,6 +291,46 @@ class Loop {
       if (error instanceof TimeoutExpired) Object.assign(t, noRoute(), { status: 'timeout' });
       else throw error;
     }
+  }
+
+  /** Routes the first routeTop legal candidates one after the other, each in its own slice, and keeps the first verified one
+   *  (pick first), or the shortest verified one (pick length). With none verified, the fewest unrouted wins, the earliest on a tie. */
+  private async routedTop(t: Step, q: Problem, res: SearchResult, n: number): Promise<void> {
+    const legal = res.candidates.filter(c => !c.illegal.length && c.pose).slice(0, this.routeTop);
+    const slice = Math.max(0, this.routeTopBudget ?? (this.budget - (this.clock() - this.started)) / this.routeTop);
+    const probes: { probe: Step; row: RouteTopRow }[] = [];
+    for (const [slot, candidate] of legal.entries()) {
+      if (slot && this.over()) break;
+      const probe = { ...t, cost: candidate.cost, pose: candidate.pose, illegal: candidate.illegal, ...noRoute() } as Step;
+      const began = this.clock();
+      this.effects.limit?.(slice);
+      try {
+        probe.board = await this.effects.write(q, candidate.pose as Pose, t.k, n, slot);
+        try {
+          if (this.over()) throw new TimeoutExpired('routing', 0);
+          this.record(probe, q, candidate.pose as Pose, await this.effects.route(probe.board, n, slot));
+        } catch (error) {
+          if (error instanceof TimeoutExpired) Object.assign(probe, noRoute(), { status: 'timeout' });
+          else throw error;
+        }
+      } finally {
+        this.effects.limit?.(null);
+      }
+      const length = probe.measure?.length_mm ?? null;
+      const row: RouteTopRow = {
+        slot, cost: candidate.cost, budget_s: slice, elapsed_s: this.clock() - began, runs: [...probe.runs], unrouted: probe.unrouted, passed: probe.passed,
+        length_mm: length, status: probe.status ?? null, chosen: false,
+      };
+      probes.push({ probe, row });
+      this.log?.(`step ${n} route-top ${slot} cost ${cost1(number(candidate.cost))} runs ${pyStr(probe.runs)} -> ${probe.passed ? 'PASS' : 'FAIL'} in ${fixed(row.elapsed_s, 1)} s`);
+      if (probe.passed && this.routeTopPick === 'first') break;
+    }
+    const pool = probes.filter(p => p.probe.passed);
+    const key = (p: { probe: Step; row: RouteTopRow }): number[] => (this.routeTopPick === 'length' && pool.length
+      ? [p.row.length_mm === null ? Infinity : number(p.row.length_mm), p.row.slot] : [p.probe.unrouted ?? Infinity, p.row.slot]);
+    const chosen = minBy(pool.length ? pool : probes, key);
+    chosen.row.chosen = true;
+    Object.assign(t, chosen.probe, { route_top: probes.map(p => p.row) });
   }
 
   private record(t: Step, q: Problem, pose: Pose, outcome: RouteResult): void {

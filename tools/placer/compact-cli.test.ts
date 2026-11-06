@@ -260,3 +260,12 @@ test('a router that prints no record is an ordinary failed step, and is not rout
   assert.equal((await run.route(native, 1) as RouteOutcome).stop, true);
   assert.equal(run.calls, 1);
 });
+
+test('route-top is off by default and bounded by the retained candidates', () => {
+  const plain = parseArgs(BASE);
+  settle(plain);
+  assert.deepEqual([plain.route_top, plain.route_top_budget, plain.route_top_pick], [1, null, 'first']);
+  assert.throws(() => settle(parseArgs([...BASE, '--route-top', '3'])), /route-top/);
+  settle(parseArgs([...BASE, '--route-top', '3', '--retain-candidates', '3', '--route-top-budget', '600', '--route-top-pick', 'length']));
+  assert.throws(() => parseArgs([...BASE, '--route-top-pick', 'best']), /invalid choice/);
+});
