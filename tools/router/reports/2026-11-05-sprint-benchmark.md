@@ -1,5 +1,7 @@
 # Long run versus packed sprints (#1318, #1358)
 
+Follow-up: the [ESP32-CORE rev B comparison (#1399)](2026-11-06-esp32-sprints.md) uses the repaired pinned solver, eight GiB and a calibrated budget. Both matched singles qualify for that benchmark; neither sprint does. Its full gates still fail, and its feedback-policy and shared-host limitations remain explicit. The historical measurements below are unchanged.
+
 ## Decision after the three-board extension
 
 **The no-go for adding LLM scheduling/ranking holds on this evidence.** FIELD-24V-BUS adds another fully verified comparison with no quality improvement from sprints and greater whole-job CPU. ESP32-CORE rev B produces no verified candidate within either tested budget, so its quality comparison is inconclusive. The matched comparisons use pinned toolchain `696715d`. A subsequent [current-main single calibration](#current-main-esp32-calibration-1374) also did not verify and therefore stopped before any sprint comparison. There is no statistical or general large-board claim. See the [extension results](#three-board-extension-1358).
