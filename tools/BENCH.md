@@ -115,13 +115,20 @@ the case, never changed. The lab is not at a fixed place (`~/Documents/iot-lab` 
 - `parser`: `claude-stream-json` or `codex-jsonl`. The codex parser follows the documented `codex exec --json` events and is not yet checked against a recorded run.
 - `design_contract_exempt: true` writes `design_contract_exempt: {reason: "agent trial baseline"}` into the scratch registry row of the board.
   The lab is not changed. The result records `design_contract_exempt_applied`. Without it, a board with no design contract fails with `design_contract_missing`.
+- `setup` (optional): `{"argv": [...], "env": {...}}`, a step that `prepare` runs in the project to make the start board. Placeholders: `{root}`, `{board}`. A failed step stops `prepare`.
+  `prepare` seals the result and hashes it as the baseline, so the setup's changes do not count against the agent. `prepare.json` records the step.
+  `tools/trial-start-unplaced.sh INPUT.kicad_pcb SEED` is the step for a trial from the complete schematic: footprints and outline stay, the placement is scrambled from the seed, all tracks and vias go. It runs in the route image, so its `env` needs `BENCH_TOOLCHAIN`.
+
+- `verify_prefix` (optional): a command prefix such as `["tools/bench-in-route.sh", "."]`. `collect` runs the freshness check of the final gate run through it, with `agent.env`.
+
+On a Mac a gate or a route must run in the route image (see `bench-local.md`). The prompt then tells the agent to use `tools/bench-in-route.sh . tools/pcb ...`, `agent.env` sets `BENCH_TOOLCHAIN`, and the case needs `verify_prefix`: tool versions on the host differ from the image, so a check on the host reports every passed run as `stale_inputs`.
 
 ## What `prepare` does
 
 It builds `DIR/project` with `git archive` of the lab commit: the board folder, the small shared registry files (`boards.json`, `components.json`,
 `courtyard-bodies.json`, `ibis`, `part-reviews`, `reviews`, `design-contracts`), and `blocks`. Then it archives, until nothing new is named, every gate
 input that exists in the lab commit (the `cad-assets/Cnnn` folders the board uses, datasheets and IBIS files that the rule files and driver tables name).
-Gate inputs that the lab commit does not hold are listed in `prepare.json` as `missing_gate_inputs`, not hidden. It copies `tools/` of this
+Gate inputs that the lab commit does not hold are listed in `prepare.json` as `missing_gate_inputs`, not hidden. It also archives the context sources of the board (`AGENTS.md` and the `hardware-design` packet files); `next` reports `blocked` without them, and the ones the commit lacks go into `missing_context_sources`. It copies `tools/` of this
 toolchain checkout (no `node_modules`, no `target`, no `toolchain.lock`), writes `.claude/settings.json` with the CAD guard hook, makes the first
 seal (writer `trial-prepare`, reason `trial baseline`), and records `DIR/prepare.json` with the case hash, lab commit, toolchain git sha and the hash of every
 file under `hardware-design/`. `prepare.json` holds no time, so the same case, lab and toolchain give the same file. A failed `prepare` removes the half-built project.

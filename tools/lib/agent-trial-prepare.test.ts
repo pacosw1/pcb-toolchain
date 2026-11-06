@@ -101,3 +101,38 @@ test('gate inputs found in the lab are archived, and the ones the lab lacks are 
     assert.ok(!record.missing_gate_inputs.includes('hardware-design/registry/datasheets/big.pdf'));
   } finally { t.cleanup(); }
 });
+
+test('prepare archives the context sources of the board and lists the ones the lab lacks', () => {
+  const t = trialFixture({}, { 'AGENTS.md': 'rules', 'hardware-design/STATUS.md': 'status' });
+  try {
+    const record = prepare(t), project = join(t.out, 'project');
+    assert.equal(read(join(project, 'AGENTS.md')), 'rules');
+    assert.equal(read(join(project, 'hardware-design/STATUS.md')), 'status');
+    assert.ok(record.missing_context_sources.includes('hardware-design/REQUIREMENTS.md'));
+    assert.ok(!record.missing_context_sources.includes('AGENTS.md'));
+  } finally { t.cleanup(); }
+});
+
+test('a setup step changes the start board, and the seal and the baseline hold the changed board', () => {
+  const t = trialFixture(), pcb = 'hardware-design/boards/X/cad/X.kicad_pcb';
+  try {
+    rewriteCase(t, value => { value.setup = { argv: ['sh', '-c', `printf '(kicad_pcb %s {board})' "$MARK" > ${pcb}`], env: { MARK: 'stripped' } }; });
+    const record = prepare(t), project = join(t.out, 'project');
+    assert.equal(read(join(project, pcb)), '(kicad_pcb stripped X)');
+    assert.equal(sealStatus(project, 'X').state, 'sealed');
+    assert.equal(record.files[pcb], sha('(kicad_pcb stripped X)'));
+    assert.deepEqual(record.setup.argv.slice(0, 2), ['sh', '-c']);
+    const log = read(join(project, '.gate/cad-seal/X.jsonl')).trim().split('\n').map(line => JSON.parse(line));
+    assert.deepEqual(log.map(line => line.tool), ['trial-prepare', 'trial-setup']);
+    assert.equal(record.seal_baseline_lines, 2);
+  } finally { t.cleanup(); }
+});
+
+test('a setup step that fails stops prepare, names its output, and leaves no project', () => {
+  const t = trialFixture();
+  try {
+    rewriteCase(t, value => { value.setup = { argv: ['sh', '-c', 'echo boom >&2; exit 3'] }; });
+    assert.throws(() => prepare(t), /setup failed.*boom/s);
+    assert.ok(!existsSync(join(t.out, 'project')) && !existsSync(join(t.out, 'prepare.json')));
+  } finally { t.cleanup(); }
+});

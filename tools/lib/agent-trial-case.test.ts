@@ -66,3 +66,18 @@ test('readCase returns the hash of the file bytes and refuses bad JSON', () => {
     assert.throws(() => readCase(path), /not valid JSON/);
   } finally { rmSync(folder, { recursive: true, force: true }); }
 });
+
+test('a setup step needs a string argv, known placeholders and no trial variable in its env', () => {
+  const base = { ...good(), setup: { argv: ['sh', 'x', '{root}', '{board}'], env: { A: '1' } } };
+  assert.deepEqual(validateCase(base).setup, base.setup);
+  assert.throws(() => validateCase({ ...base, setup: { argv: [] } }), /setup.argv/);
+  assert.throws(() => validateCase({ ...base, setup: { argv: ['{prompt_file}'] } }), /placeholder \{prompt_file\}/);
+  assert.throws(() => validateCase({ ...base, setup: { argv: ['x'], env: { IOT_LAB: 'y' } } }), /setup.env cannot set IOT_LAB/);
+  assert.equal(validateCase(good()).setup, undefined);
+});
+
+test('verify_prefix is a nonempty string array when present', () => {
+  assert.deepEqual(validateCase({ ...good(), verify_prefix: ['tools/bench-in-route.sh', '.'] }).verify_prefix, ['tools/bench-in-route.sh', '.']);
+  assert.throws(() => validateCase({ ...good(), verify_prefix: [] }), /verify_prefix/);
+  assert.equal(validateCase(good()).verify_prefix, undefined);
+});
