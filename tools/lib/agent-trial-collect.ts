@@ -142,7 +142,7 @@ function sealBlock(project: string, board: string, baselineLines: number): { blo
 
 /** Files under hardware-design that differ from the prepared baseline, minus the sealed CAD files whose current content the seal accepts. */
 function outsideTools(project: string, board: string, baseline: Record<string, string>, status: SealStatus): Row {
-  const now = hashTree(project, 'hardware-design'), sealFile = `hardware-design/boards/${board}/${SEAL_FILE}`;
+  const now = Object.fromEntries(Object.entries(hashTree(project, 'hardware-design')).filter(([path]) => !path.split('/').includes('.gate'))), sealFile = `hardware-design/boards/${board}/${SEAL_FILE}`;
   const sealed = status.state === 'missing' || status.state === 'not_canonical' ? [] : Object.keys(readObject<{ files: Record<string, string> }>(join(project, sealFile)).files);
   const broken = new Set([...status.changed, ...status.added, ...status.removed]);
   const accounted = new Set([...sealed, sealFile].filter(path => !broken.has(path) && (path === sealFile || status.state === 'sealed')));

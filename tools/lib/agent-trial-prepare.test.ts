@@ -102,6 +102,26 @@ test('gate inputs found in the lab are archived, and the ones the lab lacks are 
   } finally { t.cleanup(); }
 });
 
+test('a lab script that the gate names is archived, the toolchain copy wins, and a script the lab lacks is listed', () => {
+  const t = trialFixture({ semantic: [{ stage: 'a', run: ['python3', 'tools/check-x.py'] }, { stage: 'b', run: ['python3', 'tools/gone.py'] }, { stage: 'c', run: ['node', 'tools/gate.mjs'] }] }, { 'tools/check-x.py': 'pass\n', 'tools/build-x.py': 'loaded by check-x\n', 'tools/gate.mjs': '// lab copy' });
+  try {
+    const record = prepare(t);
+    assert.equal(read(join(t.out, 'project/tools/check-x.py')), 'pass\n');
+    assert.equal(read(join(t.out, 'project/tools/build-x.py')), 'loaded by check-x\n', 'a lab script can load another one that gate.json does not name');
+    assert.equal(read(join(t.out, 'project/tools/gate.mjs')), '// stub gate');
+    assert.ok(record.missing_gate_inputs.includes('tools/gone.py'), JSON.stringify(record.missing_gate_inputs));
+  } finally { t.cleanup(); }
+});
+
+test('the datasheets that the schematic names are archived, and no other', () => {
+  const t = trialFixture({}, { 'hardware-design/boards/X/cad/X.kicad_sch': '(kicad_sch C123 (property "Datasheet" "hardware-design/registry/datasheets/used.pdf") (property "Datasheet" "") (property "Datasheet" "https://x.example/none.pdf"))', 'hardware-design/registry/datasheets/used.pdf': 'pdf' });
+  try {
+    prepare(t);
+    assert.ok(existsSync(join(t.out, 'project/hardware-design/registry/datasheets/used.pdf')));
+    assert.ok(!existsSync(join(t.out, 'project/hardware-design/registry/datasheets/big.pdf')));
+  } finally { t.cleanup(); }
+});
+
 test('prepare archives the context sources of the board and lists the ones the lab lacks', () => {
   const t = trialFixture({}, { 'AGENTS.md': 'rules', 'hardware-design/STATUS.md': 'status' });
   try {
