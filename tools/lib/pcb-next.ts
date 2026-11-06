@@ -1,6 +1,6 @@
 // Read-only decisions from sealed receipts. Commands are recommendations, never executed here.
 import { randomUUID } from 'node:crypto';
-import { lstatSync, readdirSync } from 'node:fs';
+import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import { STAGES } from './design-contract-load.ts';
 import { designExemption } from './design-exemption.ts';
@@ -324,6 +324,7 @@ export async function nextAction(rootPath: string, board: string, options: NextO
       }
       if (CANDIDATE.has(operation) && result.identity_preserved === true && result.source_unchanged === true && ['erc_errors', 'drc_errors', 'drc_parity'].every(key => raw.metrics?.[key] === 0) && (raw.metrics?.drc_unconnected ?? 0) > 0) return finish('needs_diagnosis', 'candidate_connectivity_open', 'Isolated candidate preserves design identity but needs routing diagnosis', 'diagnose_candidate', ['routing', '--from-run', basename(folder), '--json', 'diagnose', board, '--evidence', join(gateDir, 'result.json')], { evidence: { path: join(gateDir, 'drc.json') } });
       const { code, message, ...details } = currentFinding(folder, gateDir, raw, board, cfg.get('project') as string);
+      if (!/\(segment\s/.test(readFileSync(join(root, `${context.project}.kicad_pcb`), 'utf8'))) details.placement_start = `tools/pcb place ${board} --json`;   // no copper yet: the placer gives a start
       return finish('blocked', String(code), String(message), 'inspect_finding', explain, details);
     }
     if (raw.exit !== 0 || result.status !== 'passed') return finish('blocked', 'operation_failed', result.cause ?? 'Operation did not pass after its native gate', 'inspect', explain, { evidence: { path: join(folder, 'operation', operation + '.log') } });

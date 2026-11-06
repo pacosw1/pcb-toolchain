@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -100,6 +100,13 @@ test('legacy receipts cannot become current and G5 requests a fresh check', asyn
 test('current sealed checks supersede legacy failures without granting order readiness', async t => {
   const f = fixture(t); f.run(); const report = await f.next();
   assert.equal(report.evidence.freshness, 'current'); assert.equal(report.state, 'needs_release'); assert.equal(report.readiness_verified, false); assert.equal(f.probes(), 1);
+});
+
+test('a failed board with no copper names the automatic placer', async t => {
+  const f = fixture(t); f.run('run-failed', 'check', 'failed');
+  assert.equal((await f.next()).blocker?.placement_start, 'tools/pcb place X --json');
+  const routed = await (async () => { const native = f.project + '.kicad_pcb'; writeFileSync(native, readFileSync(native, 'utf8') + '(segment (start 0 0) (end 1 0))\n'); f.run('run-failed-2', 'check', 'failed'); return f.next(); })();
+  assert.equal(routed.blocker?.placement_start, undefined);
 });
 
 test('completed failures expose their native finding and location', async t => {
