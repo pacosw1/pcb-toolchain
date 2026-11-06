@@ -8,10 +8,11 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import { iotrouteMissing } from './iotroute-bin.ts';
+import { exemptBoard } from './design-exempt-fixture.ts';
 import { BOARD as FIXTURE_BOARD, makeFixture } from './part-fixture.ts';
 import { verify } from './pcb-evidence.ts';
 import { postVerifyCommands } from './pcb-candidate-run.ts';
-import { candidateLayoutCheck, type OperationManifest } from './pcb-candidate-screens.ts';
+import { candidateLayoutCheck, designAdmission, type OperationManifest } from './pcb-candidate-screens.ts';
 import { EscapeStageReceipts } from './route-decision-escape.ts';
 import { status } from './pcb-runs.ts';
 import { sha } from './pcb-workflow.ts';
@@ -51,6 +52,7 @@ function project(t: { after(fn: () => void): void }, writer = WRITER(MOVED), gat
   writeFileSync(join(root, 'tools/pcbtool.ts'), writer);
   writeFileSync(join(root, 'tools/pcb_snapshot_inputs.mjs'), 'console.log("[]");');
   writeFileSync(join(root, 'spec.json'), '{"place":{}}');
+  exemptBoard(root, 'X');
   return root;
 }
 
@@ -308,6 +310,7 @@ test('an incomplete part review stops before the snapshot', needsBinary, async t
 test('reviewed part use screens a copper edit before and after the tool', needsBinary, async t => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'pcb-operation-review-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
+  exemptBoard(root, FIXTURE_BOARD, undefined, { revisions: [{ revision: 'synthetic-1', spec: 'SPEC.md', state: 'review', gate: FIXTURE_BOARD }] });
   const manifest = makeFixture(root);
   mkdirSync(join(root, 'tools'), { recursive: true });
   writeFileSync(join(root, 'tools/gate.mjs'), GATE());
@@ -486,6 +489,63 @@ test('incomplete design prerequisites stop before the snapshot, with their repor
   assert.equal(result.candidate_verified, false);
   assert.ok(result.evidence_sha256['operation/design-preflight.json']);
   assert.equal(existsSync(join(folder, 'workspace')), false);
+});
+
+test('a board with no design contract and no exemption stops before the snapshot', needsBinary, async t => {
+  const root = project(t);
+  rmSync(join(root, 'hardware-design/registry/boards.json'));
+  const { folder, result } = await edit(root);
+  assert.equal(result.status, 'failed', String(result.cause));
+  assert.equal(result.scope, 'design_preflight');
+  assert.equal(result.candidate_verified, false);
+  assert.match(String(result.cause), /board has no design contract/);
+  assert.match(String(result.cause), /design_contract_exempt/);
+  assert.ok(result.evidence_sha256['operation/design-preflight.json']);
+  assert.equal(existsSync(join(folder, 'workspace')), false);
+});
+
+test('an exempt board continues and records one design.exempt event with the reason', needsBinary, async t => {
+  const { folder, result } = await edit(project(t));
+  assert.equal(result.status, 'passed', String(result.cause));
+  const exempt = eventRows(folder).filter(row => row.type === 'design.exempt');
+  assert.equal(exempt.length, 1);
+  assert.match(String(exempt[0]!.reason), /test fixture/);
+});
+
+function admission(t: { after(fn: () => void): void }, root: string, operation = 'edit') {
+  const folder = join(root, 'run'), events: Row[] = [];
+  mkdirSync(join(folder, 'operation'), { recursive: true });
+  const manifest = { root, board: 'X', operation, node: process.execPath, timeout_s: 1 } as OperationManifest;
+  return designAdmission(root, folder, manifest, (type, data) => { events.push({ type, ...data }); }).then(report => ({ report, events, result: existsSync(join(folder, 'operation/result.json')) ? JSON.parse(readFileSync(join(folder, 'operation/result.json'), 'utf8')) as Row : null }));
+}
+
+test('design admission without a binding: exempt continues, a registered contract or none fails closed', async t => {
+  const root = project(t);
+  const exempt = await admission(t, root);
+  assert.equal(exempt.report, null);
+  assert.equal(exempt.result, null);
+  assert.deepEqual(exempt.events.map(row => row.type), ['design.exempt']);
+  rmSync(join(root, 'hardware-design/registry/boards.json'));
+  const none = await admission(t, root, 'release');
+  assert.equal(none.report?.status, 'failed');
+  assert.deepEqual([none.result?.status, none.result?.scope, none.result?.candidate_verified, none.result?.qualified, none.result?.release_approved], ['failed', 'design_preflight', false, false, false]);
+  assert.match(String(none.result?.cause), /board has no design contract/);
+  assert.match(String(none.result?.cause), /--design-contract/);
+  assert.deepEqual(none.events, []);
+  const file = 'hardware-design/registry/design-contracts/X.json';
+  mkdirSync(join(root, dirname(file)), { recursive: true });
+  writeFileSync(join(root, file), '{}');
+  const unbound = await admission(t, root);
+  assert.equal(unbound.report?.status, 'failed', 'a registered contract that the run does not bind');
+  assert.match(String(unbound.result?.cause), new RegExp(file));
+  assert.match(String(unbound.result?.cause), /--design-contract/);
+  assert.equal(unbound.result?.scope, 'design_preflight');
+});
+
+test('design admission refuses a malformed exemption instead of continuing', async t => {
+  const root = project(t);
+  writeFileSync(join(root, 'hardware-design/registry/boards.json'), JSON.stringify({ schema_version: 1, boards: [{ id: 'X', design_contract_exempt: { reason: '' } }] }));
+  await assert.rejects(admission(t, root), /design_contract_exempt/);
 });
 
 test('the candidate layout screen writes a blocked report for a contract it cannot judge', t => {
