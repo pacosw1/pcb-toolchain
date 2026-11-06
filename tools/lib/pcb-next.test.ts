@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, u
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { sealFixtureBoard } from './cad-seal-fixture.ts';
 import { atomicJson, readObject, sha256File } from './json-file.ts';
 import { evidenceFiles } from './pcb-evidence.ts';
 import { context as boardContext } from './pcb-workflow.ts';
@@ -18,6 +19,7 @@ function fixture(t: { after: (fn: () => void) => void }) {
   atomicJson(join(board, 'gate.json'), config);
   mkdirSync(join(board, 'cad'), { recursive: true });
   for (const ext of ['.kicad_pcb', '.kicad_sch', '.kicad_pro', '.kicad_dru']) writeFileSync(project + ext, 'fixture ' + ext);
+  sealFixtureBoard(root, 'X');
   const context = JSON.parse(jsonDumps(boardContext(root, 'X'))) as { source_files: { path: string; sha256: string | null }[] };
   for (const source of context.source_files) if (source.sha256 === null) { const path = join(root, source.path); mkdirSync(join(path, '..'), { recursive: true }); writeFileSync(path, 'Fixture context source\n'); }
   let probes = 0;
@@ -63,6 +65,18 @@ function fixture(t: { after: (fn: () => void) => void }) {
 test('missing native inputs name the exact source without a probe', async t => {
   const f = fixture(t); unlinkSync(f.project + '.kicad_pcb');
   const report = await f.next(); assert.equal(report.blocker?.code, 'missing_native_input'); assert.equal(f.probes(), 0);
+});
+
+test('CAD changed outside our tools is state cad_unsealed with the seal command, and next does not throw', async t => {
+  const f = fixture(t); f.run();
+  assert.equal((await f.next()).state, 'needs_release');
+  writeFileSync(f.project + '.kicad_pcb', 'edited in KiCad');
+  const report = await f.next();
+  assert.equal(report.state, 'cad_unsealed'); assert.equal(report.blocker?.code, 'cad_changed');
+  assert.deepEqual(report.blocker?.changed, ['hardware-design/boards/X/cad/X.kicad_pcb']);
+  assert.equal(report.next_action?.command, 'tools/pcb seal X'); assert.equal(f.probes(), 1);
+  unlinkSync(join(f.board, 'cad-seal.json'));
+  const missing = await f.next(); assert.equal(missing.state, 'cad_unsealed'); assert.equal(missing.blocker?.code, 'cad_seal_missing');
 });
 
 test('legacy receipts cannot become current and G5 requests a fresh check', async t => {
@@ -133,7 +147,7 @@ test('routing repairs require current sources and current parent admission', asy
   const path = join(folder, 'run.json'), manifest = readObject(path); manifest.from_run = { folder: join(f.base, 'run-parent'), result_sha256: 'sealed' }; atomicJson(path, manifest); f.seal(folder);
   f.options.readers.parentCandidate = () => { throw new PyError('ValueError', 'canonical inputs changed since parent candidate creation'); };
   assert.equal((await f.next()).evidence.freshness, 'stale');
-  delete manifest.from_run; atomicJson(path, manifest); f.seal(folder); writeFileSync(f.project + '.kicad_pcb', 'changed');
+  delete manifest.from_run; atomicJson(path, manifest); f.seal(folder); writeFileSync(f.project + '.kicad_pcb', 'changed'); sealFixtureBoard(f.root, 'X');
   assert.equal((await f.next()).evidence.freshness, 'stale'); assert.equal(f.probes(), 0);
 });
 

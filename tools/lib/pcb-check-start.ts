@@ -14,6 +14,7 @@ import { CANDIDATE, candidateFields, OPERATIONS, type CandidateRequest } from '.
 import { parentCandidate } from './pcb-candidate.ts';
 import { verify } from './pcb-evidence.ts';
 import { holdLock } from './file-lock.ts';
+import { verifySeal } from './cad-seal.ts';
 
 export interface LoopContext { id: string; round: number; launch_id: string; source_sha256: string; deadline_ms: number }
 export interface CheckOptions extends CandidateRequest { root: string; base: string; board: string; operation?: string; fromRun?: string; arguments?: string[]; timeout: number; heartbeat: number; changed?: boolean; fresh?: boolean; baseline?: string; cycle?: string; loopContext?: LoopContext }
@@ -39,6 +40,7 @@ export async function startCheck(options: CheckOptions): Promise<string> {
   const action = options.arguments?.[0];
   const configInfo = (operation === 'check' || OPERATIONS.has(operation) || operation === 'schematic' || operation === 'routing' || operation === 'placement' || (operation === 'parts' && action !== 'selection' && action !== 'inspect')) ? boardConfig(root, options.board) : undefined;
   const config = configInfo ? join(configInfo.folder, 'gate.json') : undefined;
+  if (configInfo) verifySeal(root, options.board);
   let baseline: string | undefined;
   if (options.baseline) {
     baseline = join(runDir(base, options.baseline), 'gate/findings.json');

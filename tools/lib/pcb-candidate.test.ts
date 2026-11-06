@@ -3,6 +3,7 @@ import { chmodSync, fstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { test } from 'node:test';
+import { sealFixtureBoard } from './cad-seal-fixture.ts';
 import { iotrouteMissing } from './iotroute-bin.ts';
 import { adopt, parentCandidate, replaceAtomically } from './pcb-candidate.ts';
 import { sourceState } from './pcb-sources.ts';
@@ -76,6 +77,7 @@ function candidateFixture(t: { after(fn: () => void): void }) {
   put(join(workspaceBoard, 'gate.json'), config);
   put(target, '(kicad_pcb (version 20240108))');
   put(candidate, '(kicad_pcb (version 20240108))');
+  sealFixtureBoard(root, 'X');
   const manifest = { root, board: 'X', operation: 'edit', node: process.execPath };
   const operation: Record<string, unknown> = { candidate, candidate_sha256: sha(candidate), candidate_verified: true,
     identity_preserved: true, protected_source_changes: [], artifacts: {} };

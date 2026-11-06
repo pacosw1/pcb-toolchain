@@ -10,17 +10,18 @@ import { nextReaders } from './lib/pcb-next-readers.ts';
 import { note, NOTE_KINDS, type NoteKind } from './lib/pcb-note.ts';
 import { summarize } from './lib/pcb-benchmark.ts';
 import { adopt } from './lib/pcb-candidate.ts';
+import { acceptSeal, sealStatus, verifySeal } from './lib/cad-seal.ts';
 import { cycleCommand, CYCLE_OPTIONS } from './lib/pcb-cycle-cli.ts';
 import { get, item, jsonDumps, pyStr } from './lib/py-compat.mjs';
 
-const usage = 'usage: pcb [--project DIR] {list,context,next,status,events,explain,cancel,note,benchmark,cycle,adopt} [BOARD_OR_RUN_ID] [options]';
+const usage = 'usage: pcb [--project DIR] {list,context,next,status,events,explain,cancel,note,benchmark,cycle,adopt,seal} [BOARD_OR_RUN_ID] [options]';
 
 export async function main(argv: string[]): Promise<number> {
   let explicit: string | undefined;
   if (argv[0] === '--project') { explicit = argv[1]; if (!explicit) throw new Error(usage); argv = argv.slice(2); }
   else if (argv[0]?.startsWith('--project=')) { explicit = argv[0].slice(10); argv = argv.slice(1); }
   const command = argv.shift();
-  if (!['list', 'context', 'next', 'status', 'events', 'explain', 'cancel', 'note', 'benchmark', 'cycle', 'adopt'].includes(command ?? '')) throw new Error(usage);
+  if (!['list', 'context', 'next', 'status', 'events', 'explain', 'cancel', 'note', 'benchmark', 'cycle', 'adopt', 'seal'].includes(command ?? '')) throw new Error(usage);
   const options: ParseArgsOptionsConfig = {
     'runs-dir': { type: 'string' }, json: { type: 'boolean', default: false },
     ...(command === 'events' ? { after: { type: 'string', default: '0' }, limit: { type: 'string', default: '100' }, wait: { type: 'string', default: '0' } } : {}),
@@ -28,6 +29,7 @@ export async function main(argv: string[]): Promise<number> {
     ...(command === 'next' ? { 'design-contract': { type: 'string' }, through: { type: 'string' } } : {}),
     ...(command === 'note' ? { kind: { type: 'string' } } : {}),
     ...(command === 'adopt' ? { baseline: { type: 'string' }, defect: { type: 'string' } } : {}),
+    ...(command === 'seal' ? { accept: { type: 'boolean', default: false }, reason: { type: 'string' } } : {}),
     ...(command === 'cycle' ? CYCLE_OPTIONS : {}),
   };
   const { values, positionals } = parseArgs({ args: argv, options, allowPositionals: true });
@@ -38,6 +40,16 @@ export async function main(argv: string[]): Promise<number> {
     const data = catalog(projectRoot(explicit)) as { boards: { board: string }[] };
     console.log(values.json ? jsonDumps(data) : data.boards.map(row => row.board).join('\n'));
     return 0;
+  }
+  if (command === 'seal') {
+    const root = projectRoot(explicit), board = positionals[0]!;
+    if (values.reason !== undefined && !values.accept) throw new Error('--reason is only for --accept');
+    if (values.accept) await acceptSeal(root, board, values.reason as string);
+    const status = sealStatus(root, board);
+    let broken: string | null = null;
+    try { verifySeal(root, board); } catch (error) { broken = error instanceof Error ? error.message : String(error); }
+    console.log(values.json ? jsonDumps(status) : broken === null ? `PASS: ${board} CAD seal ${status.state === 'not_canonical' ? 'not used: this root is a run workspace' : 'matches the board files'}` : `FAIL: ${broken}`);
+    return broken === null ? 0 : 1;
   }
   if (command === 'context' || (command === 'status' && !RUN_ID.test(positionals[0]!))) {
     console.log(jsonDumps(context(projectRoot(explicit), positionals[0]!), values.json ? null : 2));
