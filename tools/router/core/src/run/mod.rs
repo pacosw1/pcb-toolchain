@@ -8,7 +8,9 @@
 //!
 //!  1. --lock-from SRC: a copy of the input without tracks and vias, with the copper of the lock nets from SRC, locked. Lock nets
 //!     are the diff pairs and the nets with DRU via_count 0, read from the model of SRC. Without it all copper of the input stays
-//!     and is locked.
+//!     and is locked. --route-crystals (needs --lock-from): the via_count 0 nets that are no pair member are stripped instead of
+//!     locked and named in the model's `critical_nets`: the core routes them first, on one layer with no via, and freezes them
+//!     (core critical.rs).
 //!  2. The preflight (guard.rs): KiCad DRC of what will be routed, which stops at a fault of its existing copper. Then `iotroute model`,
 //!     the route, the `widths` rules of the board's route.json and `iotroute write`, whose board must keep all copper of its input.
 //!  3. OUT gets the board and the project files of the input; the input's .kicad_pro goes back if a save rewrote it.
@@ -38,7 +40,7 @@ pub mod reuse;
 pub mod steps;
 mod widths;
 
-use lock::{LockStage, lock_nets, make_locked_input};
+use lock::{LockStage, lock_nets, make_locked_input, split_crystals};
 use measure::{copper_counts, run_drc};
 use planes::{FeedbackReuse, ModelFile, RefGate, Round, ROUNDS, fail_lines, planes_spec};
 use project::{board_project, place_sidecars, restore_pro, sha_file};
@@ -52,7 +54,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use steps::{Steps, last_line, sources_sha};
 
-const USAGE: &str = "usage: iotroute run BOARD OUT.kicad_pcb [--pcb IN] [--iters N] [--max-time S] [--lock-from SRC] [--reuse PREV] [--reuse-fallback full|none] [--reuse-net NET]... [--congestion] [--return-exempt] [--ref-reuse] [--diagnose] [--plane-net NET]... [--layer L]... [--net NET]... [--seed N] [--stall-passes N] [--checkpoint] [--tools DIR] [--json]";
+const USAGE: &str = "usage: iotroute run BOARD OUT.kicad_pcb [--pcb IN] [--iters N] [--max-time S] [--lock-from SRC] [--reuse PREV] [--reuse-fallback full|none] [--reuse-net NET]... [--route-crystals] [--congestion] [--return-exempt] [--ref-reuse] [--diagnose] [--plane-net NET]... [--layer L]... [--net NET]... [--seed N] [--stall-passes N] [--checkpoint] [--tools DIR] [--json]";
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Args {
@@ -67,6 +69,9 @@ pub struct Args {
     pub reuse_nets: Vec<String>,
     pub congestion: bool,
     pub return_exempt: bool,
+    /// Opt-in: route the via_count 0 nets (crystals) first instead of keeping their copper; needs --lock-from.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub route_crystals: bool,
     /// Opt-in experiment: copper reuse after reference feedback, with fresh checks and full fallback.
     #[serde(default)]
     pub ref_reuse: bool,
@@ -91,7 +96,7 @@ fn value<T: std::str::FromStr>(flag: &str, text: Option<&String>) -> Result<T, S
 pub fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut a = Args {
         board: String::new(), out: String::new(), pcb: None, iters: 80, max_time: None, lock_from: None, reuse: None, reuse_fallback: "full".to_string(), reuse_nets: Vec::new(),
-        congestion: std::env::var("IOTROUTE_CONGESTION").is_ok_and(|v| v == "1"), return_exempt: false, ref_reuse: false, diagnose: false, plane_nets: Vec::new(), layers: Vec::new(), nets: Vec::new(), seed: None, via_cost: None, stall_passes: None, checkpoint: false, tools: PathBuf::from("tools"), json: false,
+        congestion: std::env::var("IOTROUTE_CONGESTION").is_ok_and(|v| v == "1"), return_exempt: false, route_crystals: false, ref_reuse: false, diagnose: false, plane_nets: Vec::new(), layers: Vec::new(), nets: Vec::new(), seed: None, via_cost: None, stall_passes: None, checkpoint: false, tools: PathBuf::from("tools"), json: false,
     };
     let mut positional = Vec::new();
     let mut it = argv.iter();
@@ -112,6 +117,7 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--net" => a.nets.push(value(arg, it.next())?),
             "--congestion" => a.congestion = true,
             "--return-exempt" => a.return_exempt = true,
+            "--route-crystals" => a.route_crystals = true,
             "--ref-reuse" => a.ref_reuse = true,
             "--diagnose" => a.diagnose = true,
             "--checkpoint" => a.checkpoint = true,
@@ -125,6 +131,9 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
     }
     if a.ref_reuse && a.reuse.is_some() {
         return Err("--ref-reuse cannot combine with --reuse; reference feedback needs a fresh initial route".into());
+    }
+    if a.route_crystals && a.lock_from.is_none() {
+        return Err("--route-crystals needs --lock-from: without it all input copper stays locked".into());
     }
     let [board, out] = positional.as_slice() else { return Err("BOARD and OUT are needed".to_string()) };
     (a.board, a.out) = (board.clone(), out.clone());
@@ -435,17 +444,18 @@ fn finish(rec: &mut Record, out: &Path, work: &Path) -> Result<DrcCounts, String
     Ok(drc)
 }
 
-fn lock_step(steps: &Steps, folder: &Path, src: &Path, work: &Path, lock_from: &str) -> Result<(PathBuf, LockStage), String> {
+fn lock_step(steps: &Steps, folder: &Path, src: &Path, work: &Path, lock_from: &str, route_crystals: bool) -> Result<(PathBuf, LockStage), String> {
     let source = absolute(lock_from)?;
     let model = work.join("lock-model.json");
     let (code, text) = steps.model(folder, &source, &model, &work.join("lock-model.log"), false)?;
     if code != 0 {
         return Err(format!("iotroute model on --lock-from failed: {}", last_line(&text)));
     }
-    let nets = lock_nets(&fs::read_to_string(&model).map_err(|e| format!("{}: {e}", model.display()))?)?;
+    let text = fs::read_to_string(&model).map_err(|e| format!("{}: {e}", model.display()))?;
+    let (nets, critical) = if route_crystals { split_crystals(&text)? } else { (lock_nets(&text)?, Default::default()) };
     let copy = work.join("input").join(src.file_name().ok_or("a board file has a name")?);
     let (removed, kept) = make_locked_input(src, &source, &nets, &copy)?;
-    let stage = LockStage { removed, kept, nets: nets.into_iter().collect(), source: source.display().to_string(), source_sha256: sha_file(&source)? };
+    let stage = LockStage { removed, kept, nets: nets.into_iter().collect(), source: source.display().to_string(), source_sha256: sha_file(&source)?, critical: critical.into_iter().collect() };
     Ok((copy, stage))
 }
 
@@ -485,9 +495,15 @@ fn set_route_nets(model: &mut Value, names: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// --route-crystals: the critical nets the core routes first, those on the board.
+fn set_critical_nets(model: &mut Value, names: &[String]) {
+    let on_board: Vec<String> = names.iter().filter(|name| model["nets"].get(name.as_str()).is_some()).cloned().collect();
+    model["critical_nets"] = on_board.into();
+}
+
 /// What the caller narrows of a route, written into the model before its hash is recorded.
-fn narrow_model(path: &Path, a: &Args) -> Result<(), String> {
-    if a.plane_nets.is_empty() && a.layers.is_empty() && a.nets.is_empty() {
+fn narrow_model(path: &Path, a: &Args, critical: &[String]) -> Result<(), String> {
+    if a.plane_nets.is_empty() && a.layers.is_empty() && a.nets.is_empty() && critical.is_empty() {
         return Ok(());
     }
     let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -498,6 +514,9 @@ fn narrow_model(path: &Path, a: &Args) -> Result<(), String> {
     }
     if !a.nets.is_empty() {
         set_route_nets(&mut model, &a.nets)?;
+    }
+    if !critical.is_empty() {
+        set_critical_nets(&mut model, critical);
     }
     fs::write(path, model.to_string()).map_err(|e| format!("{}: {e}", path.display()))
 }
@@ -525,14 +544,15 @@ fn prepare<'a>(a: &'a Args, rec: &mut Record, out: &Path, work: &Path) -> Result
 
     let mut route_in = src.clone();
     if let Some(lock_from) = &a.lock_from {
-        let (copy, stage) = lock_step(&steps, &folder, &src, work, lock_from)?;
+        let (copy, stage) = lock_step(&steps, &folder, &src, work, lock_from, a.route_crystals)?;
         route_in = copy;
         rec.stages.lock = Some(stage);
     }
     guard::preflight(&route_in, &work.join("preflight.json"))?;
     let model = work.join("model.json");
     let text = steps.admit(&folder, &route_in, &model, &work.join("model.log"), a.return_exempt)?;
-    narrow_model(&model, a)?;
+    let critical = rec.stages.lock.as_ref().map_or(Vec::new(), |l| l.critical.clone());
+    narrow_model(&model, a, &critical)?;
     rec.stages.model = Some(ModelStage { line: text.trim().lines().last().unwrap_or("").to_string(), sha256: sha_file(&model)? });
 
     let widths = widths::board_widths(&folder, &model)?;
@@ -756,6 +776,18 @@ esac
         set_route_nets(&mut model, &names(&["A"])).unwrap();
         assert_eq!(model["route_nets"], serde_json::json!(["A"]));
         assert!(set_route_nets(&mut model, &names(&["Z"])).unwrap_err().contains("Z is not on the board"));
+    }
+
+    #[test]
+    fn route_crystals_is_opt_in_needs_lock_from_and_names_the_critical_nets() {
+        assert!(!args("A B.kicad_pcb --lock-from S").unwrap().route_crystals);
+        assert!(args("A B.kicad_pcb --lock-from S --route-crystals").unwrap().route_crystals);
+        assert!(args("A B.kicad_pcb --route-crystals").unwrap_err().contains("needs --lock-from"));
+        let off = serde_json::to_value(args("A B.kicad_pcb").unwrap()).unwrap();
+        assert!(off.get("route_crystals").is_none(), "off: the recorded arguments are unchanged");
+        let mut model = serde_json::json!({"nets": {"/OSC_IN": {}, "/OSC_OUT": {}}});
+        set_critical_nets(&mut model, &["/OSC_IN".to_string(), "/GONE".to_string(), "/OSC_OUT".to_string()]);
+        assert_eq!(model["critical_nets"], serde_json::json!(["/OSC_IN", "/OSC_OUT"]));
     }
 
     #[test]

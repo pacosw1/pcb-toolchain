@@ -3,11 +3,14 @@
 //! keep lock-nets: route from the candidate's pair and crystal copper; keep all: keep and lock all candidate copper, route only
 //! what is open. return_exempt: no return vias for the nets the board's gate exempts from RP-001 (`--return-exempt`); without it a
 //! route that gives such a net its returns leaves the exemption stale, and the gate fails on that.
+//! crystals: "lock" (default) keeps the candidate's copper of the DRU via_count 0 nets (crystals), as keep lock-nets always
+//! did; "route" strips it and routes those nets first, one layer, no via (`--route-crystals`); pairs stay locked. "route"
+//! needs keep lock-nets.
 use serde_json::Value;
 use std::io::Read;
 
 const SCHEMA: &str = "iot-lab.iotroute-policy.v1";
-const FIELDS: [&str; 9] = ["schema", "iters", "max_time_s", "keep", "return_exempt", "layers", "nets", "reuse", "reuse_nets"];
+const FIELDS: [&str; 10] = ["schema", "iters", "max_time_s", "keep", "return_exempt", "layers", "nets", "reuse", "reuse_nets", "crystals"];
 const DEFAULT_ITERS: u64 = 80;
 
 #[derive(Debug, PartialEq)]
@@ -22,6 +25,8 @@ pub struct Policy {
     /// The board of an earlier run to start from, and nets to route again with what it left open: `--reuse`, without the full fallback.
     pub reuse: Option<String>,
     pub reuse_nets: Vec<String>,
+    /// crystals "route": the via_count 0 nets are routed first instead of kept (`--route-crystals`).
+    pub route_crystals: bool,
 }
 
 /// A list of distinct names, none by default.
@@ -37,7 +42,7 @@ fn names(object: &serde_json::Map<String, Value>, key: &str) -> Result<Vec<Strin
 
 /// The policy of a spec; None for the defaults.
 pub fn policy(spec: Option<&Value>) -> Result<Policy, String> {
-    let Some(spec) = spec else { return Ok(Policy { iters: DEFAULT_ITERS, max_time_s: None, keep_all: false, return_exempt: false, layers: Vec::new(), nets: Vec::new(), reuse: None, reuse_nets: Vec::new() }) };
+    let Some(spec) = spec else { return Ok(Policy { iters: DEFAULT_ITERS, max_time_s: None, keep_all: false, return_exempt: false, layers: Vec::new(), nets: Vec::new(), reuse: None, reuse_nets: Vec::new(), route_crystals: false }) };
     let object = spec.as_object().filter(|o| o.get("schema").and_then(Value::as_str) == Some(SCHEMA)).ok_or_else(|| format!("route --router iotroute requires a {SCHEMA} spec"))?;
     let unknown: Vec<&str> = object.keys().map(String::as_str).filter(|k| !FIELDS.contains(k)).collect();
     if !unknown.is_empty() {
@@ -58,7 +63,15 @@ pub fn policy(spec: Option<&Value>) -> Result<Policy, String> {
         None | Some(Value::Null) => None,
         Some(v) => Some(v.as_str().filter(|path| path.starts_with('/')).ok_or("iotroute policy reuse must be null or an absolute path")?.to_string()),
     };
-    Ok(Policy { iters, max_time_s, keep_all, return_exempt, layers: names(object, "layers")?, nets: names(object, "nets")?, reuse, reuse_nets: names(object, "reuse_nets")? })
+    let route_crystals = match object.get("crystals").map_or(Some("lock"), Value::as_str) {
+        Some("lock") => false,
+        Some("route") => true,
+        _ => return Err("iotroute policy crystals must be lock or route".to_string()),
+    };
+    if route_crystals && keep_all {
+        return Err("iotroute policy crystals route needs keep lock-nets: keep all locks every candidate track".to_string());
+    }
+    Ok(Policy { iters, max_time_s, keep_all, return_exempt, layers: names(object, "layers")?, nets: names(object, "nets")?, reuse, reuse_nets: names(object, "reuse_nets")?, route_crystals })
 }
 
 /// The run arguments of a policy on the candidate board.
@@ -72,6 +85,9 @@ pub fn policy_args(p: &Policy, candidate: &str) -> Vec<String> {
     }
     if p.return_exempt {
         args.push("--return-exempt".to_string());
+    }
+    if p.route_crystals {
+        args.push("--route-crystals".to_string());
     }
     args.extend(p.layers.iter().flat_map(|layer| ["--layer".to_string(), layer.clone()]));
     args.extend(p.nets.iter().flat_map(|net| ["--net".to_string(), net.clone()]));
@@ -140,6 +156,17 @@ mod tests {
     fn return_exempt_asks_for_the_run_option() {
         let p = policy(Some(&json!({"schema": SCHEMA, "return_exempt": true}))).unwrap();
         assert_eq!(policy_args(&p, "c"), ["--iters", "80", "--lock-from", "c", "--return-exempt"]);
+    }
+
+    #[test]
+    fn crystals_route_is_opt_in_and_needs_lock_nets() {
+        let lock = policy(Some(&json!({"schema": SCHEMA, "crystals": "lock"}))).unwrap();
+        assert_eq!(lock, policy(Some(&json!({"schema": SCHEMA}))).unwrap());
+        let p = policy(Some(&json!({"schema": SCHEMA, "crystals": "route"}))).unwrap();
+        assert_eq!(policy_args(&p, "c"), ["--iters", "80", "--lock-from", "c", "--route-crystals"]);
+        for spec in [json!({"schema": SCHEMA, "crystals": "route", "keep": "all"}), json!({"schema": SCHEMA, "crystals": true}), json!({"schema": SCHEMA, "crystals": "free"})] {
+            assert!(policy(Some(&spec)).is_err(), "{spec}");
+        }
     }
 
     #[test]

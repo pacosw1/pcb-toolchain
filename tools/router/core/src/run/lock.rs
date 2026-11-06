@@ -23,6 +23,9 @@ pub struct LockStage {
     pub nets: Vec<String>,
     pub source: String,
     pub source_sha256: String,
+    /// --route-crystals: the via_count 0 nets stripped instead of locked, routed first by the core (model `critical_nets`)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub critical: Vec<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -57,6 +60,15 @@ pub fn lock_nets(model_json: &str) -> Result<BTreeSet<String>, String> {
     let pairs = model.pairs.into_iter().flat_map(|p| [p.p, p.n]).flatten().filter(|n| !n.is_empty());
     let crystals = model.nets.into_iter().filter(|(_, n)| n.limits.via_count == Some(0.0)).map(|(name, _)| name);
     Ok(pairs.chain(crystals).collect())
+}
+
+/// The lock nets of --route-crystals: the pairs stay locked; the via_count 0 nets that are no pair member (crystals) are
+/// stripped and routed first. -> (lock nets, critical nets).
+pub fn split_crystals(model_json: &str) -> Result<(BTreeSet<String>, BTreeSet<String>), String> {
+    let model: LockModel = serde_json::from_str(model_json).map_err(|e| format!("model: {e}"))?;
+    let pairs: BTreeSet<String> = model.pairs.into_iter().flat_map(|p| [p.p, p.n]).flatten().filter(|n| !n.is_empty()).collect();
+    let critical = model.nets.into_iter().filter(|(name, n)| n.limits.via_count == Some(0.0) && !pairs.contains(name)).map(|(name, _)| name).collect();
+    Ok((pairs, critical))
 }
 
 type PadMap = BTreeMap<(String, String), (f64, f64, String)>;
@@ -170,6 +182,16 @@ mod tests {
         let model = r#"{"pairs": [{"p": "/USB_DP", "n": "/USB_DN"}], "nets": {"/OSC_IN": {"limits": {"via_count": 0.0}}, "/RMII": {"limits": {"via_count": 4.0}}, "VDD": {"limits": {"amps": 1.0}}, "/X": {"limits": {}}}}"#;
         let want: BTreeSet<String> = ["/USB_DP", "/USB_DN", "/OSC_IN"].map(str::to_string).into();
         assert_eq!(lock_nets(model).unwrap(), want);
+    }
+
+    #[test]
+    fn route_crystals_keeps_pairs_locked_and_frees_the_via_count_zero_nets() {
+        let model = r#"{"pairs": [{"p": "/USB_DP", "n": "/USB_DN"}], "nets": {"/USB_DP": {"limits": {"via_count": 0.0}}, "/OSC_IN": {"limits": {"via_count": 0.0}}, "/OSC_OUT": {"limits": {"via_count": 0.0}}, "/RMII": {"limits": {"via_count": 4.0}}}}"#;
+        let set = |n: &[&str]| n.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>();
+        let (lock, critical) = split_crystals(model).unwrap();
+        assert_eq!(lock, set(&["/USB_DP", "/USB_DN"]));
+        assert_eq!(critical, set(&["/OSC_IN", "/OSC_OUT"]));
+        assert_eq!(lock.union(&critical).cloned().collect::<BTreeSet<_>>(), lock_nets(model).unwrap(), "together: today's lock set");
     }
 
     #[test]

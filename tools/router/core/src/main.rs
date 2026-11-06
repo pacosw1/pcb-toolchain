@@ -45,6 +45,7 @@ use std::collections::BinaryHeap;
 mod checkpoint;
 mod live;
 mod congestion;
+mod critical;
 mod layers;
 
 mod pour;
@@ -4566,6 +4567,15 @@ fn route_cli(args: &[String]) {
                         rcache: vec![0; nx * ny * rplanes], ban: Vec::new(), neck: Vec::new(), len_cap: None, len_boxes: Vec::new(), len_mode: false, ret_soft: true, lfloor: Vec::new(), leaf_necks: false, stubs: std::collections::HashMap::new(), stub_cost: Default::default(), recover: false, fan_keep: false };
     live::init();
     live::snapshot(ctx.bd);
+    // critical first stage (critical.rs, opt-in by the model's critical_nets): routed and frozen before the negotiation
+    let mut critical_notes = Vec::new();
+    let crit = critical::critical_nets(&model, &ctx.bd.nets, &order);
+    if !crit.is_empty() && plan.is_none() && resume_path.is_none() {
+        let groups = critical::groups(&model, &ctx.bd.nets, &crit);
+        let stage = critical::route(&mut ctx, &groups);
+        order.retain(|n| !stage.frozen.contains(n));
+        critical_notes = stage.notes;
+    }
     let fan_fail: Vec<Fail> = Vec::new();
     let nn = ctx.bd.nets.len();
     let mut todo: Vec<usize> = match &plan {
@@ -5114,6 +5124,7 @@ fn route_cli(args: &[String]) {
     notes.extend(ctx.bd.spoke_notes.iter().cloned());
     notes.extend(in_ret_notes.iter().cloned());
     notes.extend(stall_note);
+    notes.extend(critical_notes);
     if let Some(s) = seed {
         notes.push(format!("seed {s}"));
     }
@@ -5385,6 +5396,8 @@ mod tests_iso;
 mod tests_reffill;
 #[cfg(test)]
 mod tests_layers;
+#[cfg(test)]
+mod tests_critical;
 
 #[cfg(test)]
 mod tests_seed;
