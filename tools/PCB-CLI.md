@@ -3,6 +3,7 @@
 For reviewed parts, sourced placement rules, diagnostic repairs and engineering
 cycle measurement, see [PCB-ENGINEERING.md](PCB-ENGINEERING.md).
 For source-bound datasets and small advisory models, see [PCB-ML.md](PCB-ML.md).
+To decide whether a placer or router change is better, see [BENCH.md](BENCH.md) (`tools/pcb bench`).
 
 `tools/pcb` is the repository entrypoint for board context, builds, explicit
 placement/routing changes, checks, fabrication candidates and block evidence.
