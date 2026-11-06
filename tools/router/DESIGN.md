@@ -335,6 +335,37 @@ Cost: the checkpoint spent 0.04-0.17 % of the run (0.008 s of 7 s, 0.107 s of 19
 checkpoint on against main: inside the run-to-run noise of the shared box (5 pairs each: CHECKIN-FRONT 6.7 / 6.9 / 7.3 s,
 ENV-SENSE 26.4 / 24.1 / 24.4 s).
 
+## 5f. Length and skew tuning (`iotroute run --tune`, policy `"tune": true`, core `tune.rs`, opt-in)
+
+Default off: without `--tune` the model, the core and the record are byte-identical to the run without this stage.
+
+Targets (run/tune.rs, `OUT.iotroute/tune.json`, schema `iot-lab.route-tune.v0`): the `skew` and `length` constraints of the board's
+.kicad_dru as KiCad's matched-length DRC reads them. Per net and constraint kind the last rule whose condition holds owns the net. A
+skew rule is one group of all its nets (KiCad: |length - longest length of the group| <= max), with `(within_diff_pairs)` one group
+per pair. A condition the selector cannot decide for a net (spatial selectors) leaves the net out and names the rule
+(`stages.tune.unknown_rules`). With `--tune` the model admits `length (min ...)` (the route keeps the max as before, the tuning stage
+owns the min); without it a min still stops the model.
+
+Stage (core, after the final RP-001 / pour rounds and return pruning, so on the copper that is written): each router-routed net short
+of its target gets trombone meanders, rectangular bumps of one height on one side of one of its own straight tracks, legs one pitch
+(width + max(clearance, 2 x width)) apart, height width..3 mm. Skew group with max S: a member more than 0.75 S shorter than the
+longest is brought into [longest - 0.5 S, longest], aiming at longest - 0.25 S (margin for the difference between the core's length,
+tracks + via_len per via, and KiCad's); the longest member is never lengthened. Length min M: brought to M + 0.05 or more, aiming at
+M + 0.3. Every target stays 0.05 mm under the net's DRU length max. A meander is kept only when every sample of its copper passes
+`Board::track_cost == 0` (all clearances, isolation pair values, plane clearance, keepouts, edge, hard reference fill; soft reference
+nets must stay on their reference), the replaced stretch touches no other item of the net (no branch, via or pad is cut off), and the
+pour model finds no new starved_thermal fault. No via is added, so RP-001 returns do not change.
+
+Not tuned, by policy: fixed copper. Pairs and via_count-0 crystal nets that `--lock-from` keeps are hand-routed locked copper; a group
+whose short member is hand copper is reported (`route.tune.json` `skipped`), never edited. Router-routed pairs (codex/router-pairs) are
+tuned per leg like single nets, so a bump leaves the pair uncoupled for its width: unverified against `diff_pair_uncoupled`.
+
+Output: `route.json` notes `tune: NET before -> after mm (window, rule)` and `route.tune.json` (schema `iot-lab.route-tune-result.v0`:
+per group the skew before / after, per net before, after, window, met or why skipped). The verdict stays KiCad DRC on OUT, which
+evaluates the DRU length and skew rules (`length_out_of_range`, `skew_out_of_range`).
+
+Benchmark: reports/2026-11-06-tuning.md.
+
 ## 6. Not in scope (first version)
 
-Length matching by meanders, BGA escape, push-and-shove interactive editing. Added only when a board needs them.
+BGA escape, push-and-shove interactive editing. Added only when a board needs them. (Length matching by meanders: section 5f.)
