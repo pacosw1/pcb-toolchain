@@ -7,7 +7,8 @@
 //! Nothing else moves. Fixed copper (pads, locked input copper: the hand-routed pairs and crystals that `--lock-from` keeps, plane
 //! fan-out) is never edited, so a group whose short member is hand copper is reported, not tuned.
 //!
-//! Targets, with the length as the core measures it (net_lengths: tracks + via_len per via, the KiCad rule's sum):
+//! Targets, with the length as the core measures it (net_lengths: tracks + via_len per via, the KiCad rule's sum), plus the per-net
+//! `offsets` of the targets file when iotroute run measured KiCad's own length on an earlier board of the same route:
 //! - skew group with max S: every member more than 0.75 S shorter than the longest member L is brought into [L - 0.5 S, L], aiming at
 //!   L - 0.25 S; the longest member is never lengthened, so L stays the reference. The margin covers the difference between this
 //!   length and KiCad's (track inside pads). A group with only a min skew is not tuned.
@@ -183,9 +184,21 @@ fn merge(want: &mut BTreeMap<usize, Want>, net: usize, lo: f64, hi: f64, aim: f6
     w.why.push(why);
 }
 
+/// The core's length of every net plus the targets' `offsets` (KiCad's length - the core's, measured by iotroute run on an
+/// earlier board of the same route: KiCad leaves out track inside pads and counts vias its own way).
+fn lengths(bd: &Board, off: &[f64]) -> Vec<f64> {
+    net_lengths(bd).into_iter().zip(off).map(|(l, o)| l + o).collect()
+}
+
 pub(crate) fn tune(ctx: &mut Ctx, targets: &Value, state: &[(Option<String>, u32)]) -> Outcome {
     let names: std::collections::HashMap<String, usize> = ctx.bd.nets.iter().enumerate().map(|(i, n)| (n.name.clone(), i)).collect();
-    let len0 = net_lengths(ctx.bd);
+    let mut off = vec![0.0; ctx.bd.nets.len()];
+    for (name, v) in targets["offsets"].as_object().into_iter().flatten() {
+        if let (Some(&n), Some(o)) = (names.get(name), v.as_f64()) {
+            off[n] = o;
+        }
+    }
+    let len0 = lengths(ctx.bd, &off);
     let mut want: BTreeMap<usize, Want> = BTreeMap::new();
     let mut notes = Vec::new();
     let mut groups = Vec::new();
@@ -224,7 +237,7 @@ pub(crate) fn tune(ctx: &mut Ctx, targets: &Value, state: &[(Option<String>, u32
         }
         w.aim = w.aim.clamp(w.lo, w.hi);
         let name = ctx.bd.nets[net].name.clone();
-        let l0 = net_lengths(ctx.bd)[net];
+        let l0 = lengths(ctx.bd, &off)[net];
         let skip = if ctx.bd.nets[net].plane { Some("plane net") }
             else if state[net].0.is_some() { Some("route failed") }
             else if ctx.bd.twin_of(net).is_some() { Some("parallel copy net") }
@@ -251,7 +264,7 @@ pub(crate) fn tune(ctx: &mut Ctx, targets: &Value, state: &[(Option<String>, u32
             }
             ctx.gr.reset_cache();
         }
-        let l1 = net_lengths(ctx.bd)[net];
+        let l1 = lengths(ctx.bd, &off)[net];
         let ok = l1 >= w.lo - 1e-9 && l1 <= w.hi + 1e-9;
         if skip.is_none() {
             if ok { tuned += 1 } else { short += 1 }
@@ -263,7 +276,7 @@ pub(crate) fn tune(ctx: &mut Ctx, targets: &Value, state: &[(Option<String>, u32
         nets_report.push(serde_json::json!({"net": name, "before": l0, "after": l1, "lo": w.lo, "hi": if w.hi < f64::MAX / 2.0 { Value::from(w.hi) } else { Value::Null },
             "aim": w.aim, "why": w.why, "skipped": skip, "met": ok}));
     }
-    let len1 = net_lengths(ctx.bd);
+    let len1 = lengths(ctx.bd, &off);
     let groups_report: Vec<Value> = groups.iter().map(|(rule, nets, smax, top)| {
         let after_top = nets.iter().map(|&n| len1[n]).fold(0.0, f64::max);
         let before = nets.iter().map(|&n| top - len0[n]).fold(0.0, f64::max);
@@ -271,5 +284,13 @@ pub(crate) fn tune(ctx: &mut Ctx, targets: &Value, state: &[(Option<String>, u32
         serde_json::json!({"rule": rule, "max": smax, "nets": nets.iter().map(|&n| ctx.bd.nets[n].name.clone()).collect::<Vec<_>>(), "skew_before": before, "skew_after": after})
     }).collect();
     notes.push(format!("tune: {} net(s) short of a target, {tuned} brought into it, {short} left short, {:.2} mm of meander", want.len(), added_all));
-    Outcome { notes, report: serde_json::json!({"schema": "iot-lab.route-tune-result.v0", "groups": groups_report, "nets": nets_report}) }
+    // the core's own length (no offset) of every net a target names: iotroute run compares it with KiCad's
+    let core = net_lengths(ctx.bd);
+    let named: BTreeMap<String, f64> = targets["skew"].as_array().into_iter().flatten().flat_map(|g| g["nets"].as_array().into_iter().flatten())
+        .chain(targets["length"].as_array().into_iter().flatten().map(|t| &t["net"]))
+        .filter_map(|n| n.as_str().and_then(|n| names.get(n)).map(|&i| (ctx.bd.nets[i].name.clone(), core[i]))).collect();
+    if off.iter().any(|&o| o != 0.0) {
+        notes.push(format!("tune: lengths corrected by KiCad's measure of an earlier board ({} net(s))", off.iter().filter(|&&o| o != 0.0).count()));
+    }
+    Outcome { notes, report: serde_json::json!({"schema": "iot-lab.route-tune-result.v0", "groups": groups_report, "nets": nets_report, "core_lengths": named}) }
 }

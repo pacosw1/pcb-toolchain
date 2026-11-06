@@ -112,6 +112,40 @@ pub fn targets(rules: &[Rule], nets: &BTreeMap<String, String>) -> Result<Target
     Ok(out)
 }
 
+fn number_after<'a>(text: &'a str, key: &str) -> Option<(f64, &'a str)> {
+    let rest = &text[text.find(key)? + key.len()..];
+    let end = rest.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-')).unwrap_or(rest.len());
+    Some((rest[..end].parse().ok()?, &rest[end..]))
+}
+
+/// KiCad's own net lengths, read from the `skew_out_of_range` and `length_out_of_range` violations of a DRC report (kicad-cli json):
+/// net -> mm. A skew violation names the violating net (its item) with its length and the longest net of the rule with its length.
+pub fn kicad_lengths(report: &Value) -> BTreeMap<String, f64> {
+    let mut out = BTreeMap::new();
+    for v in report["violations"].as_array().into_iter().flatten() {
+        let kind = v["type"].as_str().unwrap_or("");
+        if kind != "skew_out_of_range" && kind != "length_out_of_range" {
+            continue;
+        }
+        let text = v["description"].as_str().unwrap_or("");
+        let net = v["items"].as_array().into_iter().flatten().filter_map(|i| i["description"].as_str())
+            .find_map(|d| d.split_once('[').and_then(|(_, r)| r.split_once(']')).map(|(n, _)| n.to_string()));
+        if kind == "skew_out_of_range" {
+            if let Some((target, rest)) = number_after(text, "target net length ")
+                && let Some(from) = rest.split_once("(from ").and_then(|(_, r)| r.split_once(')')).map(|(n, _)| n.to_string())
+            {
+                out.insert(from, target);
+            }
+        }
+        if let (Some(net), Some(pos)) = (net, text.rfind("actual ")) {
+            if let Some((len, _)) = number_after(&text[pos..], "actual ") {
+                out.insert(net, len);
+            }
+        }
+    }
+    out
+}
+
 /// The nets of a route model with their class.
 pub fn model_nets(model: &Value) -> BTreeMap<String, String> {
     model["nets"].as_object().map(|o| o.iter().map(|(n, v)| (n.clone(), v["class"].as_str().unwrap_or("Default").to_string())).collect()).unwrap_or_default()
@@ -149,6 +183,17 @@ mod tests {
             LengthTarget { rule: "all".into(), net: "/A".into(), min: None, max: Some(60.0) },
             LengthTarget { rule: "clk".into(), net: "/CLK".into(), min: Some(20.0), max: Some(30.0) },
         ]);
+    }
+
+    #[test]
+    fn kicad_lengths_come_from_the_skew_and_length_violations() {
+        let report = serde_json::json!({"violations": [
+            {"type": "skew_out_of_range", "description": "Skew between tracks out of range (rule 'FIXTURE I2C skew' max skew 2.0000 mm; actual -2.3301 mm; target net length 67.7401 mm (from /SCL); actual 65.4100 mm)",
+             "items": [{"description": "Track [/SDA] on B.Cu, length 0.4500 mm"}]},
+            {"type": "length_out_of_range", "description": "Length out of range (rule 'clk' min length 20.0000 mm; actual 12.5000 mm)", "items": [{"description": "Track [/CLK] on F.Cu, length 3.0 mm"}]},
+            {"type": "clearance", "description": "Clearance violation (actual 0.1 mm)", "items": [{"description": "Track [/X] on F.Cu"}]}]});
+        let l = kicad_lengths(&report);
+        assert_eq!(l, BTreeMap::from([("/SCL".to_string(), 67.7401), ("/SDA".to_string(), 65.41), ("/CLK".to_string(), 12.5)]));
     }
 
     #[test]

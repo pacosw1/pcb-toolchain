@@ -255,6 +255,49 @@ impl Run<'_> {
         Ok((stages, evidence))
     }
 
+    /// --tune: KiCad DRC on the first tuned board. When it finds length or skew violations, KiCad's own lengths of the nets they
+    /// name (minus the core's, from route.tune.json) go into the targets as offsets and the route runs again (the same model and
+    /// flags give the same route before tuning). The board with fewer DRC errors + unconnected + parity is kept; a tie keeps the
+    /// first, and then the targets lose their offsets again so later reference rounds route as the first did.
+    fn tune_correction(&self, out: &Path, work: &Path, stages: AttemptStages, restored: bool) -> Result<(AttemptStages, bool, Option<record::TuneCorrection>), String> {
+        let route_tune = work.join("route.tune.json");
+        if !route_tune.is_file() {
+            return Ok((stages, restored, None));
+        }
+        let first_json = work.join("tune-drc-r1.json");
+        let first = run_drc(out, &first_json)?;
+        let read = |p: &Path| -> Result<Value, String> { serde_json::from_str(&fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?).map_err(|e| format!("{}: {e}", p.display())) };
+        let kicad = tune::kicad_lengths(&read(&first_json)?);
+        let core = read(&route_tune)?;
+        let offsets: BTreeMap<String, f64> = kicad.iter().filter_map(|(n, k)| core["core_lengths"][n].as_f64().map(|c| (n.clone(), k - c))).collect();
+        let score = |d: &DrcCounts| [d.errors, d.unconnected, d.parity];
+        let mut correction = record::TuneCorrection { offsets: offsets.clone(), first: score(&first), corrected: None, chosen: "first".into() };
+        if offsets.is_empty() {
+            return Ok((stages, restored, Some(correction)));
+        }
+        let targets_path = tune::path_beside(&self.model);
+        let plain = read(&targets_path)?;
+        let mut with = plain.clone();
+        with["offsets"] = serde_json::to_value(&offsets).map_err(|e| e.to_string())?;
+        fs::write(&targets_path, serde_json::to_string_pretty(&with).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        let folder = work.join("tune-r2");
+        fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+        let candidate = folder.join(out.file_name().expect("OUT has a name"));
+        let (again, again_restored) = self.attempt(&candidate, &folder, &[])?;
+        let second = run_drc(&candidate, &folder.join("drc.json"))?;
+        correction.corrected = Some(score(&second));
+        if score(&second).iter().sum::<usize>() < score(&first).iter().sum::<usize>() {
+            correction.chosen = "corrected".into();
+            fs::copy(work.join("route.log"), work.join("route-tune-r1.log")).map_err(|e| e.to_string())?;
+            self.copy_results(&folder, work, &["route.json", "route.log", "write.log", "route.tune.json"])?;
+            fs::copy(&candidate, out).map_err(|e| format!("{}: {e}", out.display()))?;
+            place_sidecars(&self.src, out)?;
+            return Ok((again, restore_pro(&self.src, out)? || again_restored, Some(correction)));
+        }
+        fs::write(&targets_path, serde_json::to_string_pretty(&plain).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        Ok((stages, restored, Some(correction)))
+    }
+
     /// The gate's planes screen on the written board, and again after each raise of the failed soft nets.
     fn ref_gate(&self, out: &Path, work: &Path) -> Result<RefGate, String> {
         if !ModelFile::read(&self.model)?.has_soft_net() {
@@ -518,7 +561,7 @@ fn write_tune_targets(project: &Path, model: &Path, path: &Path) -> Result<recor
     let value: Value = serde_json::from_str(&fs::read_to_string(model).map_err(|e| format!("{}: {e}", model.display()))?).map_err(|e| format!("{}: {e}", model.display()))?;
     let targets = tune::targets(&rules, &tune::model_nets(&value))?;
     fs::write(path, serde_json::to_string_pretty(&targets).map_err(|e| e.to_string())?).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(record::TuneStage { targets: path.display().to_string(), skew_groups: targets.skew.len(), length_targets: targets.length.len(), unknown_rules: targets.unknown.keys().cloned().collect() })
+    Ok(record::TuneStage { targets: path.display().to_string(), skew_groups: targets.skew.len(), length_targets: targets.length.len(), unknown_rules: targets.unknown.keys().cloned().collect(), correction: None })
 }
 
 fn prepare<'a>(a: &'a Args, rec: &mut Record, out: &Path, work: &Path) -> Result<Run<'a>, String> {
@@ -568,6 +611,15 @@ fn run(a: &Args, rec: &mut Record, out: &Path, work: &Path) -> Result<(), String
     let (stages, restored) = match &a.reuse {
         Some(previous) => context.reuse_attempts(previous, out, work, rec)?,
         None => context.attempt(out, work, &[])?,
+    };
+    let (stages, restored) = if a.tune && a.reuse.is_none() {
+        let (stages, restored, correction) = context.tune_correction(out, work, stages, restored)?;
+        if let Some(t) = rec.stages.tune.as_mut() {
+            t.correction = correction;
+        }
+        (stages, restored)
+    } else {
+        (stages, restored)
     };
     (rec.stages.core, rec.stages.write) = (Some(stages.core), Some(stages.write));
     rec.pro_restored = Some(restored);

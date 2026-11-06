@@ -80,6 +80,20 @@ pub struct TuneStage {
     pub length_targets: usize,
     /// rules whose condition the selector could not decide for some net: those nets are not tuned
     pub unknown_rules: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correction: Option<TuneCorrection>,
+}
+
+/// One correction round: KiCad's DRC found length / skew violations on the tuned board, so its own lengths (KiCad - core per net)
+/// went to the targets as offsets and the route ran again; the board with fewer DRC errors + unconnected + parity is kept.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct TuneCorrection {
+    pub offsets: BTreeMap<String, f64>,
+    /// errors, unconnected, parity of the first board and of the corrected one
+    pub first: [usize; 3],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub corrected: Option<[usize; 3]>,
+    pub chosen: String,
 }
 
 /// What the DRC on a board says.
