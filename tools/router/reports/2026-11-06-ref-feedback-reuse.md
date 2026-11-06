@@ -55,6 +55,9 @@ Late-received host context (task comment 5928): release 0.2.13 Linux builds used
 five-minute smoke at 8 CPUs / 16 GiB. This is additional overlap beyond the AIO
 and merge-queue activity. Its exact interference was not measured; the sealed
 raw outcomes stay unchanged and do not become a controlled-host comparison.
+The AIO owner's later audit identifies a separate original-board planes check
+at 01:09:40-01:11:23 UTC, capped at 2 CPUs / 8 GiB, overlapping the scoped case's
+initial core. It reproduced preexisting AIO findings and was not a reuse trial.
 
 The full control's first separate gate had four checker-execution errors from
 a missing project-root binary alias in the test launcher. Null metrics remain
