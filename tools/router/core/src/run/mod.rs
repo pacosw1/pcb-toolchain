@@ -1,6 +1,6 @@
 //! `iotroute run BOARD OUT.kicad_pcb [--pcb IN.kicad_pcb] [--iters N] [--max-time S] [--lock-from SRC.kicad_pcb]
 //!               [--reuse PREV.kicad_pcb [--reuse-fallback full|none] [--reuse-net NET]...] [--seed N] [--stall-passes N] [--checkpoint]
-//!               [--congestion] [--return-exempt] [--diagnose] [--plane-net NET]... [--layer L]... [--net NET]... [--tools DIR] [--json]`
+//!               [--congestion] [--return-exempt] [--ref-reuse] [--diagnose] [--plane-net NET]... [--layer L]... [--net NET]... [--tools DIR] [--json]`
 //!
 //! One entry point for the in-house router: model, route, board copy, KiCad DRC (tools/router/DESIGN.md). BOARD is the board ID
 //! (hardware-design/boards/<BOARD>) or that folder. The input is --pcb, else the project board; it is only read. --tools is the
@@ -40,7 +40,7 @@ mod widths;
 
 use lock::{LockStage, lock_nets, make_locked_input};
 use measure::{copper_counts, run_drc};
-use planes::{ModelFile, RefGate, Round, ROUNDS, fail_lines, planes_spec};
+use planes::{FeedbackReuse, ModelFile, RefGate, Round, ROUNDS, fail_lines, planes_spec};
 use project::{board_project, place_sidecars, restore_pro, sha_file};
 use record::{AttemptStages, BinaryStage, CoreStage, DrcCounts, ModelStage, Record};
 use reuse::{Attempt, reuse_seed};
@@ -52,7 +52,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use steps::{Steps, last_line, sources_sha};
 
-const USAGE: &str = "usage: iotroute run BOARD OUT.kicad_pcb [--pcb IN] [--iters N] [--max-time S] [--lock-from SRC] [--reuse PREV] [--reuse-fallback full|none] [--reuse-net NET]... [--congestion] [--return-exempt] [--diagnose] [--plane-net NET]... [--layer L]... [--net NET]... [--seed N] [--stall-passes N] [--checkpoint] [--tools DIR] [--json]";
+const USAGE: &str = "usage: iotroute run BOARD OUT.kicad_pcb [--pcb IN] [--iters N] [--max-time S] [--lock-from SRC] [--reuse PREV] [--reuse-fallback full|none] [--reuse-net NET]... [--congestion] [--return-exempt] [--ref-reuse] [--diagnose] [--plane-net NET]... [--layer L]... [--net NET]... [--seed N] [--stall-passes N] [--checkpoint] [--tools DIR] [--json]";
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Args {
@@ -67,6 +67,9 @@ pub struct Args {
     pub reuse_nets: Vec<String>,
     pub congestion: bool,
     pub return_exempt: bool,
+    /// Opt-in experiment: copper reuse after reference feedback, with fresh checks and full fallback.
+    #[serde(default)]
+    pub ref_reuse: bool,
     pub diagnose: bool,
     pub plane_nets: Vec<String>,
     pub layers: Vec<String>,
@@ -86,7 +89,7 @@ fn value<T: std::str::FromStr>(flag: &str, text: Option<&String>) -> Result<T, S
 pub fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut a = Args {
         board: String::new(), out: String::new(), pcb: None, iters: 80, max_time: None, lock_from: None, reuse: None, reuse_fallback: "full".to_string(), reuse_nets: Vec::new(),
-        congestion: std::env::var("IOTROUTE_CONGESTION").is_ok_and(|v| v == "1"), return_exempt: false, diagnose: false, plane_nets: Vec::new(), layers: Vec::new(), nets: Vec::new(), seed: None, stall_passes: None, checkpoint: false, tools: PathBuf::from("tools"), json: false,
+        congestion: std::env::var("IOTROUTE_CONGESTION").is_ok_and(|v| v == "1"), return_exempt: false, ref_reuse: false, diagnose: false, plane_nets: Vec::new(), layers: Vec::new(), nets: Vec::new(), seed: None, stall_passes: None, checkpoint: false, tools: PathBuf::from("tools"), json: false,
     };
     let mut positional = Vec::new();
     let mut it = argv.iter();
@@ -107,6 +110,7 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--net" => a.nets.push(value(arg, it.next())?),
             "--congestion" => a.congestion = true,
             "--return-exempt" => a.return_exempt = true,
+            "--ref-reuse" => a.ref_reuse = true,
             "--diagnose" => a.diagnose = true,
             "--checkpoint" => a.checkpoint = true,
             "--json" => a.json = true,
@@ -116,6 +120,9 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
     }
     if !matches!(a.reuse_fallback.as_str(), "full" | "none") {
         return Err("--reuse-fallback: full or none".to_string());
+    }
+    if a.ref_reuse && a.reuse.is_some() {
+        return Err("--ref-reuse cannot combine with --reuse; reference feedback needs a fresh initial route".into());
     }
     let [board, out] = positional.as_slice() else { return Err("BOARD and OUT are needed".to_string()) };
     (a.board, a.out) = (board.clone(), out.clone());
@@ -132,9 +139,15 @@ struct Run<'a> {
     steps: Steps,
     model: PathBuf,
     route_in: PathBuf,
+    route_in_sha256: String,
     src: PathBuf,
     folder: PathBuf,
     widths: Vec<crate::plan::WidthRule>,
+}
+
+fn scoped_feedback_passes(stages: &AttemptStages, drc: &DrcCounts, planes_failures: usize) -> bool {
+    stages.core.exit == 0 && stages.write.exit == 0 && drc.clean() && planes_failures == 0
+        && stages.core.claim.as_ref().is_some_and(|c| c.status == "PASS" && c.converged && c.failed == 0)
 }
 
 impl Run<'_> {
@@ -152,6 +165,85 @@ impl Run<'_> {
         Ok(())
     }
 
+    /// Try the existing copper-reuse engine under a fresh changed model. An
+    /// unverified scoped result never replaces the candidate; full routing is
+    /// the fallback, and the ordinary feedback/final gate still runs afterward.
+    fn feedback_attempt(&self, previous: &Path, previous_route: &Path, out: &Path, work: &Path,
+        before_model: &[u8], changed: &[String], spec: &Path) -> Result<(AttemptStages, FeedbackReuse), String> {
+        self.feedback_attempt_using(previous, previous_route, out, work, before_model, changed, spec, run_drc)
+    }
+
+    fn feedback_attempt_using(&self, previous: &Path, previous_route: &Path, out: &Path, work: &Path,
+        before_model: &[u8], changed: &[String], spec: &Path,
+        native_check: impl Fn(&Path, &Path) -> Result<DrcCounts, String>) -> Result<(AttemptStages, FeedbackReuse), String> {
+        if sha_file(&self.route_in)? != self.route_in_sha256 { return Err("feedback input changed during the run".into()); }
+        let model_sha = sha_file(&self.model)?;
+        let started = Instant::now();
+        let mut evidence = FeedbackReuse { status: "pending", selected: "full", elapsed_s: None, binding: None, record: None,
+            scoped_planes_fail_lines: None, fallback_reason: None };
+        let seed = work.join("seed.json");
+        let mut chosen: Option<(AttemptStages, PathBuf, PathBuf)> = None;
+        let seeded = if self.widths.is_empty() {
+            reuse::feedback_seed(before_model, &self.model, &self.route_in, &self.route_in_sha256, previous, previous_route, &seed, changed)
+        } else {
+            Err("scoped feedback reuse does not support route width rewriting; use the full route".into())
+        };
+        match seeded {
+            Ok((record, binding)) => {
+                evidence.record = Some(record); evidence.binding = Some(binding);
+                let scoped = work.join("scoped"); fs::create_dir_all(&scoped).map_err(|e| e.to_string())?;
+                let board = scoped.join(out.file_name().expect("OUT has a name"));
+                let trial = (|| -> Result<(AttemptStages, DrcCounts, usize), String> {
+                    let (stages, _) = self.attempt(&board, &scoped, &["--reuse".into(), seed.display().to_string(), "--reuse-recover".into(), "changed".into()])?;
+                    let drc = native_check(&board, &scoped.join("drc.json"))?;
+                    let text = self.steps.planes_check(&board, spec, &scoped.join("planes.log"))?;
+                    Ok((stages, drc, fail_lines(&text).1))
+                })();
+                match trial {
+                    Ok((stages, drc, planes)) => {
+                        let mut attempt = reuse::Attempt::new(stages.clone()); attempt.set_drc(&drc);
+                        evidence.record.as_mut().unwrap().attempts.insert("scoped".into(), attempt);
+                        evidence.scoped_planes_fail_lines = Some(planes);
+                        if scoped_feedback_passes(&stages, &drc, planes) {
+                            evidence.selected = "scoped"; chosen = Some((stages, scoped, board));
+                        } else {
+                            evidence.fallback_reason = Some("scoped core, native or planes check did not pass".into());
+                        }
+                    }
+                    Err(error) => evidence.fallback_reason = Some(error),
+                }
+            }
+            Err(error) => evidence.fallback_reason = Some(error),
+        }
+        if sha_file(&self.model)? != model_sha || sha_file(&self.route_in)? != self.route_in_sha256 {
+            return Err("feedback model or input changed during the scoped attempt".into());
+        }
+        // Preserve failed trial evidence even if the full fallback itself errors.
+        fs::write(work.join("reuse.json"), serde_json::to_vec_pretty(&evidence).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        let (stages, directory, board) = match chosen {
+            Some(selected) => selected,
+            None => {
+                let full = work.join("full"); fs::create_dir_all(&full).map_err(|e| e.to_string())?;
+                let board = full.join(out.file_name().expect("OUT has a name"));
+                let (stages, _) = self.attempt(&board, &full, &[])?;
+                let mut attempt = reuse::Attempt::new(stages.clone());
+                attempt.set_drc(&native_check(&board, &full.join("drc.json"))?);
+                if let Some(record) = &mut evidence.record { record.attempts.insert("full".into(), attempt); }
+                (stages, full, board)
+            }
+        };
+        if sha_file(&self.model)? != model_sha || sha_file(&self.route_in)? != self.route_in_sha256 {
+            return Err("feedback model or input changed during feedback selection".into());
+        }
+        if let Some(record) = &mut evidence.record { record.chosen = Some(evidence.selected.into()); }
+        self.copy_results(&directory, work, &["route.json", "route.log", "write.log"])?;
+        fs::copy(&board, out).map_err(|e| e.to_string())?;
+        place_sidecars(&self.src, out)?; restore_pro(&self.src, out)?;
+        evidence.status = "complete"; evidence.elapsed_s = Some(started.elapsed().as_secs_f64());
+        fs::write(work.join("reuse.json"), serde_json::to_vec_pretty(&evidence).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        Ok((stages, evidence))
+    }
+
     /// The gate's planes screen on the written board, and again after each raise of the failed soft nets.
     fn ref_gate(&self, out: &Path, work: &Path) -> Result<RefGate, String> {
         if !ModelFile::read(&self.model)?.has_soft_net() {
@@ -162,9 +254,10 @@ impl Run<'_> {
         for k in 0..=ROUNDS {
             let text = self.steps.planes_check(out, &self.folder.join(&spec), &work.join(format!("planes-r{}.log", k + 1)))?;
             let (nets, count) = fail_lines(&text);
+            let before_model = if self.a.ref_reuse { Some(fs::read(&self.model).map_err(|e| e.to_string())?) } else { None };
             let mut model = ModelFile::read(&self.model)?;
             let (soft, raised, set_hard) = model.raise(&nets)?;
-            rounds.push(Round { round: k + 1, planes_fail_lines: count, fail_nets: nets, raised, set_hard, next_core: None, next_core_seconds: None });
+            rounds.push(Round { round: k + 1, planes_fail_lines: count, fail_nets: nets, raised, set_hard, next_core: None, next_core_seconds: None, reuse: None });
             if soft.is_empty() || k == ROUNDS {
                 break;
             }
@@ -172,7 +265,14 @@ impl Run<'_> {
             let again = work.join(format!("ref-r{}", k + 2));
             fs::create_dir_all(&again).map_err(|e| format!("{}: {e}", again.display()))?;
             let candidate = again.join(out.file_name().expect("OUT has a name"));
-            let (stages, _) = self.attempt(&candidate, &again, &[])?;
+            let stages = match before_model {
+                Some(before) => {
+                    let (stages, evidence) = self.feedback_attempt(out, &work.join("route.json"), &candidate, &again, &before, &soft, &self.folder.join(&spec))?;
+                    rounds.last_mut().unwrap().reuse = Some(evidence);
+                    stages
+                }
+                None => self.attempt(&candidate, &again, &[])?.0,
+            };
             rounds.last_mut().expect("a round").next_core_seconds = Some(stages.core.seconds);
             rounds.last_mut().expect("a round").next_core = Some(stages.core.claim);
             if k == 0 {
@@ -434,7 +534,8 @@ fn prepare<'a>(a: &'a Args, rec: &mut Record, out: &Path, work: &Path) -> Result
     rec.stages.model = Some(ModelStage { line: text.trim().lines().last().unwrap_or("").to_string(), sha256: sha_file(&model)? });
 
     let widths = widths::board_widths(&folder, &model)?;
-    Ok(Run { a, steps, model, route_in, src, folder, widths })
+    let route_in_sha256 = sha_file(&route_in)?;
+    Ok(Run { a, steps, model, route_in, route_in_sha256, src, folder, widths })
 }
 
 fn run(a: &Args, rec: &mut Record, out: &Path, work: &Path) -> Result<(), String> {
@@ -509,6 +610,112 @@ pub fn cli(args: &[String]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn feedback_reuse_is_opt_in_and_does_not_silently_combine_with_public_reuse() {
+        let args = |s: &str| parse_args(&s.split_whitespace().map(str::to_string).collect::<Vec<_>>());
+        let baseline = args("BOARD out.kicad_pcb").unwrap(); assert!(!baseline.ref_reuse);
+        assert!(args("BOARD out.kicad_pcb --ref-reuse").unwrap().ref_reuse);
+        assert!(args("BOARD out.kicad_pcb --ref-reuse --reuse old.kicad_pcb").unwrap_err().contains("cannot combine"));
+        let mut old_manifest = serde_json::to_value(&baseline).unwrap(); old_manifest.as_object_mut().unwrap().remove("ref_reuse");
+        assert!(!serde_json::from_value::<Args>(old_manifest).unwrap().ref_reuse);
+    }
+
+    #[test]
+    fn a_scoped_feedback_result_requires_core_native_and_planes_to_pass() {
+        let claim = record::RouteClaim { status: "PASS".into(), converged: true, iters: 1, tracks: 1, vias: 0, failed: 0, stop: None };
+        let stages = AttemptStages { core: CoreStage { exit: 0, seconds: 1.0, claim: Some(claim) }, write: record::WriteStage { exit: 0, line: String::new() } };
+        assert!(scoped_feedback_passes(&stages, &DrcCounts::default(), 0));
+        assert!(!scoped_feedback_passes(&stages, &DrcCounts::default(), 1));
+        for drc in [DrcCounts { errors: 1, ..Default::default() }, DrcCounts { unconnected: 1, ..Default::default() }, DrcCounts { parity: 1, ..Default::default() }] {
+            assert!(!scoped_feedback_passes(&stages, &drc, 0));
+        }
+        for changed in 0..5 {
+            let mut trial = stages.clone();
+            match changed {
+                0 => trial.core.exit = 1,
+                1 => trial.write.exit = 1,
+                2 => trial.core.claim.as_mut().unwrap().failed = 1,
+                3 => trial.core.claim.as_mut().unwrap().converged = false,
+                _ => trial.core.claim = None,
+            }
+            assert!(!scoped_feedback_passes(&trial, &DrcCounts::default(), 0));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn feedback_selects_only_verified_scoped_copper_and_executes_full_fallback() {
+        use std::os::unix::fs::PermissionsExt;
+        struct Temp(PathBuf);
+        impl Drop for Temp { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
+        let root = Temp(std::env::temp_dir().join(format!("iotroute-feedback-control-{}", std::process::id())));
+        fs::create_dir_all(&root.0).unwrap();
+        let backend = root.0.join("backend.sh");
+        fs::write(&backend, r##"#!/bin/sh
+set -eu
+mode=$(cat "$(dirname "$0")/mode")
+case "$1" in
+  write)
+    mkdir -p "$4"
+    printf '(kicad_pcb)\n' > "$4/input.kicad_pcb"
+    echo 'WRITE PASS drc 0 {} unconnected 0 parity 0'
+    ;;
+  si-planes)
+    case "$2" in */scoped/*)
+      if [ "$mode" = planes ]; then echo 'FAIL unknown-driver F.Cu A: crossing'; exit 1; fi
+      if [ "$mode" = plane-error ]; then echo 'ERROR no checker result'; exit 2; fi
+    esac
+    echo '0 reference-plane failures'
+    ;;
+  *)
+    kind=FULL
+    case "$2" in */scoped/*)
+      kind=SCOPED
+      if [ "$mode" = core-error ]; then echo 'core crashed'; exit 2; fi
+    esac
+    echo "$kind"
+    printf '{"schema":"iot-lab.route-result.v0","passes":1,"tracks":[],"vias":[],"failed":[]}' > "$2"
+    echo 'ROUTE PASS converged true iters 1 tracks 0 vias 0 failed 0 notes 0 0 s -> route.json'
+    ;;
+esac
+"##).unwrap();
+        fs::set_permissions(&backend, fs::Permissions::from_mode(0o700)).unwrap();
+        let input = root.0.join("input.kicad_pcb"); fs::write(&input, "(kicad_pcb)").unwrap();
+        fs::write(root.0.join("input.kicad_pro"), "{}").unwrap();
+        let previous = root.0.join("previous.kicad_pcb"); fs::write(&previous, "(kicad_pcb)").unwrap();
+        let route = root.0.join("previous-route.json");
+        fs::write(&route, r#"{"schema":"iot-lab.route-result.v0","passes":15,"tracks":[],"vias":[],"failed":[]}"#).unwrap();
+        let before = r#"{"schema":"iot-lab.route-model.v0","pcb":"input.kicad_pcb","nets":{"A":{"ref_soft":true,"ref_cost":3.0}}}"#;
+        let model = root.0.join("model.json");
+        let a = parse_args(&["BOARD".into(), "out.kicad_pcb".into(), "--ref-reuse".into()]).unwrap();
+        let mut steps = Steps::new(&root.0).unwrap(); steps.exe = backend;
+        let mut context = Run { a: &a, steps, model: model.clone(), route_in: input.clone(), route_in_sha256: sha_file(&input).unwrap(),
+            src: input, folder: root.0.clone(), widths: Vec::new() };
+        for mode in ["pass", "native", "planes", "plane-error", "core-error", "invalidate", "width-rewrite"] {
+            context.widths = if mode == "width-rewrite" { vec![crate::plan::WidthRule { name: "region".into(), bounds: [0.0, 0.0, 1.0, 1.0], layers: vec!["F.Cu".into()], width_mm: 0.15 }] } else { Vec::new() };
+            fs::write(root.0.join("mode"), mode).unwrap();
+            let after = before.replace("3.0", "30.0");
+            fs::write(&model, if mode == "invalidate" { after.replace("\"nets\":", "\"new_rule\":true,\"nets\":") } else { after }).unwrap();
+            let work = root.0.join(mode); fs::create_dir_all(&work).unwrap();
+            let (_, evidence) = context.feedback_attempt_using(&previous, &route, &work.join("out.kicad_pcb"), &work, before.as_bytes(), &["A".into()], Path::new("spec"),
+                |board, _| Ok(DrcCounts { unconnected: usize::from(mode == "native" && board.parent().unwrap().ends_with("scoped")), ..Default::default() })).unwrap();
+            assert_eq!(evidence.status, "complete"); assert!(evidence.elapsed_s.unwrap() > 0.0);
+            let selected = if mode == "pass" { "scoped" } else { "full" };
+            assert_eq!(evidence.selected, selected, "{mode}");
+            assert_eq!(work.join("full").exists(), mode != "pass", "full fallback {mode}");
+            assert!(fs::read_to_string(work.join("route.log")).unwrap().contains(if mode == "pass" { "SCOPED" } else { "FULL" }));
+            assert_eq!(evidence.fallback_reason.is_some(), mode != "pass");
+            if mode == "native" { assert_eq!(evidence.record.as_ref().unwrap().attempts["scoped"].unconnected, Some(1)); }
+            if mode == "planes" { assert_eq!(evidence.scoped_planes_fail_lines, Some(1)); }
+            if matches!(mode, "invalidate" | "width-rewrite") { assert!(evidence.record.is_none() && evidence.binding.is_none()); }
+        }
+        // A changed native input is not a failed search: refuse it before either path runs.
+        fs::write(&context.route_in, "changed input").unwrap();
+        let work = root.0.join("stale"); fs::create_dir_all(&work).unwrap();
+        assert!(context.feedback_attempt_using(&previous, &route, &work.join("out.kicad_pcb"), &work, before.as_bytes(), &["A".into()], Path::new("spec"), |_, _| unreachable!()).unwrap_err().contains("input changed"));
+        assert!(!work.join("full").exists() && !work.join("scoped").exists());
+    }
 
     fn args(text: &str) -> Result<Args, String> {
         parse_args(&text.split_whitespace().map(str::to_string).collect::<Vec<_>>())

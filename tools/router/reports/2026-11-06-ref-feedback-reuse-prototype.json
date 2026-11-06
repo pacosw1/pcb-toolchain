@@ -1,0 +1,637 @@
+{
+  "schema": "pcb.ref-feedback-prototype.v1",
+  "implementation": "5c1bc0efda08730f80dc8580b9668e9a7610622d",
+  "binary_sha256": "b4b395f46cd7662e7fd305f2580e9c997918fa222864092f499c955b5587b0f6",
+  "conclusion": "not adoptable: strict copper preservation fails on 15 unrelated nets despite clean named checks",
+  "accepted": false,
+  "default_enabled": false,
+  "corrected_parser_native_validation": "not run; separate scope response pending",
+  "timing": {
+    "basis": "disjoint native child wall/CPU; original control gate was invalid and recovered separately",
+    "wall_reduction_percent": 52.49457942430934,
+    "cpu_reduction_percent": 52.33523625280967,
+    "limitations": "one pair; AIO/CI overlap, caches not flushed; numbers do not override failed preservation"
+  },
+  "geometry_audit": {
+    "schema": "pcb.ref-feedback-geometry-audit.v1",
+    "basis": "native exact integer nanometres; no geometric tolerance",
+    "source_board_sha256": "1dcb96b1d3b813a262dfedeac16cdf5c2517a6a4f9cd1515e544b26147bb8a7e",
+    "candidate_board_sha256": "a7c0a9c554b1de92bc161efd5f0508e440ab062cb28a5e956a109eb06fc21795",
+    "source_copper": 1082,
+    "candidate_copper": 1085,
+    "changed_nets": [
+      "/ETH_INTn",
+      "/ETH_RSTn",
+      "/EXP_P05",
+      "/I2C_SCL",
+      "/I2C_SDA",
+      "/IO0",
+      "/IO1",
+      "/IO8",
+      "/IO9",
+      "/SPI_MISO",
+      "/SPI_SCLK",
+      "/USB_PWRn",
+      "GND",
+      "USB_VBUS",
+      "VDD_3V3",
+      "VSYS_IN"
+    ],
+    "unchanged_nets": [
+      "/CC1",
+      "/CC2",
+      "/EN",
+      "/ETH_CSn",
+      "/ETH_CSn_S",
+      "/EXP_INTn",
+      "/EXP_P00",
+      "/EXP_P01",
+      "/EXP_P02",
+      "/EXP_P03",
+      "/EXP_P04",
+      "/EXP_P06",
+      "/EXP_P07",
+      "/EXP_P15",
+      "/EXP_P16",
+      "/EXP_P17",
+      "/FB",
+      "/FLASH_CSn",
+      "/ILIM",
+      "/ILIM_FLTn",
+      "/IO2",
+      "/IO3",
+      "/IO4",
+      "/IO5",
+      "/IO6",
+      "/IO7",
+      "/LED_A",
+      "/LED_PWR",
+      "/PR1",
+      "/RTC_INTn",
+      "/RTC_OSCI",
+      "/RTC_OSCO",
+      "/SPI_MOSI",
+      "/SPI_MOSI_S",
+      "/SPI_SCLK_S",
+      "/SW1_LX",
+      "/SW2_LX",
+      "/U0RXD",
+      "/U0TXD",
+      "/USB_DN",
+      "/USB_DP",
+      "/USB_MCU_DN",
+      "/USB_MCU_DP",
+      "/WDI",
+      "3V3_OUT",
+      "VIN_REG"
+    ],
+    "protected_locked_items": 30,
+    "candidate_locked_items": 30,
+    "changed_locked_ids": [],
+    "unexpected_locked_ids": [],
+    "protected_locked_unchanged": true,
+    "note": "unlocked routed-item UUIDs are regenerated; geometry compares net/layer/coordinates/width/drill/type and lock state"
+  },
+  "cases": [
+    {
+      "label": "esp32-baseline",
+      "board": "ESP32-CORE",
+      "mode": "baseline",
+      "source_sha256": "b6b97508157893ccca5c5c2cc3e0c90d55691a42d094f9c1015ad8b7f31bdb2b",
+      "source_unchanged": true,
+      "hardware_changes": [],
+      "native": {
+        "status": "PASS",
+        "drc": 0,
+        "opens": 0,
+        "parity": 0,
+        "tracks": 956,
+        "vias": 201,
+        "track_length_mm": 2225,
+        "candidate_sha256": "e9464aaa21ec7792469d02c4cd7244314ab9e4dd1655ad960536a3b709c499bf",
+        "model_sha256": "5fae672341bea7f9b4f80f477a933a773c94ba49939fd88c0df24147321ba6c9",
+        "initial_core": {
+          "exit": 0,
+          "seconds": 265.8,
+          "claim": {
+            "status": "PASS",
+            "converged": true,
+            "iters": 15,
+            "tracks": 871,
+            "vias": 181,
+            "failed": 0
+          }
+        },
+        "reference_feedback": {
+          "rounds": [
+            {
+              "round": 1,
+              "planes_fail_lines": 1,
+              "fail_nets": [
+                "/SPI_MISO"
+              ],
+              "raised": [
+                "/SPI_MISO"
+              ],
+              "set_hard": [],
+              "next_core": {
+                "status": "PASS",
+                "converged": true,
+                "iters": 22,
+                "tracks": 926,
+                "vias": 201,
+                "failed": 0
+              },
+              "next_core_seconds": 311.1
+            },
+            {
+              "round": 2,
+              "planes_fail_lines": 0,
+              "fail_nets": [],
+              "raised": [],
+              "set_hard": []
+            }
+          ]
+        }
+      },
+      "stages": [
+        {
+          "label": "native",
+          "wall_s": 592.3743843350001,
+          "child_cpu_s": 594.2178220000001,
+          "exit": 0,
+          "cleanup_complete": true
+        },
+        {
+          "label": "gate",
+          "wall_s": 10.881631063999958,
+          "child_cpu_s": 16.17461,
+          "exit": 1,
+          "cleanup_complete": true
+        }
+      ],
+      "original_operation": {
+        "status": "ERROR",
+        "wall_s": 603.4764011489999,
+        "cgroup_cpu_s": 611.008681,
+        "error": "Error: configured gate rejected; inspect actual findings and stale records separately"
+      },
+      "selected_gate": {
+        "recovery": true,
+        "exit": 1,
+        "changedDuringRun": false,
+        "metrics": {
+          "erc_errors": 0,
+          "erc_warnings": 337,
+          "drc_errors": 0,
+          "drc_parity": 0,
+          "drc_unconnected": 0,
+          "drc_warnings": 22,
+          "planes_failures": 0,
+          "pairs_failures": 0,
+          "paths_low": 0,
+          "viapads": 0,
+          "kicad_happy_findings": 5,
+          "port_label_failures": 0
+        },
+        "unwaived_happy_findings": 0,
+        "stale_exemptions": 5,
+        "stale_entries": [
+          "RP-001 /ETH_RSTn",
+          "RP-001 /EXP_P04",
+          "RP-001 /EXP_P06",
+          "RP-001 /SPI_MOSI_S",
+          "RP-001 /WDI"
+        ]
+      },
+      "gate_only_recovery": {
+        "wall_s": 12.228827241000001,
+        "cgroup_cpu_s": 20.654278,
+        "candidate_unchanged": true,
+        "cleanup_complete": true
+      },
+      "process": {
+        "exit": 2,
+        "timeout": false,
+        "oom": false,
+        "container_absent": true,
+        "resources": {
+          "NanoCpus": 2000000000,
+          "Memory": 8589934592,
+          "CpuPeriod": 0,
+          "CpuQuota": 0,
+          "PidsLimit": null
+        }
+      }
+    },
+    {
+      "label": "esp32-scoped",
+      "board": "ESP32-CORE",
+      "mode": "scoped",
+      "source_sha256": "b6b97508157893ccca5c5c2cc3e0c90d55691a42d094f9c1015ad8b7f31bdb2b",
+      "source_unchanged": true,
+      "hardware_changes": [],
+      "native": {
+        "status": "PASS",
+        "drc": 0,
+        "opens": 0,
+        "parity": 0,
+        "tracks": 904,
+        "vias": 181,
+        "track_length_mm": 2168,
+        "candidate_sha256": "a7c0a9c554b1de92bc161efd5f0508e440ab062cb28a5e956a109eb06fc21795",
+        "model_sha256": "5fae672341bea7f9b4f80f477a933a773c94ba49939fd88c0df24147321ba6c9",
+        "initial_core": {
+          "exit": 0,
+          "seconds": 259.5,
+          "claim": {
+            "status": "PASS",
+            "converged": true,
+            "iters": 15,
+            "tracks": 871,
+            "vias": 181,
+            "failed": 0
+          }
+        },
+        "reference_feedback": {
+          "rounds": [
+            {
+              "round": 1,
+              "planes_fail_lines": 1,
+              "fail_nets": [
+                "/SPI_MISO"
+              ],
+              "raised": [
+                "/SPI_MISO"
+              ],
+              "set_hard": [],
+              "next_core": {
+                "status": "PASS",
+                "converged": true,
+                "iters": 1,
+                "tracks": 874,
+                "vias": 181,
+                "failed": 0
+              },
+              "next_core_seconds": 3.4,
+              "reuse": {
+                "status": "complete",
+                "selected": "scoped",
+                "elapsed_s": 7.269016786,
+                "binding": {
+                  "input_sha256": "d242795e431e9f6103356c48b246a40e4912cf2088b1a41e21da60a7d09d7e06",
+                  "source_route_sha256": "8627b813320050c6af8234b76d029251b4883ed8713e036ffe28a1821945e615",
+                  "source_model_sha256": "5fae672341bea7f9b4f80f477a933a773c94ba49939fd88c0df24147321ba6c9",
+                  "model_sha256": "c32f7deef62492be722a1caa88646fc8b0d25cabca689ad60817095798dcc638"
+                },
+                "record": {
+                  "source": "/job/out/route/ESP32-CORE.kicad_pcb",
+                  "source_sha256": "1dcb96b1d3b813a262dfedeac16cdf5c2517a6a4f9cd1515e544b26147bb8a7e",
+                  "moved_refs": [],
+                  "failed_nets": [
+                    "/SPI_MISO"
+                  ],
+                  "passes": 15,
+                  "tracks": 871,
+                  "vias": 181,
+                  "seed_sha256": "2b5c6ecfc6d8b3e30856fbdf6e19589a0c8d8c1415c6a2c4d799403ec2d916e5",
+                  "fallback": "full",
+                  "attempts": {
+                    "scoped": {
+                      "stages": {
+                        "core": {
+                          "exit": 0,
+                          "seconds": 3.4,
+                          "claim": {
+                            "status": "PASS",
+                            "converged": true,
+                            "iters": 1,
+                            "tracks": 874,
+                            "vias": 181,
+                            "failed": 0
+                          }
+                        },
+                        "write": {
+                          "exit": 0,
+                          "line": "WRITE PASS drc 0 {} unconnected 0 parity 0 -> /job/out/route/ESP32-CORE.kicad_pcb.iotroute/ref-r2/scoped/write/ESP32-CORE.kicad_pcb"
+                        }
+                      },
+                      "claim": {
+                        "status": "PASS",
+                        "converged": true,
+                        "iters": 1,
+                        "tracks": 874,
+                        "vias": 181,
+                        "failed": 0
+                      },
+                      "drc_errors": 0,
+                      "unconnected": 0,
+                      "parity": 0,
+                      "drc_by_type": {}
+                    }
+                  },
+                  "chosen": "scoped",
+                  "incumbent_note": "feedback seed only; changed model forbids stale incumbent replay"
+                },
+                "scoped_planes_fail_lines": 0,
+                "fallback_reason": null
+              }
+            },
+            {
+              "round": 2,
+              "planes_fail_lines": 0,
+              "fail_nets": [],
+              "raised": [],
+              "set_hard": []
+            }
+          ]
+        }
+      },
+      "stages": [
+        {
+          "label": "native",
+          "wall_s": 281.409942661,
+          "child_cpu_s": 283.232521,
+          "exit": 0,
+          "cleanup_complete": true
+        },
+        {
+          "label": "gate",
+          "wall_s": 10.67521512399998,
+          "child_cpu_s": 17.938294,
+          "exit": 1,
+          "cleanup_complete": true
+        }
+      ],
+      "original_operation": {
+        "status": "ERROR",
+        "wall_s": 292.27290433299993,
+        "cgroup_cpu_s": 301.607723,
+        "error": "Error: configured gate rejected; inspect actual findings and stale records separately"
+      },
+      "selected_gate": {
+        "recovery": false,
+        "exit": 1,
+        "changedDuringRun": false,
+        "metrics": {
+          "erc_errors": 0,
+          "erc_warnings": 337,
+          "drc_errors": 0,
+          "drc_parity": 0,
+          "drc_unconnected": 0,
+          "drc_warnings": 22,
+          "planes_failures": 0,
+          "pairs_failures": 0,
+          "paths_low": 0,
+          "viapads": 0,
+          "kicad_happy_findings": 7,
+          "port_label_failures": 0
+        },
+        "unwaived_happy_findings": 0,
+        "stale_exemptions": 7,
+        "stale_entries": [
+          "RP-001 /ETH_INTn",
+          "RP-001 /ETH_RSTn",
+          "RP-001 /EXP_P02",
+          "RP-001 /EXP_P03",
+          "RP-001 /EXP_P06",
+          "RP-001 /EXP_P07",
+          "RP-001 /SPI_MOSI_S"
+        ]
+      },
+      "gate_only_recovery": null,
+      "process": {
+        "exit": 2,
+        "timeout": false,
+        "oom": false,
+        "container_absent": true,
+        "resources": {
+          "NanoCpus": 2000000000,
+          "Memory": 8589934592,
+          "CpuPeriod": 0,
+          "CpuQuota": 0,
+          "PidsLimit": null
+        }
+      }
+    },
+    {
+      "label": "net-core-scoped",
+      "board": "NET-CORE",
+      "mode": "scoped",
+      "source_sha256": "9109c27c374ca3685cc73cb60e452a66adba81ad71968c1f63db754f7fc5f784",
+      "source_unchanged": true,
+      "hardware_changes": [],
+      "native": {
+        "status": "PASS",
+        "drc": 0,
+        "opens": 0,
+        "parity": 0,
+        "tracks": 1118,
+        "vias": 263,
+        "track_length_mm": 1563.9,
+        "candidate_sha256": "f1deebad65c71c77ad65bec595297ceea491089d8da519ddc50a7bae6d2ffe05",
+        "model_sha256": "0601e4fd6b89e0e931c4bc78e843ce29538dc2c51fe22736aa7e1f73c45c4cb1",
+        "initial_core": {
+          "exit": 0,
+          "seconds": 289.1,
+          "claim": {
+            "status": "PASS",
+            "converged": false,
+            "iters": 80,
+            "tracks": 917,
+            "vias": 235,
+            "failed": 0
+          }
+        },
+        "reference_feedback": {
+          "rounds": [
+            {
+              "round": 1,
+              "planes_fail_lines": 0,
+              "fail_nets": [],
+              "raised": [],
+              "set_hard": []
+            }
+          ]
+        }
+      },
+      "stages": [
+        {
+          "label": "native",
+          "wall_s": 301.844917979,
+          "child_cpu_s": 300.21196000000003,
+          "exit": 0,
+          "cleanup_complete": true
+        },
+        {
+          "label": "gate",
+          "wall_s": 28.820015133000037,
+          "child_cpu_s": 28.764045,
+          "exit": 0,
+          "cleanup_complete": true
+        }
+      ],
+      "original_operation": {
+        "status": "PASS",
+        "wall_s": 330.864658104,
+        "cgroup_cpu_s": 329.399967,
+        "error": null
+      },
+      "selected_gate": {
+        "recovery": false,
+        "exit": 0,
+        "changedDuringRun": false,
+        "metrics": {
+          "erc_errors": 0,
+          "erc_warnings": 368,
+          "drc_errors": 0,
+          "drc_parity": 0,
+          "drc_unconnected": 0,
+          "drc_warnings": 115,
+          "planes_failures": 0,
+          "pairs_failures": 0,
+          "paths_low": 0,
+          "viapads": 0,
+          "kicad_happy_findings": 0,
+          "port_label_failures": 0
+        },
+        "unwaived_happy_findings": 0,
+        "stale_exemptions": 0,
+        "stale_entries": []
+      },
+      "gate_only_recovery": null,
+      "process": {
+        "exit": 0,
+        "timeout": false,
+        "oom": false,
+        "container_absent": true,
+        "resources": {
+          "NanoCpus": 1000000000,
+          "Memory": 8589934592,
+          "CpuPeriod": 0,
+          "CpuQuota": 0,
+          "PidsLimit": null
+        }
+      }
+    },
+    {
+      "label": "env-scoped",
+      "board": "ENV-SENSE",
+      "mode": "scoped",
+      "source_sha256": "6abb00a0a30cd3f02d6e96a0cb326e16c1f050b735e5ed43770dcbf653844ae7",
+      "source_unchanged": true,
+      "hardware_changes": [],
+      "native": {
+        "status": "PASS",
+        "drc": 0,
+        "opens": 0,
+        "parity": 0,
+        "tracks": 177,
+        "vias": 20,
+        "track_length_mm": 262,
+        "candidate_sha256": "7c4dd481c5454a055da4b956124c984cae450a17547d81c3abe5092b31316da3",
+        "model_sha256": "454bec1afe0c8f7fa46953d2669d52c9df2352bac2f47daa0e1b95262ace8c62",
+        "initial_core": {
+          "exit": 0,
+          "seconds": 9.2,
+          "claim": {
+            "status": "PASS",
+            "converged": true,
+            "iters": 8,
+            "tracks": 177,
+            "vias": 20,
+            "failed": 0
+          }
+        },
+        "reference_feedback": {
+          "rounds": [],
+          "note": "no soft reference net"
+        }
+      },
+      "stages": [
+        {
+          "label": "native",
+          "wall_s": 13.024953307,
+          "child_cpu_s": 11.714637999999999,
+          "exit": 0,
+          "cleanup_complete": true
+        },
+        {
+          "label": "gate",
+          "wall_s": 3.0099834090000006,
+          "child_cpu_s": 3.970221,
+          "exit": 0,
+          "cleanup_complete": true
+        },
+        {
+          "label": "board-semantic-0",
+          "wall_s": 0.6065971750000008,
+          "child_cpu_s": 0.50029,
+          "exit": 0,
+          "cleanup_complete": true
+        },
+        {
+          "label": "board-semantic-1",
+          "wall_s": 0.40951929499999823,
+          "child_cpu_s": 0.220752,
+          "exit": 0,
+          "cleanup_complete": true
+        }
+      ],
+      "original_operation": {
+        "status": "PASS",
+        "wall_s": 17.242835362,
+        "cgroup_cpu_s": 16.70952,
+        "error": null
+      },
+      "selected_gate": {
+        "recovery": false,
+        "exit": 0,
+        "changedDuringRun": false,
+        "metrics": {
+          "erc_errors": 0,
+          "erc_warnings": 117,
+          "drc_errors": 0,
+          "drc_parity": 0,
+          "drc_unconnected": 0,
+          "drc_warnings": 28,
+          "paths_low": 0,
+          "viapads": 0,
+          "kicad_happy_findings": 0,
+          "port_label_failures": 0
+        },
+        "unwaived_happy_findings": 0,
+        "stale_exemptions": 0,
+        "stale_entries": []
+      },
+      "gate_only_recovery": null,
+      "process": {
+        "exit": 0,
+        "timeout": false,
+        "oom": false,
+        "container_absent": true,
+        "resources": {
+          "NanoCpus": 2000000000,
+          "Memory": 8589934592,
+          "CpuPeriod": 0,
+          "CpuQuota": 0,
+          "PidsLimit": null
+        }
+      }
+    }
+  ],
+  "fixture_archives": [
+    {
+      "path": "/var/lib/cip/saved-artifacts/esp32-sprints-1399/esp32-sprints-1399-runtime-source.tar.gz",
+      "sha256": "ec694a50bb34319284c5704a3220b6d4a3f2dbba486e396e80cca2ec04781054"
+    },
+    {
+      "path": "/var/lib/cip/saved-artifacts/net-core-1395/net-core-evidence-runtime.tar.gz",
+      "sha256": "24c36cdde4611b75878e161fa13d192833db832fe8d9427c5ff7a7ba42013916"
+    },
+    {
+      "path": "/var/lib/cip/saved-artifacts/net-core-1395/env-sense-evidence-runtime.tar.gz",
+      "sha256": "ed98a3fd258eae7cae5d689a16bceb1ef21c21617ca7064dfb5da2e3eb253ee1"
+    }
+  ]
+}

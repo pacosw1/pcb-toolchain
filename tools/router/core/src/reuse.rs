@@ -18,6 +18,42 @@
 //!   plane-net via that touches no pad of its net (a fixed return of a locked via that moved) is dropped.
 use super::*;
 
+/// Seed coordinates must reach the writer with the same double bits as the
+/// original route. serde_json's default float parser can move a decimal by one
+/// ULP, which becomes a whole nanometre when the writer cuts toward zero. Keep
+/// this exact parse local to seeds; changing the model parser changes search.
+pub(crate) fn read_seed_exact(text: &str) -> serde_json::Result<Value> {
+    use serde_json::value::RawValue;
+    fn decode(raw: &RawValue, depth: usize) -> serde_json::Result<Value> {
+        let text = raw.get().trim();
+        // Re-parsing RawValue subtrees must not bypass serde_json's ordinary nesting bound.
+        if depth >= 128 && matches!(text.as_bytes()[0], b'{' | b'[') {
+            return Err(<serde_json::Error as serde::de::Error>::custom("seed JSON nesting exceeds the parser limit"));
+        }
+        match text.as_bytes()[0] {
+            b'{' => {
+                let values: std::collections::BTreeMap<String, Box<RawValue>> = serde_json::from_str(text)?;
+                values.into_iter().map(|(key, value)| Ok((key, decode(&value, depth + 1)?)))
+                    .collect::<serde_json::Result<serde_json::Map<String, Value>>>().map(Value::Object)
+            }
+            b'[' => {
+                let values: Vec<Box<RawValue>> = serde_json::from_str(text)?;
+                values.iter().map(|value| decode(value, depth + 1)).collect::<serde_json::Result<Vec<_>>>().map(Value::Array)
+            }
+            b'-' | b'0'..=b'9' => {
+                if text == "-0" { return Ok(serde_json::Number::from_f64(-0.0).unwrap().into()); }
+                if let Ok(value) = text.parse::<i64>() { return Ok(value.into()); }
+                if let Ok(value) = text.parse::<u64>() { return Ok(value.into()); }
+                let value = text.parse::<f64>().map_err(<serde_json::Error as serde::de::Error>::custom)?;
+                serde_json::Number::from_f64(value).map(Value::Number)
+                    .ok_or_else(|| <serde_json::Error as serde::de::Error>::custom("non-finite seed number"))
+            }
+            _ => serde_json::from_str(text),
+        }
+    }
+    decode(&serde_json::from_str::<Box<RawValue>>(text)?, 0)
+}
+
 pub(crate) struct SeedPlan {
     /// nets to route in iteration 1 (signal / power nets with no seed copper loaded), with the first reason
     pub(crate) rip: Vec<usize>,
@@ -286,4 +322,11 @@ pub(crate) fn recover_scope(bd: &Board, plan: &SeedPlan, moves: &[u32], near: f6
         }
     }
     v
+}
+
+/// Feedback reuse does not authorize optimizing an untouched nearby net. Keep
+/// length recovery on nets actually routed by negotiation; retained copper is
+/// still negotiable when a real conflict causes the router to revisit its net.
+pub(crate) fn recover_changed(bd: &Board, moves: &[u32]) -> Vec<bool> {
+    bd.nets.iter().enumerate().map(|(n, net)| moves[n] > 0 && !net.plane).collect()
 }

@@ -40,6 +40,7 @@ fn validate(prepared: &Prepared, exe: &Path) -> Result<(), String> {
 fn prepare_job(args: &[String]) -> Result<Prepared, String> {
     let a = parse_args(args)?;
     if a.reuse.is_some() { return Err("sprints do not combine with --reuse".into()); }
+    if a.ref_reuse { return Err("--ref-reuse is supported by iotroute run, not sprint preparation".into()); }
     let out = absolute(&a.out)?;
     let work = PathBuf::from(format!("{}.iotroute", out.display()));
     let mut rec = Record::new(out.display().to_string(), work.display().to_string());
@@ -122,6 +123,11 @@ pub fn finish_cli(args: &[String]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sprint_preparation_refuses_an_ignored_feedback_experiment() {
+        let error = prepare_job(&["BOARD".into(), "out.kicad_pcb".into(), "--ref-reuse".into()]).err().unwrap();
+        assert!(error.contains("not sprint preparation"));
+    }
     #[test]
     fn unbound_or_changed_preparation_is_rejected_before_native_work() {
         let d = std::env::temp_dir().join(format!("sprint-bind-{}", std::process::id())); fs::create_dir_all(&d).unwrap();
