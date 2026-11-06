@@ -205,7 +205,10 @@ impl Context<'_> {
                 }
             }
             "via_count" => net.limits.via_count = value("max")?.or(net.limits.via_count),
-            "length" => net.limits.length = value("max")?.or(net.limits.length),
+            "length" => {
+                if self.tune { value("min")?; }
+                net.limits.length = value("max")?.or(net.limits.length);
+            }
             "disallow" => disallow(net, con, rule.layer.as_deref()),
             _ => {}
         }
@@ -288,6 +291,15 @@ mod tests {
         assert_stops(r#"(rule "l" (condition "A.NetClass == 'ISO'") (constraint length (min 20mm) (max 30mm)))"#, "min");
         assert_stops(r#"(rule "c" (condition "A.NetClass == 'ISO'") (constraint via_count (min 1) (max 3)))"#, "min");
         assert_stops(r#"(rule "v" (condition "A.NetClass == 'ISO'") (constraint via_diameter (min 0.5mm) (max 0.7mm)))"#, "max");
+    }
+
+    #[test]
+    fn a_tuning_length_min_must_be_a_valid_distance() {
+        for min in ["bad", "-1mm", "12seconds"] {
+            let rules = parse_rules(&format!("(version 1) (rule l (constraint length (min {min}) (max 30mm)))")).unwrap();
+            let error = apply_rules_with(&rules, &mut nets(), &BTreeSet::new(), &BTreeSet::new(), true).err().expect("bad min must stop the model");
+            assert!(error.contains(min), "{error}");
+        }
     }
 
     #[test]

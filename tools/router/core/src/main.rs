@@ -4391,6 +4391,12 @@ fn route_cli(args: &[String]) {
         }
         i += 2;
     }
+    if args.last().is_some_and(|s| s == "--tune") {
+        eprintln!("--tune requires a targets file"); std::process::exit(2);
+    }
+    let tune_targets = tune_path.as_ref().map(|tp| tune::read_targets(tp).unwrap_or_else(|e| {
+        eprintln!("--tune {tp}: {e}"); std::process::exit(2)
+    }));
     if args.last().is_some_and(|s| s == "--yield-after-passes") {
         eprintln!("--yield-after-passes requires a positive pass count"); std::process::exit(2);
     }
@@ -5053,11 +5059,9 @@ fn route_cli(args: &[String]) {
     let pruned = prune_returns(&mut ctx);
     eprintln!("returns: {pruned} return via(s) removed (every signal via keeps a GND via within {} mm)", o.return_r);
     // opt-in length / skew tuning (tune.rs): meanders on router-routed nets, each kept only when legal
-    if let Some(tp) = &tune_path {
+    if let Some(targets) = &tune_targets {
         let tt = std::time::Instant::now();
-        let targets: Value = serde_json::from_str(&std::fs::read_to_string(tp).unwrap_or_else(|e| { eprintln!("--tune {tp}: {e}"); std::process::exit(2) }))
-            .unwrap_or_else(|e| { eprintln!("--tune {tp}: {e}"); std::process::exit(2) });
-        let t = tune::tune(&mut ctx, &targets, &state);
+        let t = tune::tune(&mut ctx, targets, &state);
         for n in &t.notes {
             eprintln!("{n}");
         }

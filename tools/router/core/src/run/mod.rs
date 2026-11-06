@@ -85,7 +85,7 @@ pub struct Args {
     pub stall_passes: Option<u64>,
     pub checkpoint: bool,
     /// Opt-in post-route length / skew tuning (tune.rs, core tune.rs).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tune: bool,
     pub tools: PathBuf,
     pub json: bool,
@@ -260,12 +260,17 @@ impl Run<'_> {
     /// flags give the same route before tuning). The board with fewer DRC errors + unconnected + parity is kept; a tie keeps the
     /// first, and then the targets lose their offsets again so later reference rounds route as the first did.
     fn tune_correction(&self, out: &Path, work: &Path, stages: AttemptStages, restored: bool) -> Result<(AttemptStages, bool, Option<record::TuneCorrection>), String> {
+        self.tune_correction_using(out, work, stages, restored, run_drc)
+    }
+
+    fn tune_correction_using(&self, out: &Path, work: &Path, stages: AttemptStages, restored: bool,
+        native_check: impl Fn(&Path, &Path) -> Result<DrcCounts, String>) -> Result<(AttemptStages, bool, Option<record::TuneCorrection>), String> {
         let route_tune = work.join("route.tune.json");
         if !route_tune.is_file() {
             return Ok((stages, restored, None));
         }
         let first_json = work.join("tune-drc-r1.json");
-        let first = run_drc(out, &first_json)?;
+        let first = native_check(out, &first_json)?;
         let read = |p: &Path| -> Result<Value, String> { serde_json::from_str(&fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?).map_err(|e| format!("{}: {e}", p.display())) };
         let kicad = tune::kicad_lengths(&read(&first_json)?);
         let core = read(&route_tune)?;
@@ -285,8 +290,9 @@ impl Run<'_> {
         fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
         let candidate = folder.join(out.file_name().expect("OUT has a name"));
         let (again, again_restored) = self.attempt(&candidate, &folder, &[])?;
-        let second = run_drc(&candidate, &folder.join("drc.json"))?;
+        let second = native_check(&candidate, &folder.join("drc.json"))?;
         correction.corrected = Some(score(&second));
+        fs::write(&targets_path, serde_json::to_string_pretty(&plain).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
         if score(&second).iter().sum::<usize>() < score(&first).iter().sum::<usize>() {
             correction.chosen = "corrected".into();
             fs::copy(work.join("route.log"), work.join("route-tune-r1.log")).map_err(|e| e.to_string())?;
@@ -295,7 +301,6 @@ impl Run<'_> {
             place_sidecars(&self.src, out)?;
             return Ok((again, restore_pro(&self.src, out)? || again_restored, Some(correction)));
         }
-        fs::write(&targets_path, serde_json::to_string_pretty(&plain).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
         Ok((stages, restored, Some(correction)))
     }
 
@@ -794,8 +799,68 @@ esac
         assert!(!work.join("full").exists() && !work.join("scoped").exists());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn correction_offsets_are_cleared_for_later_routes_whichever_board_wins() {
+        use std::os::unix::fs::PermissionsExt;
+        struct Temp(PathBuf);
+        impl Drop for Temp { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
+        let root = Temp(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join(format!("iotroute-tune-correction-{}", std::process::id())));
+        fs::create_dir_all(&root.0).unwrap();
+        let backend = root.0.join("backend.sh");
+        fs::write(&backend, r##"#!/bin/sh
+set -eu
+case "$1" in
+  write)
+    mkdir -p "$4"
+    printf '(kicad_pcb)\n' > "$4/input.kicad_pcb"
+    echo 'WRITE PASS'
+    ;;
+  *)
+    printf '{"tracks":[],"vias":[],"failed":[]}' > "$2"
+    echo 'ROUTE PASS converged true iters 1 tracks 0 vias 0 failed 0 notes 0 0 s -> route.json'
+    ;;
+esac
+"##).unwrap();
+        fs::set_permissions(&backend, fs::Permissions::from_mode(0o700)).unwrap();
+        let input = root.0.join("input.kicad_pcb"); fs::write(&input, "(kicad_pcb)").unwrap();
+        fs::write(input.with_extension("kicad_pro"), "{}").unwrap();
+        let model = root.0.join("model.json"); fs::write(&model, "{}").unwrap();
+        let a = args("BOARD out.kicad_pcb --tune").unwrap();
+        let mut steps = Steps::new(&root.0).unwrap(); steps.exe = backend;
+        let context = Run { a: &a, steps, model: model.clone(), route_in: input.clone(), route_in_sha256: sha_file(&input).unwrap(),
+            src: input, folder: root.0.clone(), widths: Vec::new() };
+        let plain = serde_json::json!({"schema": tune::SCHEMA, "skew": [], "length": [{"net":"A", "min":12.0}]});
+        for errors in [0, 1] {
+            fs::write(tune::path_beside(&model), plain.to_string()).unwrap();
+            let work = root.0.join(format!("score-{errors}")); fs::create_dir_all(&work).unwrap();
+            let out = work.join("out.kicad_pcb"); fs::write(&out, "(kicad_pcb)").unwrap();
+            fs::write(work.join("route.tune.json"), r#"{"core_lengths":{"A":10.0}}"#).unwrap();
+            fs::write(work.join("route.log"), "first").unwrap();
+            let stages = AttemptStages { core: CoreStage { exit: 0, seconds: 0.0, claim: None }, write: record::WriteStage { exit: 0, line: String::new() } };
+            let (_, _, correction) = context.tune_correction_using(&out, &work, stages, false, |board, report| {
+                let first = board == out;
+                fs::write(report, r#"{"violations":[{"type":"length_out_of_range","description":"actual 9.0000 mm","items":[{"description":"Track [A]"}]}]}"#).unwrap();
+                Ok(DrcCounts { errors: if first { 1 } else { errors }, ..Default::default() })
+            }).unwrap();
+            assert_eq!(correction.unwrap().chosen, if errors == 0 { "corrected" } else { "first" });
+            let restored: Value = serde_json::from_str(&fs::read_to_string(tune::path_beside(&model)).unwrap()).unwrap();
+            assert_eq!(restored, plain, "offsets measured on this route must not reach a different reference route");
+        }
+    }
+
     fn args(text: &str) -> Result<Args, String> {
         parse_args(&text.split_whitespace().map(str::to_string).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn tuning_does_not_change_default_argument_output() {
+        let baseline = args("NET-CORE o.kicad_pcb").unwrap();
+        let value = serde_json::to_value(&baseline).unwrap();
+        assert!(value.get("tune").is_none());
+        assert!(!serde_json::from_value::<Args>(value).unwrap().tune);
+        let enabled = serde_json::to_value(args("NET-CORE o.kicad_pcb --tune").unwrap()).unwrap();
+        assert_eq!(enabled["tune"], true);
     }
 
     #[test]

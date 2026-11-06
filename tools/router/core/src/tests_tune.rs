@@ -140,3 +140,53 @@ fn a_length_min_lengthens_a_net_and_a_met_target_changes_nothing() {
     assert!((len[1] - 16.0).abs() < 1e-9, "B already meets its min");
     assert_legal_and_joined(&mut ctx);
 }
+
+#[test]
+fn an_empty_target_window_is_reported_without_changing_copper() {
+    let o = opts();
+    for max in [12.0, 12.08] {
+        let mut bd = two_nets(0);
+        let mut ctx = ctx_of(&mut bd, &o);
+        let before = net_lengths(ctx.bd);
+        let targets = serde_json::json!({"length": [{"rule": "tight", "net": "A", "min": 12.0, "max": max}]});
+        let t = tune::tune(&mut ctx, &targets, &state(3));
+        assert_eq!(net_lengths(ctx.bd), before);
+        assert_eq!(t.report["nets"][0]["skipped"], "target window empty (min above max)");
+        assert_eq!(t.report["nets"][0]["met"], false);
+    }
+}
+
+#[test]
+fn tune_cli_probe() {
+    let Ok(path) = std::env::var("IOTROUTE_TUNE_PROBE") else { return };
+    let mut args = vec!["iotroute".into(), "missing-model.json".into(), "unused-route.json".into(), "--tune".into()];
+    if !path.is_empty() { args.push(path); }
+    route_cli(&args);
+}
+
+#[test]
+fn tune_cli_rejects_bad_targets_before_routing() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join(format!("iotroute-tune-input-{}.json", std::process::id()));
+    for text in [None, Some("{"), Some("null"), Some(r#"{"schema":"wrong","skew":[],"length":[]}"#),
+        Some(r#"{"schema":"iot-lab.route-tune.v0","skew":[],"length":[{"net":"A","min":"bad"}]}"#),
+        Some(r#"{"schema":"iot-lab.route-tune.v0","skew":[{"nets":["A","B"],"max":-1}],"length":[]}"#),
+        Some(r#"{"schema":"iot-lab.route-tune.v0","skew":[],"length":[{"net":"A","min":13,"max":12}]}"#),
+        Some(r#"{"schema":"iot-lab.route-tune.v0","skew":{},"length":[]}"#),
+        Some(r#"{"schema":"iot-lab.route-tune.v0","skew":[],"length":[],"offsets":{"A":"bad"}}"#)] {
+        if let Some(text) = text { std::fs::write(&path, text).unwrap(); }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tests_tune::tune_cli_probe", "--nocapture"])
+            .env("IOTROUTE_TUNE_PROBE", if text.is_some() { path.to_str().unwrap() } else { "" }).output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "{text:?}: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("--tune"));
+    }
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn valid_targets_accept_zero_limits_and_signed_offsets() {
+    let targets = serde_json::json!({"schema": "iot-lab.route-tune.v0", "skew": [{"nets": ["A", "B"], "max": 0.0}],
+        "length": [{"net": "A", "min": 12.0, "max": 12.0}], "offsets": {"A": -1.0, "B": 0.5}});
+    tune::validate_targets(&targets).unwrap();
+    tune::validate_targets(&serde_json::json!({"schema": "iot-lab.route-tune.v0", "skew": [], "length": []})).unwrap();
+}

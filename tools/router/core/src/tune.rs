@@ -44,6 +44,55 @@ pub(crate) struct Outcome {
     pub report: Value,
 }
 
+/// Validate the public --tune input before routing; malformed targets must not become an empty tuning stage.
+pub(crate) fn read_targets(path: &str) -> Result<Value, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let targets: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    validate_targets(&targets)?;
+    Ok(targets)
+}
+
+pub(crate) fn validate_targets(targets: &Value) -> Result<(), String> {
+    if targets["schema"].as_str() != Some("iot-lab.route-tune.v0") {
+        return Err("expected schema iot-lab.route-tune.v0".into());
+    }
+    for kind in ["skew", "length"] {
+        let entries = targets[kind].as_array().ok_or_else(|| format!("{kind} must be an array"))?;
+        for (i, entry) in entries.iter().enumerate() {
+            let label = format!("{kind}[{i}]");
+            if !entry.is_object() { return Err(format!("{label} must be an object")); }
+            if kind == "length" {
+                if entry["net"].as_str().is_none_or(str::is_empty) {
+                    return Err(format!("{label}.net must be a nonempty string"));
+                }
+            } else if entry["nets"].as_array().is_none_or(|nets| nets.iter().any(|n| n.as_str().is_none_or(str::is_empty))) {
+                return Err(format!("{label}.nets must be an array of nonempty strings"));
+            }
+            for key in ["min", "max"] {
+                if let Some(value) = entry.get(key)
+                    && value.as_f64().is_none_or(|n| !n.is_finite() || n < 0.0)
+                {
+                    return Err(format!("{label}.{key} must be a finite non-negative number in mm"));
+                }
+            }
+            if let (Some(min), Some(max)) = (entry["min"].as_f64(), entry["max"].as_f64())
+                && min > max
+            {
+                return Err(format!("{label}.min must not exceed max"));
+            }
+        }
+    }
+    if let Some(offsets) = targets.get("offsets") {
+        let offsets = offsets.as_object().ok_or("offsets must be an object of finite numbers in mm")?;
+        for (net, value) in offsets {
+            if value.as_f64().is_none_or(|n| !n.is_finite()) {
+                return Err(format!("offsets.{net} must be a finite number in mm"));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn routed_tracks(bd: &Board, net: usize) -> Vec<usize> {
     let mut v: Vec<(f64, usize)> = bd.shapes.iter().enumerate().filter(|(_, s)| s.alive && s.kind == Kind::Track && s.owner == net as i32 && s.net == net as i32)
         .filter_map(|(i, s)| match s.geo { Geo::Seg(ax, ay, bx, by, _) => Some(((bx - ax).hypot(by - ay), i)), _ => None }).collect();
@@ -235,7 +284,9 @@ pub(crate) fn tune(ctx: &mut Ctx, targets: &Value, state: &[(Option<String>, u32
         if let Some(m) = ctx.bd.nets[net].max_len {
             w.hi = w.hi.min(m - 0.05);
         }
-        w.aim = w.aim.clamp(w.lo, w.hi);
+        if w.lo <= w.hi {
+            w.aim = w.aim.clamp(w.lo, w.hi);
+        }
         let name = ctx.bd.nets[net].name.clone();
         let l0 = lengths(ctx.bd, &off)[net];
         let skip = if ctx.bd.nets[net].plane { Some("plane net") }
