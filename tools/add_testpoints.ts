@@ -34,6 +34,7 @@ import { parseFlags, runMain, UsageError } from './lib/cli.ts';
 import { kicadShared } from './lib/env.mjs';
 import { readJson } from './lib/json-file.ts';
 import { projectRoot } from './lib/project-root.mjs';
+import { processWriter, sealedWrite } from './lib/cad-seal.ts';
 import { fixed, pyRepr } from './lib/py-compat.mjs';
 import { LABEL_PEN, LABEL_SIZE, TestPointBoard, type Kind, type PointSpec } from './lib/testpoint-place.ts';
 import { embedLibSymbols, FOOTPRINTS, footprintText, LIBRARY, padShape, sheetSpot, symbolSources, symbolText, usedLibIds } from './lib/testpoint-text.ts';
@@ -130,11 +131,11 @@ function main(argv: string[]): number {
   }
   const { text, embedded } = schematicWith(schematic, plan.symbols, symbolSources(sheet, projectRoot()));
   for (const id of embedded) console.log(`add_testpoints: embedded the ${id} symbol definition`);
-  writeFileSync(sheet, text);
+  sealedWrite(sheet, processWriter(), () => writeFileSync(sheet, text));
   try {
     saveBoardInPlace(pcb, plan.pcbText);
   } catch (error) {
-    writeFileSync(sheet, schematic);
+    sealedWrite(sheet, processWriter(), () => writeFileSync(sheet, schematic));
     throw error;
   }
   console.log(`add_testpoints: ${spec.points.length} test points added to ${sheet} and ${pcb}`);

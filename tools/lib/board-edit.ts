@@ -8,6 +8,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFile
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { kicadCli } from './env.mjs';
+import { processWriter, sealedWrite } from './cad-seal.ts';
 import { readJson } from './json-file.ts';
 import { kids, parse } from './sexpr.ts';
 
@@ -258,7 +259,9 @@ export function saveBoard(pcb: string, text: string, outDir: string): SaveReport
  * `text` becomes the board at `pcb`, saved by one kicad-cli run in its own project folder: the DRC sees the real sheets and
  * rules, as the tools that saved in place through pcbnew did. A run that writes no report leaves the board as it was.
  */
-export function saveBoardInPlace(pcb: string, text: string): SaveReport {
+export const saveBoardInPlace = (pcb: string, text: string): SaveReport => sealedWrite(pcb, processWriter(), () => saveInPlace(pcb, text));
+
+function saveInPlace(pcb: string, text: string): SaveReport {
   const before = readFileSync(pcb);
   const project = projectName(pcb);
   const pro = project === null ? null : join(dirname(pcb), `${project}.kicad_pro`);

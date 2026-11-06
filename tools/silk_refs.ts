@@ -4,6 +4,7 @@
 // drawings. Free silk texts (port names, pin labels) and footprint silk graphics do not change. This edits the file as text
 // and saves nothing through KiCad: a layer name is the one change, so there is nothing for KiCad to put in place.
 import { readFileSync, writeFileSync } from 'node:fs';
+import { processWriter, sealedWrite } from './lib/cad-seal.ts';
 import { runMain, UsageError } from './lib/cli.ts';
 
 const USAGE = `Move footprint reference designators off the silkscreen (user 2026-09-27).
@@ -31,7 +32,7 @@ function main(argv: string[]): number {
   if (!files.length) throw new UsageError(USAGE, 1);
   for (const file of files) {
     const { text, moved } = refsOffSilk(readFileSync(file, 'utf8'));
-    if (!dryRun && moved) writeFileSync(file, text);
+    if (!dryRun && moved) sealedWrite(file, processWriter(), () => writeFileSync(file, text));
     console.log(`${file}: ${moved} references moved to Fab${dryRun ? ' (dry run)' : ''}`);
   }
   return 0;
