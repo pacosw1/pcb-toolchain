@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { footprints } from './lib/native-board.ts';
 import { sha256File } from './lib/json-file.ts';
-import { placeBoard, placeCandidates } from './pcb-place.ts';
+import { placeBoard, placeCandidates, showCandidates } from './pcb-place.ts';
 import { placementSpec } from './placer/place-spec.ts';
 
 const board = (rows: [string, number, number, number][]): string => `(kicad_pcb (version 20240108) (generator test)\n${
@@ -63,35 +63,83 @@ test('a placer that moves nothing is a failure, and writes no spec', t => {
   assert.equal(existsSync(join(root, '.gate/place/X.json')), false);
 });
 
-test('multiple seeds drop rule misses and retain margins and reported wirelength', t => {
+test('multiple seeds keep a candidate with rule misses, report its misses, and list legal candidates first', t => {
   const root = project(t, [['U1', 1, 2, 0]]);
   let seed = 0;
+  const writes: string[][] = [];
   const report = placeCandidates(root, 'X', { seed: 2, epochs: 1, steps: 1 }, 3, args => {
     if (args[0] === 'run') {
       seed = Number(args[args.indexOf('--seed') + 1]);
-      writeFileSync(args[args.indexOf('-o') + 1]!, JSON.stringify({ candidates: [{ components: { hpwl: seed * 10 }, engineering: { blockers: seed === 3 ? [{ id: 'island' }] : [] } }] }));
-      if (seed === 3) throw new Error('no legal candidate');
+      writeFileSync(args[args.indexOf('-o') + 1]!, JSON.stringify({ candidates: [{ components: { hpwl: seed * 10 }, engineering: { blockers: seed === 2 ? [{ id: 'island', miss: 3.95 }, { id: 'tip', miss: 9.9 }] : [] } }] }));
+      if (seed === 2) throw new Error('no legal candidate');
     }
     if (args[0] === 'write') {
+      writes.push(args);
       const folder = join(args[args.indexOf('--outdir') + 1]!, 'cand0'); mkdirSync(folder, { recursive: true });
       writeFileSync(join(folder, 'X.kicad_pcb'), board([['U1', seed, 2, 0]]));
     }
   });
-  assert.deepEqual(report.candidates.map(row => row.seed), [2, 4]);
-  assert.deepEqual(report.candidates.map(row => row.wirelength), [20, 40]);
-  assert.match(report.candidates[0]!.spec, /X-seed2.json$/);
-  assert.equal(existsSync(join(root, '.gate/place/X-seed3.json')), false);
+  assert.deepEqual(report.candidates.map(row => row.seed), [3, 4, 2]);
+  assert.deepEqual(report.candidates.map(row => row.legal), [true, true, false]);
+  assert.deepEqual(report.candidates.map(row => row.wirelength), [30, 40, 20]);
+  assert.deepEqual(report.candidates.map(row => row.misses), [[], [], [{ id: 'island', miss_mm: 3.95 }, { id: 'tip', miss_mm: 9.9 }]]);
+  assert.match(report.candidates[0]!.spec, /X-seed3.json$/);
+  assert.deepEqual(JSON.parse(readFileSync(join(root, '.gate/place/X-seed2.json'), 'utf8')), { place: { U1: [2, 2, 0] } });
+  assert.deepEqual(writes.map(args => args.includes('--keep-misses')), [true, true, true]);
 });
 
-test('no kept seed names the rule with the most misses', t => {
+test('a candidate with no legal seed is still reported, and the command result is a failure', t => {
   const root = project(t, [['U1', 1, 2, 0]]);
-  assert.throws(() => placeCandidates(root, 'X', { seed: 1, epochs: 1, steps: 1 }, 2, args => {
+  const report = placeCandidates(root, 'X', { seed: 1, epochs: 1, steps: 1 }, 2, args => {
     if (args[0] === 'run') {
-      writeFileSync(args[args.indexOf('-o') + 1]!, JSON.stringify({ candidates: [{ engineering: { blockers: [{ id: 'too-close' }] } }] }));
+      writeFileSync(args[args.indexOf('-o') + 1]!, JSON.stringify({ candidates: [{ engineering: { blockers: [{ id: 'too-close', miss: 1.5 }] } }] }));
       throw new Error('failed');
     }
-  }), /rule too-close missed in 2 seeds/);
+    if (args[0] === 'write') {
+      const folder = join(args[args.indexOf('--outdir') + 1]!, 'cand0'); mkdirSync(folder, { recursive: true });
+      writeFileSync(join(folder, 'X.kicad_pcb'), board([['U1', 4, 2, 0]]));
+    }
+  });
+  assert.deepEqual(report.candidates.map(row => [row.seed, row.legal]), [[1, false], [2, false]]);
+  const lines: string[] = [];
+  const log = t.mock.method(console, 'log', (text: string) => { lines.push(text); });
+  assert.equal(showCandidates(report, false), 3);
+  assert.equal(showCandidates(report, true), 3);
+  log.mock.restore();
+  assert.match(lines[0]!, /^seed {2}legal .*misses/);
+  assert.match(lines[1]!, /^1 {2}no {2}1 .* {2}too-close=1\.5 {2}.*X-seed1\.json$/);
+  assert.ok(lines.includes('NO LEGAL CANDIDATE'));
+  assert.equal(lines.some(line => line.startsWith('tools/pcb edit')), false, 'no edit command for a candidate with misses');
+  assert.equal(JSON.parse(lines.at(-1)!).candidates[0].misses[0].miss_mm, 1.5);
   assert.throws(() => placeCandidates(root, 'X', { seed: 1, epochs: 1, steps: 1 }, 0), /positive integer/);
+});
+
+test('one seed with a legal result gives the exit code 0 and an edit command', t => {
+  const root = project(t, [['U1', 1, 2, 0]]);
+  const report = placeCandidates(root, 'X', { seed: 1, epochs: 1, steps: 1 }, 1, args => {
+    if (args[0] !== 'write') return;
+    const folder = join(args[args.indexOf('--outdir') + 1]!, 'cand0'); mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, 'X.kicad_pcb'), board([['U1', 4, 2, 0]]));
+  });
+  const lines: string[] = [];
+  const log = t.mock.method(console, 'log', (text: string) => { lines.push(text); });
+  assert.equal(showCandidates(report, false), 0);
+  log.mock.restore();
+  assert.match(lines[1]!, /^1 {2}yes /);
+  assert.match(lines[2]!, /^tools\/pcb edit X --kind place /);
+});
+
+test('a single placement stays strict: a rule miss is an error and writes no spec', t => {
+  const root = project(t, [['U1', 1, 2, 0]]), steps: string[] = [];
+  assert.throws(() => placeBoard(root, 'X', { seed: 1, epochs: 1, steps: 1 }, args => {
+    steps.push(args[0]!);
+    if (args[0] === 'run') {
+      writeFileSync(args[args.indexOf('-o') + 1]!, JSON.stringify({ candidates: [{ engineering: { blockers: [{ id: 'too-close', miss: 1.5 }] } }] }));
+      throw new Error('failed');
+    }
+  }), /placement rule misses: too-close/);
+  assert.deepEqual(steps, ['read', 'run']);
+  assert.equal(existsSync(join(root, '.gate/place/X.json')), false);
 });
 
 test('board rules reach the reader and the kept candidate reports its margin', t => {

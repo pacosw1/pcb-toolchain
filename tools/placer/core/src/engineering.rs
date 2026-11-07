@@ -337,7 +337,14 @@ impl Contract {
 
     /// The miss of the rules that unit i takes part in, at a pose, plus 1 for each locked part those rules touch that moved.
     pub fn miss(&self, i: usize, pose: &Pose) -> f64 {
-        let rules: Vec<&Rule> = self.unit_rules[i].iter().map(|&k| &self.doc.rules[k]).collect();
+        self.miss_of(&[i], pose)
+    }
+
+    /// `miss` for the rules that any of the units take part in, each rule once. The change of it over a move of the
+    /// units is the change of `total_miss`.
+    pub fn miss_of(&self, units: &[usize], pose: &Pose) -> f64 {
+        let ids: BTreeSet<usize> = units.iter().flat_map(|&i| self.unit_rules[i].iter().copied()).collect();
+        let rules: Vec<&Rule> = ids.into_iter().map(|k| &self.doc.rules[k]).collect();
         let misses: f64 = rules.iter().map(|r| self.rule_miss(r, pose)).sum();
         let connector = rules.iter().any(|r| matches!(r, Rule::ConnectorAccess { .. }));
         let touched: BTreeSet<&str> = if connector {
@@ -346,6 +353,11 @@ impl Contract {
             rules.iter().flat_map(|r| r.refs()).collect()
         };
         misses + touched.into_iter().filter(|r| self.locked_part_moved(r, pose)).count() as f64
+    }
+
+    /// The miss of every rule at a pose, with the locked parts that moved.
+    pub fn total_miss(&self, pose: &Pose) -> f64 {
+        self.miss_of(&(0..self.unit_rules.len()).collect::<Vec<_>>(), pose)
     }
 }
 

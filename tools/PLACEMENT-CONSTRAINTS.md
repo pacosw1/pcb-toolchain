@@ -157,8 +157,10 @@ checks a board rule file; `checks.placement: "placement-constraints.json"` can
 also declare it explicitly. Boards without the file keep their existing checks.
 
 `tools/pcb place BOARD --seeds N [--json]` runs consecutive seeds starting at
-`--seed` (default 1), rejects rule misses, and writes
-`.gate/place/BOARD-seedS.json`. It reports each rule margin, the smallest margin,
+`--seed` (default 1) and writes `.gate/place/BOARD-seedS.json`. A candidate with
+rule misses is kept: it reports `legal: false` and `misses: [{id, miss_mm}]`, and
+legal candidates sort first. With no legal candidate the command exits 3 after
+the report. It reports each rule margin, the smallest margin,
 and the placer's `components.hpwl` as wirelength (null if absent). Non-distance
 rules without a millimetre margin report null. Without `--seeds`, the existing
 single-spec output and filename stay unchanged. `--out` is only for that mode.

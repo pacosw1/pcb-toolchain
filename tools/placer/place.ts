@@ -123,18 +123,19 @@ export async function cmdRun(argv: string[], { review, search: start }: RunServi
 const NOT_COPIED = (name: string): boolean => name.endsWith('.kicad_prl') || name.endsWith('-backups') || name === 'fp-info-cache';
 
 export function cmdWrite(argv: string[], review: ReviewServices = reviewServices): number {
-  const a = parseOptions(argv, { '--outdir': 'text', '--initial': 'switch' }, 'usage: place.ts write BOARD prob.json result.json --outdir DIR [--initial]');
+  const a = parseOptions(argv, { '--outdir': 'text', '--initial': 'switch', '--keep-misses': 'switch' }, 'usage: place.ts write BOARD prob.json result.json --outdir DIR [--initial] [--keep-misses]');
   const [board, prob, result] = a.positionals, outdir = a.text('--outdir');
   if (!board || !prob || !result || !outdir) throw new UsageError('usage: place.ts write BOARD prob.json result.json --outdir DIR [--initial]');
   const problem = readTyped<ReviewedProblem>(prob);
   const jobs: [string, Pose][] = readTyped<Result>(result).candidates.map((candidate, k) => [`cand${k}`, candidate.pose]);
   if (a.has('--initial')) jobs.unshift(['initial', problem.units.map(unit => [unit.x, unit.y, 0])]);
-  // A rejected reviewed pose must leave what is already in the output folder.
+  // A rejected reviewed pose must leave what is already in the output folder. --keep-misses writes a pose with rule misses (a candidate to compare).
+  const keepMisses = a.has('--keep-misses');
   if (problem.engineering) {
     if (realpathSync(board) !== realpathSync(problem.board_file)) throw new Error('reviewed placement writer source differs from its native model');
     for (const [, pose] of jobs) {
       const checked = checkProblem(problem, pose, { services: review });
-      if (checked.status !== 'passed') throw new Error(`reviewed placement rejected before writing: ${jsonDumps(checked.blockers)}`);
+      if (checked.status !== 'passed' && !keepMisses) throw new Error(`reviewed placement rejected before writing: ${jsonDumps(checked.blockers)}`);
     }
   }
   const source = dirname(resolve(board));
@@ -144,7 +145,7 @@ export function cmdWrite(argv: string[], review: ReviewServices = reviewServices
     cpSync(source, folder, { recursive: true, filter: path => !NOT_COPIED(basename(path)) });
     const output = join(folder, basename(board));
     rmSync(output);
-    console.log(name, output, JSON.stringify(writeBoard(board, problem, pose, output)));
+    console.log(name, output, JSON.stringify(writeBoard(board, problem, pose, output, { keepMisses })));
   }
   return 0;
 }

@@ -8,6 +8,7 @@ use iotplace::evaluator::Evaluator;
 use iotplace::model::Model;
 use iotplace::params::Params;
 use iotplace::problem::Problem;
+use iotplace::search::{Plan, optimize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -62,14 +63,23 @@ fn a_distance_miss_is_in_mm_and_a_move_repairs_it() {
 }
 
 #[test]
-fn the_miss_reaches_legal_penalty_and_not_the_cost() {
+fn the_miss_reaches_legal_penalty_and_the_cost_of_a_move() {
     let rule = json!([{"id": "d", "kind": "pin_distance", "a": {"ref": "U1", "pad": "1"}, "b": {"ref": "C1", "pad": "1"}, "max_mm": 2}]);
     let pr = reviewed(rule);
     let params = Params::default();
     let model = Model::new(&pr, &params).unwrap();
-    let ev = Evaluator::new(&model, &params, &HOME);
+    let mut ev = Evaluator::new(&model, &params, &HOME);
     assert_eq!(ev.legal_penalty(1), 1.0);
     assert_eq!(ev.forbidden_area(1), 0.0);
+    assert_eq!(ev.terms().oob, 1.0, "a rule counts once, not once for each of its units");
+    let delta = ev.propose(&[(1, (13.0, 10.0, 0))]);
+    assert_eq!(delta, -params.w_oob);
+    ev.commit();
+    let moved = Evaluator::new(&model, &params, &[HOME[0], (13.0, 10.0, 0), HOME[2]]);
+    assert_eq!(ev.terms().oob, 0.0);
+    assert_eq!(moved.terms().oob, 0.0);
+    let delta = ev.propose(&[(0, (8.0, 10.0, 0))]);
+    assert_eq!(delta, params.w_oob * 2.0, "a move of the other unit of the rule counts too");
 }
 
 #[test]
@@ -176,4 +186,30 @@ fn new_rules_fail_closed() {
         json!({"kind":"region","refs":["U1"],"box_mm":[0,0,2,2],"placement":"near","metric":"origin_in_box"})] {
         assert!(Contract::new(&contract(json!([rule])), &pr.units).is_err());
     }
+}
+
+/// A 30 mm room, a 4 mm neck at its top and an 8.5 x 6 mm island behind the neck. U starts in the room and a net pulls it
+/// to a fixed F, far from the island. A rule asks for U inside the island.
+fn island_problem() -> (Problem, Vec<u8>) {
+    let rects = json!([[-1.0, -1.0, 1.0, 1.0, 0.0]]);
+    let outline = json!([[0, 10], [13, 10], [13, 6], [10.75, 6], [10.75, 0], [19.25, 0], [19.25, 6], [17, 6], [17, 10], [30, 10], [30, 30], [0, 30]]);
+    let part = |x: f64, y: f64| json!({"origin": [x, y], "quarter": 0, "pads": {}, "courtyard": [x - 1.0, y - 1.0, x + 1.0, y + 1.0], "locked": false});
+    let rule = json!({"id": "island", "kind": "region", "refs": ["U"], "box_mm": [11.75, 1.0, 18.25, 5.0], "placement": "inside", "metric": "origin_in_box"});
+    let net = json!({"name": "N", "weight": 1.0, "pins": [[0, 0, 0, 0, 0], [1, 0, 0, 0, 0]]});
+    let text = serde_json::to_vec(&json!({
+        "units": [unit("U", 5.0, 25.0, rects.clone()), common::fixed_unit("F", 5.0, 28.0, rects)], "nets": [net],
+        "board": {"outline": outline, "keepouts": [], "edge_clearance": 0.0},
+        "engineering": {"rules": [rule], "geometry": {"refs": {"U": part(5.0, 25.0), "F": part(5.0, 28.0)}, "bounds": [0, 0, 30, 30]}, "where": {"U": 0, "F": 1}},
+    })).unwrap();
+    (serde_json::from_slice(&text).unwrap(), text)
+}
+
+#[test]
+fn the_search_follows_a_region_rule_through_a_neck() {
+    let (mut pr, bytes) = island_problem();
+    pr.bind_engineering(&bytes, Some(&digest(&bytes))).unwrap();
+    let found = optimize(&mut pr, &Params::default(), Plan { workers: 1, epochs: 6, steps: 3000, seed: 1, top: 1 }, &|_| {}).unwrap();
+    let best = &found.candidates[0];
+    assert_eq!(pr.contract.as_ref().unwrap().miss(0, &best.pose), 0.0, "U stands at {:?}", best.pose[0]);
+    assert!(best.illegal.is_empty(), "illegal: {:?}", best.illegal);
 }
