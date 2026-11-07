@@ -7,6 +7,7 @@
 // place: run it on the routed copy or on the board of a branch. Prints the vias added and the signal vias with no room. Run DRC and
 // the gate after it. Route feature via_halo (tools/route-features.json, learn_noroom): the nets with no room are added to
 // <board>/.gate/halo-nets.json; a router that reads it gives their vias the halo padstack.
+// A net whose stitch fails (non-zero exit, or no "added N" line) is named as FAILED and the exit code is 1. The report records the options.
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -29,6 +30,17 @@ export function stitchResult(output: string): { added: number; noRoom: number } 
   return { added, noRoom: missed === undefined ? 0 : missed.split('(').length - 1 };
 }
 
+/** True when one net stitch failed: a non-zero exit, or no "added N" line, which the tool prints at the end of every good run. */
+export const stitchFailed = (status: number | null, output: string): boolean => status !== 0 || !/added \d+ /.test(output);
+
+export interface StitchTotals { nets: number; added: number; noRoom: number; failed: string[]; options: Record<string, string> }
+/** The lines of the final report. A failed net is named, and the options of the run are recorded. */
+export const stitchReport = ({ nets, added, noRoom, failed, options }: StitchTotals): string[] => [
+  `stitch_all: ${nets} nets, ${added} ground vias added, ${noRoom} signal vias with no room, ${failed.length} failed`,
+  `stitch_all: options ${Object.entries(options).map(([name, value]) => `${name}=${value}`).join(' ')}`,
+  ...(failed.length ? [`stitch_all: FAILED ${failed.join(', ')}`] : []),
+];
+
 /** The nets with a via that are not a ground and not skipped. */
 export const netsToStitch = (viaNets: string[], grounds: string[], skip: string): string[] => {
   const left = new Set(viaNets);
@@ -50,9 +62,15 @@ function main(argv: string[]): number {
   let added = 0;
   let noRoom = 0;
   const noRoomNets: string[] = [];
+  const failed: string[] = [];
   for (const net of nets) {
     const run = spawnSync(process.execPath, [...TS_NODE, PCBTOOL, 'stitch', pcb, net, '--best-effort', '--planes', planes, ...options], { encoding: 'utf8' });
     const result = stitchResult(`${run.stdout}${run.stderr}`);
+    if (stitchFailed(run.status, `${run.stdout}${run.stderr}`)) {
+      failed.push(net);
+      console.log(`FAILED ${net}: exit ${run.status ?? run.error?.message ?? 'none'}: ${`${run.stderr}${run.stdout}`.trim().split('\n').at(-1) ?? ''}`);
+      continue;
+    }
     added += result.added;
     noRoom += result.noRoom;
     if (result.noRoom) {
@@ -60,7 +78,7 @@ function main(argv: string[]): number {
       console.log(`NOROOM ${net}`);   // Retained repair-loop status for nets without a stitch site.
     }
   }
-  console.log(`stitch_all: ${nets.length} nets, ${added} ground vias added, ${noRoom} signal vias with no room`);
+  for (const line of stitchReport({ nets: nets.length, added, noRoom, failed, options: { skip, via, clearance, 'through-pours': values['through-pours'] ?? '' } })) console.log(line);
   const { features, folder } = loadFeatures(pcb);
   if (featureOn(features, 'via_halo') && features.via_halo!.learn_noroom && folder && noRoomNets.length) {
     const file = haloFile(folder);
@@ -68,7 +86,7 @@ function main(argv: string[]): number {
     writeFileSync(file, jsonDumps({ nets: sorted(new Set([...learnedHalo(pcb, folder), ...noRoomNets])), source_fingerprint: sourceFingerprint(pcb) }, 1));
     console.log(`stitch_all: via_halo learns ${noRoomNets.length} nets -> ${file}`);
   }
-  return 0;
+  return failed.length ? 1 : 0;
 }
 
 runMain(import.meta.url, main);

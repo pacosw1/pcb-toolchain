@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
-import { netsToStitch, stitchResult } from '../stitch_all.ts';
+import { netsToStitch, stitchFailed, stitchReport, stitchResult } from '../stitch_all.ts';
 import { boardDir, featureOn, haloFile, learnedHalo, loadFeatures, sourceFingerprint } from './route-features.ts';
 
 function project(t: TestContext): { root: string; pcb: string; folder: string } {
@@ -62,4 +62,23 @@ test('a stitch line gives the vias added and the vias with no room', () => {
 
 test('grounds, skipped nets and the empty net are not stitched', () => {
   assert.deepEqual(netsToStitch(['/B', 'GND', '/A', '', '+3V3', '/A'], ['GND'], '+3V3'), ['/A', '/B']);
+});
+
+test('a net stitch that exits non-zero, or prints no added line, failed', () => {
+  const good = '/A: added 3 GND vias 0.6/0.3 (1.000, 2.000)\n';
+  assert.equal(stitchFailed(0, good), false);
+  assert.equal(stitchFailed(0, '/A: no room for a GND via within 1 mm of (1.000, 2.000); best effort: the others are placed\n/A: added 0 GND vias 0.6/0.3\n'), false);
+  assert.equal(stitchFailed(1, good), true, 'a non-zero exit');
+  assert.equal(stitchFailed(null, ''), true, 'a process that did not start or was killed');
+  assert.equal(stitchFailed(0, 'error\n'), true, 'an exit 0 with no added line');
+});
+
+test('the stitch report names each failed net and records the options', () => {
+  const options = { skip: '+3V3', via: '0.6,0.3', clearance: '', 'through-pours': 'GND' };
+  const ok = stitchReport({ nets: 2, added: 3, noRoom: 1, failed: [], options });
+  assert.equal(ok[0], 'stitch_all: 2 nets, 3 ground vias added, 1 signal vias with no room, 0 failed');
+  assert.ok(ok.includes('stitch_all: options skip=+3V3 via=0.6,0.3 clearance= through-pours=GND'));
+  const bad = stitchReport({ nets: 2, added: 0, noRoom: 0, failed: ['/A', '/B'], options });
+  assert.equal(bad[0], 'stitch_all: 2 nets, 0 ground vias added, 0 signal vias with no room, 2 failed');
+  assert.ok(bad.includes('stitch_all: FAILED /A, /B'));
 });
