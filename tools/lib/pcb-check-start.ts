@@ -1,6 +1,6 @@
 // Admit an isolated check and start its one-shot owner. Never writes CAD.
 import { spawn } from 'node:child_process';
-import { closeSync, mkdirSync, mkdtempSync, openSync, rmdirSync } from 'node:fs';
+import { closeSync, mkdirSync, mkdtempSync, openSync, rmdirSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicJson, readObject } from './json-file.ts';
@@ -125,6 +125,7 @@ export async function startCheck(options: CheckOptions): Promise<string> {
       cwd: root, env, detached: true, stdio: ['ignore', log, log],
     });
     await new Promise<void>((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
+    writeFileSync(join(folder, 'supervisor.pid'), String(child.pid));   // status() keeps a run with a live supervisor in starting
     child.unref();
   } catch (error) {
     atomicJson(join(folder, 'state.json'), { schema_version: 1, run_id: basename(folder), board: options.board,
