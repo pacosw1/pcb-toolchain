@@ -4,10 +4,15 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { acquire, readOwner } from './bench-lock.ts';
+import { acquire, DEFAULT_LOCK, readOwner } from './bench-lock.ts';
 
 const fresh = () => { const dir = mkdtempSync(join(tmpdir(), 'bench-lock-')); return { dir, lock: join(dir, 'x.lock') }; };
 const deadPid = (): number => { const child = spawnSync('true'); return child.pid ?? 999999; };
+
+test('the default lock lives under the system temp dir, not one user', () => {
+  assert.equal(DEFAULT_LOCK, join(tmpdir(), 'opencode', 'bench.lock'));
+  assert.ok(DEFAULT_LOCK.startsWith(tmpdir()));
+});
 
 test('acquire records the owner, refuses a second holder by name, and release frees it', async () => {
   const { dir, lock } = fresh();

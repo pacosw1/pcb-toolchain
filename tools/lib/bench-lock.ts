@@ -1,8 +1,9 @@
 // One benchmark at a time per machine: a mkdir lock with the owner's pid, stale when that process is gone.
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-export const DEFAULT_LOCK = process.env.BENCH_LOCK ?? '/private/var/folders/xr/wdn1rhvs5rxcyb8wlqtks0v00000gn/T/opencode/bench.lock';
+export const DEFAULT_LOCK = process.env.BENCH_LOCK ?? join(tmpdir(), 'opencode', 'bench.lock');
 
 export interface Owner { pid: number; started: string; label: string; cwd: string }
 

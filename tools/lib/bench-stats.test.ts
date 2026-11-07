@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analyze, median, signTest, wilson, type Outcome, type Pair } from './bench-stats.ts';
+import { analyze, median, MIN_PAIRS, signTest, wilson, type Outcome, type Pair } from './bench-stats.ts';
 
 const out = (ok: boolean, seconds: number | null = null): Outcome => ({ ok, seconds: ok ? seconds : null, length_mm: ok ? 100 : null, vias: ok ? 10 : null });
 const pair = (a: boolean, b: boolean, i: number, sa = 10, sb = 8): Pair => ({ key: `k${i}`, a: out(a, sa), b: out(b, sb) });
@@ -38,6 +38,15 @@ test('a consistent win is better, a consistent loss is worse', () => {
   assert.equal(analyze(wins).verdict, 'better');
   const losses = Array.from({ length: 12 }, (_, i) => pair(true, i < 2, i));
   assert.equal(analyze(losses).verdict, 'worse');
+});
+
+test('fewer than the minimum pairs cannot give a verdict, however one-sided', () => {
+  for (const count of [2, MIN_PAIRS - 1]) {
+    const result = analyze(Array.from({ length: count }, (_, i) => pair(false, true, i)));
+    assert.equal(result.verdict, 'inconclusive');
+    assert.equal(result.seeds_needed, MIN_PAIRS);
+  }
+  assert.equal(analyze(Array.from({ length: MIN_PAIRS }, (_, i) => pair(false, true, i))).verdict, 'better');
 });
 
 test('analysis is deterministic and timing counts only pairs verified on both sides', () => {

@@ -26,6 +26,8 @@ export interface PairedAnalysis {
 
 const Z = 1.959964;
 const BOOTSTRAP_ROUNDS = 4000;
+/** Fewer paired trials than this cannot support a verdict, however one-sided the sample is. */
+export const MIN_PAIRS = 8;
 
 export function wilson(successes: number, trials: number): Interval | null {
   if (trials <= 0) return null;
@@ -105,9 +107,10 @@ export function analyze(pairs: Pair[]): PairedAnalysis {
   const diffs = pairs.map(pair => Number(pair.b.ok) - Number(pair.a.ok));
   const difference = n ? mean(diffs) : null;
   const ci = n >= 2 ? bootstrap(diffs, mean) : null;
-  const verdict: Verdict = ci && ci.low > 0 ? 'better' : ci && ci.high < 0 ? 'worse' : 'inconclusive';
+  const verdict: Verdict = n < MIN_PAIRS || !ci ? 'inconclusive' : ci.low > 0 ? 'better' : ci.high < 0 ? 'worse' : 'inconclusive';
   const discordant = (onlyA + onlyB) / (n || 1);
-  const seeds = verdict === 'inconclusive' && n >= 2 && difference ? Math.ceil(Z * Z * Math.max(discordant - difference * difference, 1 / n) / (difference * difference)) : null;
+  const seeds = n === 0 ? null : n < MIN_PAIRS ? MIN_PAIRS
+    : verdict === 'inconclusive' && difference ? Math.ceil(Z * Z * Math.max(discordant - difference * difference, 1 / n) / (difference * difference)) : null;
   return {
     pairs: n, a: rate(pairs.map(pair => pair.a)), b: rate(pairs.map(pair => pair.b)), difference, difference_ci95: ci,
     both_ok: both, only_a_ok: onlyA, only_b_ok: onlyB, sign_test_p: signTest(onlyA, onlyB), verdict,

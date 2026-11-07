@@ -64,7 +64,8 @@ unconnected 0, parity 0, fresh configured gate), seconds, length and vias for ve
 
 - verified rate per arm with a Wilson 95% interval
 - paired difference with a bootstrap 95% interval (fixed seed, so reruns agree) and the exact sign test on the discordant pairs
-- verdict `better`, `worse` or `inconclusive`, and for inconclusive results about how many pairs would settle it at the observed effect
+- verdict `better`, `worse` or `inconclusive`, and for inconclusive results about how many pairs would settle it at the observed effect.
+  Fewer than 8 pairs never gives `better` or `worse`, however one-sided they are; the result is inconclusive and asks for at least 8.
 - median paired difference of seconds, length and vias over pairs verified on both sides
 
 `evidence_complete` is false when the evaluator reports blockers or any outcome is unknown; read the verdicts as provisional then.
@@ -148,7 +149,7 @@ and writes `DIR/run.json` (wall seconds, exit code, signal, `timed_out`, timesta
 |---|---|
 | `wall_s`, `exit_code`, `signal`, `timed_out` | `run.json` |
 | `agent.tokens_in`, `tokens_out`, `cost_usd`, `turns`, `tool_calls`, `tool_calls_failed`, `tokens_known` | The agent stream. A value the parser cannot find is `null`, never 0, and `tokens_known` is false. `tokens_in` counts input, cache-creation and cache-read tokens. |
-| `pcb_runs` | The runs under `project/.gate/cli`: count, count by status, failed, blocked and error checks, cache hits, and the `summarize` output of `pcb benchmark`. A run folder with no result counts as `no_receipt`. |
+| `pcb_runs` | The runs under `project/.gate/cli`: count, count by status, failed, blocked and error checks, cache hits, the summed `elapsed_s` of the sealed runs, and the `summarize` output of `pcb benchmark`. A run folder with no result counts as `no_receipt`. |
 | `seal` | `writes_by_tool` and `accepted_edits` (`seal-accept`) from the seal log after the baseline line; `violations` is the seal status if the CAD differs from the seal at collect time, else `null`. |
 | `interventions` | `notes.jsonl` entries of kind `intervention` and `rework` across the runs. |
 | `outside_tools` | Files under `hardware-design/` that changed, were added or were removed since `prepare`, minus the sealed CAD files that the seal accounts for. Listed by path. |

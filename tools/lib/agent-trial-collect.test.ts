@@ -93,6 +93,7 @@ test('passed: the newest sealed check run verifies, its inputs are fresh and the
     assert.deepEqual([result.wall_s, result.exit_code, result.signal, result.timed_out], [60, 0, null, false]);
     assert.equal(result.agent.tokens_in, 150);
     assert.deepEqual([result.pcb_runs.count, result.pcb_runs.by_status, result.pcb_runs.failed_checks, result.pcb_runs.blocked_checks, result.pcb_runs.cache_hits], [2, { failed: 1, passed: 1 }, 1, 2, 2]);
+    assert.equal(result.pcb_runs.elapsed_s, 24);
     assert.equal(result.pcb_runs.summary.runs.length, 2);
     assert.ok(resultIntact(result));
     assert.ok(!resultIntact({ ...result, wall_s: 1 }));

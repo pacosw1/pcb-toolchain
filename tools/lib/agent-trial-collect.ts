@@ -99,7 +99,8 @@ function pcbRuns(base: string): Row {
       const row = (summarize([folder]) as { runs: Row[] }).runs[0]!;
       readable.push(folder);
       byStatus[String(row.status)] = (byStatus[String(row.status)] ?? 0) + 1;
-      totals.elapsed_s += num(row.elapsed_s) ?? 0;
+      // summarize returns Python-shaped numbers (bigint or Float); plain() makes them JSON numbers before num().
+      totals.elapsed_s += num(plain(row.elapsed_s)) ?? 0;
     } catch (error) {
       unreadable.push({ run, cause: messageOf(error) });
       byStatus.no_receipt = (byStatus.no_receipt ?? 0) + 1;
