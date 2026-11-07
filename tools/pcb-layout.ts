@@ -13,7 +13,7 @@ const USAGE = 'usage: pcb [--project DIR] layout BOARD [--json] [--approve --by 
 function newestImage(root: string, board: string, runs: string): string | null {
   if (!existsSync(runs)) return null;
   const found = readdirSync(runs).flatMap(name => {
-    const folder = join(runs, name), image = join(folder, 'images/top.png');
+    const folder = join(runs, name), image = join(folder, 'images/top.svg');
     try {
       const manifest = readObject<{ board?: string; created_at?: string }>(join(folder, 'run.json'));
       return manifest.board === board && existsSync(image) ? [{ created: String(manifest.created_at ?? ''), image }] : [];

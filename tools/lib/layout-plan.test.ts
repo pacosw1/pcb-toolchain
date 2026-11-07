@@ -167,10 +167,10 @@ test('the dispatcher shows the status, exits 1 until the plan is approved, and a
   for (const [folder, created] of [[older, '2026-11-01T00:00:00Z'], [newer, '2026-11-02T00:00:00Z']] as const) {
     mkdirSync(join(folder, 'images'), { recursive: true });
     writeFileSync(join(folder, 'run.json'), JSON.stringify({ board: 'X', created_at: created }));
-    writeFileSync(join(folder, 'images/top.png'), PNG);
+    writeFileSync(join(folder, 'images/top.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
   }
-  assert.equal(JSON.parse(layout('--json').stdout).image, '.gate/cli/run-b/images/top.png');
-  assert.match(layout().stdout, /\nimage: \.gate\/cli\/run-b\/images\/top\.png\n/);
+  assert.equal(JSON.parse(layout('--json').stdout).image, '.gate/cli/run-b/images/top.svg');
+  assert.match(layout().stdout, /\nimage: \.gate\/cli\/run-b\/images\/top\.svg\n/);
   const partial = layout('--approve', '--by', 'Ana', '--reason', 'reviewed');
   assert.equal(partial.status, 2);
   assert.match(partial.stderr, /usage: pcb .* layout BOARD .*--image FILE/);

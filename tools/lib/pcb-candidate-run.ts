@@ -341,7 +341,7 @@ async function release(folder: string, root: string, manifest: OperationManifest
     cause: `release ${code === 0 ? 'completed' : 'failed; inspect original tool evidence'}`, scope: 'fabrication_candidate', operation: 'release', tool_exit: code, artifact_directory: join(folder, 'candidate') });
 }
 
-/** `render` draws the images of the stage contract. A test passes a stand-in; the worker uses kicad-cli and rsvg-convert. */
+/** `render` draws the images of the stage contract. A test passes a stand-in; the worker uses kicad-cli. */
 export async function runOperation(folderPath: string, render: typeof renderImages = renderImages): Promise<number> {
   const folder = resolvePath(folderPath), manifest = readObject<OperationManifest>(join(folder, 'run.json')), root = resolvePath(manifest.root);
   const emit: Emit = (kind, data) => operationEvent(folder, kind, data);

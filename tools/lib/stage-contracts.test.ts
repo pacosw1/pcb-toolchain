@@ -26,7 +26,7 @@ test('place, edit and route have a contract; a place edit is the place stage; ot
   assert.equal(contractKey({ operation: 'edit' }), 'edit');
   assert.equal(contractKey({ operation: 'route' }), 'route');
   for (const operation of ['build', 'repair', 'release', 'check']) assert.equal(contractKey({ operation }), null, operation);
-  assert.deepEqual(STAGE_CONTRACTS.route.outputs, ['images/top.png', 'images/bottom.png']);
+  assert.deepEqual(STAGE_CONTRACTS.route.outputs, ['images/top.svg', 'images/bottom.svg']);
   assert.deepEqual(Object.keys(STAGE_CONTRACTS).sort(), ['edit', 'layout', 'place', 'route']);
 });
 
@@ -38,14 +38,14 @@ test('a run passes the contract when each declared file exists and its hash is i
 });
 
 test('a missing output, an output not in the sealed record and a changed output each fail and name the file', t => {
-  const missing = run(t, ['images/bottom.png']);
-  assert.match(contractProblem({ operation: 'route' }, missing.folder, missing.evidence)!, /route stage output images\/bottom\.png is missing/);
+  const missing = run(t, ['images/bottom.svg']);
+  assert.match(contractProblem({ operation: 'route' }, missing.folder, missing.evidence)!, /route stage output images\/bottom\.svg is missing/);
   const unsealed = run(t);
-  delete unsealed.evidence['images/top.png'];
-  assert.match(contractProblem({ operation: 'edit', kind: 'place' }, unsealed.folder, unsealed.evidence)!, /place stage output images\/top\.png is not in the sealed run record/);
+  delete unsealed.evidence['images/top.svg'];
+  assert.match(contractProblem({ operation: 'edit', kind: 'place' }, unsealed.folder, unsealed.evidence)!, /place stage output images\/top\.svg is not in the sealed run record/);
   const changed = run(t);
-  writeFileSync(join(changed.folder, 'images/top.png'), 'other');
-  assert.match(contractProblem({ operation: 'route' }, changed.folder, changed.evidence)!, /images\/top\.png is not in the sealed run record/);
+  writeFileSync(join(changed.folder, 'images/top.svg'), 'other');
+  assert.match(contractProblem({ operation: 'route' }, changed.folder, changed.evidence)!, /images\/top\.svg is not in the sealed run record/);
   const noInput = run(t, ['operation/source.json']);
   assert.match(contractProblem({ operation: 'route' }, noInput.folder, noInput.evidence)!, /route stage input operation\/source\.json is missing/);
 });

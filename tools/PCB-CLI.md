@@ -334,10 +334,10 @@ The `claude-cad-guard.mjs` hook asks a person before `pcb layout ... --approve` 
 ## Stage contracts
 
 `tools/lib/stage-contracts.ts` is the one table of what the stages `place` (an `edit --kind place`), `edit` and
-`route` need and write. A passed run of these stages draws its candidate: `images/top.png` and `images/bottom.png`
-in the run folder (`kicad-cli pcb export svg`, then `rsvg-convert` with a white background). The programs come from
-`KICAD_CLI` and `RSVG_CONVERT`, or else the KiCad of the machine and `rsvg-convert` on the PATH. If a renderer is
-missing or fails, the run fails and the cause names it. A run that failed before it had a board keeps its own cause.
+`route` need and write. A passed run of these stages draws its candidate: `images/top.svg` and `images/bottom.svg`
+in the run folder (`kicad-cli pcb export svg`, with a white background rectangle added). No other program is used. The
+program comes from `KICAD_CLI`, or else the KiCad of the machine. If `kicad-cli` is missing or fails, the run fails and
+the cause names it. A run that failed before it had a board keeps its own cause.
 The sealed run record (`evidence_sha256`) binds the images. A passed run whose declared file is missing, or is not in
 that record, is sealed as `error` with the file named.
 

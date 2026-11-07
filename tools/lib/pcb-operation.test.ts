@@ -111,8 +111,9 @@ test('a verified candidate stays isolated and seals its board, gate and source r
 test('a passed place, edit or route run writes top and bottom images and seals them in its record', needsBinary, async t => {
   const placed = await edit(project(t));
   assert.equal(placed.result.status, 'passed', String(placed.result.cause));
-  for (const name of ['images/top.png', 'images/bottom.png']) {
+  for (const name of ['images/top.svg', 'images/bottom.svg']) {
     assert.ok(existsSync(join(placed.folder, name)), name);
+    assert.match(readFileSync(join(placed.folder, name), 'utf8'), /^<svg\b/, name);
     assert.equal(placed.result.evidence_sha256[name], sha(join(placed.folder, name)), name);
   }
   const root = project(t);
@@ -120,7 +121,7 @@ test('a passed place, edit or route run writes top and bottom images and seals t
 writeFileSync(record + '/result.json', JSON.stringify({ status: 'PASS', board_file: routed, drc_errors: 0, unconnected: 0, parity: 0 }));`);
   const routed = await run(root, 'route', 'X', '--router', 'iotroute');
   assert.equal(routed.result.status, 'passed', String(routed.result.cause));
-  assert.ok(routed.result.evidence_sha256['images/top.png'] && routed.result.evidence_sha256['images/bottom.png']);
+  assert.ok(routed.result.evidence_sha256['images/top.svg'] && routed.result.evidence_sha256['images/bottom.svg']);
   assert.equal(verify(routed.folder).get('status'), 'passed');
 });
 
@@ -132,9 +133,6 @@ test('a missing or failing renderer fails the run and names the renderer; a cand
   assert.match(String(noCli.result.cause), /image renderer: kicad-cli could not start/);
   assert.equal(noCli.result.candidate_verified, false);
   assert.equal(noCli.result.exit_code, 1);
-  fixtureEnv = { ...RENDERER_ENV, RSVG_CONVERT: '/missing/rsvg-convert' };
-  const noRsvg = await edit(project(t));
-  assert.match(String(noRsvg.result.cause), /image renderer: rsvg-convert could not start/);
   // The tool fails before there is a board to draw: the original failure is reported, and no image exists.
   const stopped = await edit(project(t, WRITER(BOARD, 3)));
   assert.equal(stopped.result.cause, 'edit tool failed');

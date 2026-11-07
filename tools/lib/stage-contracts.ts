@@ -7,7 +7,7 @@ import { sha256File } from './json-file.ts';
 
 export interface StageContract { inputs: string[]; outputs: string[]; check: string }
 
-const IMAGES = ['images/top.png', 'images/bottom.png'];
+const IMAGES = ['images/top.svg', 'images/bottom.svg'];
 const RUN: StageContract = { inputs: ['operation/source.json'], outputs: IMAGES, check: 'candidate_board_gate' };
 
 export const STAGE_CONTRACTS = {
