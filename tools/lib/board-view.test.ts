@@ -7,6 +7,7 @@ import test, { type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { boardView, judgedEvidence, viewText, type Decide } from './board-view.ts';
 import { reseal } from './cad-seal.ts';
+import { sealFixtureBoard } from './cad-seal-fixture.ts';
 import { recordChange } from './change-log.ts';
 import { layoutPlanPath } from './layout-plan.ts';
 import { orderCandidate, approveCandidate, releaseRun } from './release-run-fixture.ts';
@@ -30,7 +31,7 @@ function fixture(t: TestContext) {
   writeFileSync(join(folder, 'SPEC.md'), 'source');
   writeFileSync(join(folder, 'placement-constraints.json'), JSON.stringify({ schema: 'iot-lab.placement-constraints.v1', rules: [{ id: 'd', kind: 'part_distance', source: { path: 'hardware-design/boards/X/SPEC.md', sha256: 'x', page: 1 } }] }));
   writeFileSync(layoutPlanPath(root, 'X'), JSON.stringify({ schema: 'iot-lab.layout-plan.v1', intents: [{ id: 'a', statement: 'b', rule_ids: ['d'] }], route_plan: 'hardware-design/boards/X/route.json', approval: null }));
-  reseal(root, 'X', { tool: 'fixture', run_id: null });
+  sealFixtureBoard(root, 'X');
   return { root, folder, base: join(root, '.gate/cli') };
 }
 
@@ -70,7 +71,6 @@ test('a path of a run with no run has no value and does not exist', async t => {
 
 test('an unrecorded change shows what to redo and keep from the widest row', async t => {
   const f = fixture(t);
-  recordChange(f.root, 'X', { kind: 'baseline', reason: 'start', by: 'Ana', refs: [] });
   writeFileSync(join(f.folder, 'X.kicad_pcb'), BOARD.replace('(thickness 1.6)', '(thickness 0.8)'));
   reseal(f.root, 'X', { tool: 'fixture', run_id: null });
   const view = await boardView(f.root, 'X', f.base, decide('blocked', 'change_unrecorded'));
@@ -88,7 +88,6 @@ test('an unrecorded change shows what to redo and keep from the widest row', asy
 
 test('the last event shows what it asks to redo, with the state of each class now', async t => {
   const f = fixture(t);
-  recordChange(f.root, 'X', { kind: 'baseline', reason: 'start', by: 'Ana', refs: [] });
   recordChange(f.root, 'X', { kind: 'fab_defect', reason: 'short on U3', by: 'Ana', refs: ['U3'] });
   const view = await boardView(f.root, 'X', f.base, decide('blocked', 'x'));
   assert.equal(view.change.last?.kind, 'fab_defect');

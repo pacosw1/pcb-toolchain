@@ -43,6 +43,7 @@ function fixture(t: TestContext) {
   writeFileSync(join(folder, 'SPEC.md'), 'source');
   writeFileSync(join(folder, 'placement-constraints.json'), JSON.stringify({ schema: 'iot-lab.placement-constraints.v1', rules: [{ id: 'd', kind: 'part_distance', source: { path: 'hardware-design/boards/X/SPEC.md', sha256: 'x', page: 1 } }] }));
   reseal(root, 'X', { tool: 'fixture', run_id: null });
+  recordChange(root, 'X', { kind: 'baseline', reason: 'start', by: 'Ana', refs: [] });
   const plan = () => writeFileSync(layoutPlanPath(root, 'X'), JSON.stringify({ schema: 'iot-lab.layout-plan.v1', intents: [{ id: 'a', statement: 'b', rule_ids: ['d'] }], route_plan: 'hardware-design/boards/X/route.json', approval: null }));
   return { root, folder, plan };
 }
@@ -132,13 +133,13 @@ test('a board with no approved plan may check but may not route or release', asy
   assert.doesNotThrow(() => assertCommand(f.root, 'X', 'release'));
   writeFileSync(join(f.folder, 'X.kicad_pcb'), BOARD.replace('(end 50 0)', '(end 60 0)'));
   reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  recordChange(f.root, 'X', { kind: 'outline_change', reason: 'wider', by: 'Ana', refs: [] });
   assert.throws(() => assertCommand(f.root, 'X', 'route'), /refused at A8.*layout_approval is stale/s);
 });
 
 test('an unrecorded change refuses a guarded command and names the guard', async t => {
   const f = fixture(t); f.plan();
   await approveFixture(f.root, 'X');
-  recordChange(f.root, 'X', { kind: 'baseline', reason: 'start', by: 'Ana', refs: [] });
   writeFileSync(join(f.folder, 'gate.json'), JSON.stringify({ project: 'X', checks: { erc: true } }));
   reseal(f.root, 'X', { tool: 'fixture', run_id: null });
   assert.throws(() => assertCommand(f.root, 'X', 'route'), /change_recorded.*no event/s);

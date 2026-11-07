@@ -4,6 +4,7 @@
 // hardware-design/boards/BOARD/cad-seal.json (committed) holds the sha256 of each sealed file and the last writer. The local
 // log .gate/cad-seal/BOARD.jsonl gets one line per write or accepted edit. Run workspaces and candidate copies (a .gate/ segment
 // in the root path) are not canonical and are never sealed.
+// The record also holds the sha256 of the change log (lib/change-log.ts). Only `pcb change` moves that hash: no seal write hides a deleted or edited log.
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { assertWritable } from './board-freeze.ts';
@@ -22,7 +23,7 @@ const BOARDS = 'hardware-design/boards';
 const LOCK_WAIT_S = 5;
 
 export interface Writer { tool: string; run_id: string | null }
-export interface Seal { schema: string; board: string; files: Record<string, string>; sha256: string; writer: Writer }
+export interface Seal { schema: string; board: string; files: Record<string, string>; sha256: string; writer: Writer; change_log_sha256: string | null }
 export interface SealStatus { board: string; state: 'sealed' | 'changed' | 'missing' | 'not_canonical'; seal: string; sha256: string | null; changed: string[]; added: string[]; removed: string[] }
 
 /** A run workspace or candidate copy has a .gate/ segment in its path. */
@@ -88,11 +89,24 @@ export function verifySeal(root: string, board: string): void {
 export function reseal(rootPath: string, board: string, writer: Writer, reason: string | null = null): void {
   const root = resolve(rootPath);
   if (!isCanonicalRoot(root)) return;
-  const before = readSeal(root, board)?.sha256 ?? null, files = sealedFiles(root, board), sha256 = sha256Text(JSON.stringify(files));
-  const record: Seal = { schema: SEAL_SCHEMA, board, files, sha256, writer };
+  const previous = readSeal(root, board), before = previous?.sha256 ?? null, files = sealedFiles(root, board), sha256 = sha256Text(JSON.stringify(files));
+  const record: Seal = { schema: SEAL_SCHEMA, board, files, sha256, writer, change_log_sha256: previous?.change_log_sha256 ?? null };
   durableJson(sealPath(root, board), record);
   mkdirSync(dirname(logPath(root, board)), { recursive: true });
   durableAppend(logPath(root, board), JSON.stringify({ tool: writer.tool, run_id: writer.run_id, before, after: sha256, reason }) + '\n');
+}
+
+/** The hash of the change log that the seal holds: null for no log, undefined for a board with no seal and for a root that is not canonical. */
+export function sealedChangeLog(rootPath: string, board: string): string | null | undefined {
+  const root = resolve(rootPath);
+  if (!isCanonicalRoot(root)) return undefined;
+  const record = readSeal(root, board);
+  return record ? record.change_log_sha256 ?? null : undefined;
+}
+
+/** Moves the seal to the new change log. The caller holds the seal lock. */
+export function bindChangeLog(root: string, board: string, sha256: string): void {
+  durableJson(sealPath(root, board), { ...readSeal(root, board), change_log_sha256: sha256 });
 }
 
 /** The calls of the seal lock, injected so a test needs no second process and no real wait. */

@@ -1,12 +1,12 @@
 // The change log: hardware-design/boards/BOARD/changes.jsonl is committed and holds why a state went back.
-// Each line has a hash of the line before. A hand edit of a line breaks the chain, except for the last line: no later line hashes it.
+// Each line has a hash of the line before, and cad-seal.json holds the hash of the whole log. A hand edit or a delete of the log fails closed, for the last line too.
 // A line never makes evidence valid: it adds the reason.
 // The log compares each file group with the last recorded hash. A difference with no event stops the work and uses the widest row of the group.
-// A board with no log has not started: nothing can compare, and `pcb state` shows that. `--kind baseline` starts the log.
+// The log is mandatory: a sealed board with no log stops at each guarded command until `--kind baseline` starts the log.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { boardShapeSha256 } from './board-shape.ts';
-import { isCanonicalRoot, schematicSha256, sealedJson, verifySeal, withSealLock } from './cad-seal.ts';
+import { bindChangeLog, isCanonicalRoot, schematicSha256, sealedChangeLog, sealedJson, verifySeal, withSealLock } from './cad-seal.ts';
 import { sha256Text } from './fingerprint.ts';
 import { sha256File } from './json-file.ts';
 import { durableAppend } from './pcb-check-durable.ts';
@@ -27,7 +27,7 @@ export type ChangeStatus =
   | { state: 'recorded'; path: string; events: ChangeEvent[] }
   | { state: 'unrecorded'; path: string; events: ChangeEvent[]; groups: GroupDiff[] }
   | { state: 'invalid'; path: string; events: []; problems: string[] };
-export interface ChangeBlock { code: 'change_unrecorded' | 'change_log_invalid'; message: string }
+export interface ChangeBlock { code: 'change_unrecorded' | 'change_log_invalid' | 'change_log_missing'; message: string }
 
 const KEYS = ['id', 'at', 'by', 'kind', 'reason', 'refs', 'groups', 'prev_sha256'];
 const TABLE = loadTransitions();
@@ -90,11 +90,19 @@ function recorded(events: ChangeEvent[]): Record<string, string> {
   return hashes;
 }
 
-/** Where the log of BOARD stands. A broken log or a board that cannot be read is `invalid`: it never reads as recorded. */
+/** The log must be the one that the seal holds. A workspace copy has no log and a board with no seal has no hash, so neither has a compare. */
+function assertBound(root: string, board: string, path: string): void {
+  const bound = sealedChangeLog(root, board), head = existsSync(path) ? sha256File(path) : null;
+  if (bound === undefined || bound === head) return;
+  throw new Error(head === null ? 'the seal holds a change log, and the file is gone' : 'the change log is not the one that the seal holds');
+}
+
+/** Where the log of BOARD stands. A broken, missing or unbound log or a board that cannot be read is `invalid`: it never reads as recorded. */
 export function changeStatus(root: string, board: string, table: TransitionTable = TABLE): ChangeStatus {
   const path = changePath(root, board);
-  if (!existsSync(path)) return { state: 'not_started', path, events: [] };
   try {
+    assertBound(root, board, path);
+    if (!existsSync(path)) return { state: 'not_started', path, events: [] };
     const events = readChanges(root, board, table), last = recorded(events), now = groupHashes(root, board, table);
     const groups = Object.entries(now).filter(([group, hash]) => last[group] !== hash)
       .map(([group, current]) => ({ group, recorded: last[group] ?? null, current, kind: widestKind(table, group) }));
@@ -107,7 +115,8 @@ const rowText = (kind: Kind): string => `re-enter ${kind.reenter.join(' or ')}; 
 /** null when each change has an event. Else the stop and the way to continue. */
 export function changeBlock(root: string, board: string, table: TransitionTable = TABLE): ChangeBlock | null {
   const status = changeStatus(root, board, table);
-  if (status.state === 'invalid') return { code: 'change_log_invalid', message: `The change log of ${board} is not valid (${status.path}):\n  ${status.problems.join('\n  ')}\nRestore the file from git, or fix the board that it cannot read.` };
+  if (status.state === 'invalid') return { code: 'change_log_invalid', message: `The change log of ${board} is not valid (${status.path}):\n  ${status.problems.join('\n  ')}\nRestore the log and cad-seal.json from git, or fix the board that it cannot read.` };
+  if (status.state === 'not_started') return sealedChangeLog(root, board) === undefined ? null : { code: 'change_log_missing', message: `${board} has no change log (${status.path}). Start it: tools/pcb change ${board} --kind baseline --reason TEXT --by NAME` };
   if (status.state !== 'unrecorded') return null;
   const rows = status.groups.map(row => `${row.group}: ${rowText(row.kind)}`);
   return { code: 'change_unrecorded', message: `${board} has a change with no event:\n  ${rows.join('\n  ')}\nName the change: tools/pcb change ${board} --kind KIND --reason TEXT --by NAME` };
@@ -134,6 +143,7 @@ export function recordChange(root: string, board: string, request: ChangeRequest
     const path = changePath(root, board), previous = existsSync(path) ? readFileSync(path, 'utf8').slice(0, -1).split('\n').at(-1)! : null;
     const event: ChangeEvent = { id: eventId(status.events.length), at: now().toISOString(), by: by.trim(), kind: kind.id, reason: reason.trim(), refs, groups, prev_sha256: previous === null ? null : sha256Text(previous) };
     durableAppend(path, JSON.stringify(event) + '\n');
+    bindChangeLog(root, board, sha256File(path));   // a crash before this line leaves a log that fails closed
     return event;
   });
 }

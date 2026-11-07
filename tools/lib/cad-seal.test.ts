@@ -46,6 +46,7 @@ test('a missing seal fails closed and names the command for the first seal', t =
 test('a changed, added and removed file are each named with both commands', t => {
   const p = project(t);
   sealFixtureBoard(p.root, 'X');
+  const sealedBoard = readFileSync(p.pcb, 'utf8');
   writeFileSync(p.pcb, 'edited in KiCad');
   rmSync(join(p.root, 'hardware-design/boards/X/cad/X.kicad_dru'));
   const status = sealStatus(p.root, 'X');
@@ -55,7 +56,7 @@ test('a changed, added and removed file are each named with both commands', t =>
   assert.throws(() => verifySeal(p.root, 'X'), (error: Error) => error.message.includes(`changed: ${PCB}`) && error.message.includes('removed: hardware-design/boards/X/cad/X.kicad_dru')
     && error.message.includes('git checkout') && error.message.includes('tools/pcb seal X --accept --reason TEXT'));
   p.put('hardware-design/boards/X/cad/X.kicad_dru', 'fixture kicad_dru');
-  writeFileSync(p.pcb, 'fixture kicad_pcb');
+  writeFileSync(p.pcb, sealedBoard);
   verifySeal(p.root, 'X');
 });
 

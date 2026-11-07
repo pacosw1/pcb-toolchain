@@ -9,6 +9,7 @@ import { reseal } from './cad-seal.ts';
 import { changeBlock, changePath, changeStatus, groupHashes, readChanges, recordChange } from './change-log.ts';
 import { sha256Text } from './fingerprint.ts';
 import { gateInputs } from './gate-inputs.mjs';
+import { sha256File } from './json-file.ts';
 import { layoutAdmission } from './pcb-candidate-screens.ts';
 import { layoutGate, layoutPlanPath, layoutPlanStatus } from './layout-plan.ts';
 import { approveFixture } from './layout-plan-fixture.ts';
@@ -33,10 +34,52 @@ function fixture(t: TestContext) {
   return { root, folder, write, record, log: changePath(root, 'X') };
 }
 
-test('a board with no log has not started, and the status says so', t => {
+test('a sealed board with no log has not started, and the refusal gives the command', t => {
   const f = fixture(t), status = changeStatus(f.root, 'X');
   assert.equal(status.state, 'not_started');
+  const block = changeBlock(f.root, 'X');
+  assert.equal(block?.code, 'change_log_missing');
+  assert.match(block!.message, /tools\/pcb change X --kind baseline --reason TEXT --by NAME/);
+  assert.equal(layoutGate(f.root, 'X', () => {})?.code, 'change_log_missing');
+});
+
+test('a board with no seal has no log to ask for, and a run workspace never has', t => {
+  const f = fixture(t);
+  rmSync(join(f.folder, 'cad-seal.json'));
   assert.equal(changeBlock(f.root, 'X'), null);
+  const workspace = join(f.root, '.gate/work'), copy = join(workspace, 'hardware-design/boards/X');
+  mkdirSync(copy, { recursive: true });
+  for (const name of ['gate.json', 'X.kicad_pcb', 'X.kicad_sch', 'X.kicad_pro']) writeFileSync(join(copy, name), readFileSync(join(f.folder, name)));
+  assert.equal(changeBlock(workspace, 'X'), null);
+});
+
+test('the seal binds the log: a deleted or edited log fails closed, the last line too', t => {
+  const f = fixture(t); f.record('baseline');
+  const text = readFileSync(f.log, 'utf8'), line = JSON.parse(text.trim()) as { reason: string };
+  line.reason = 'forged';
+  writeFileSync(f.log, JSON.stringify(line) + '\n');
+  assert.equal(changeStatus(f.root, 'X').state, 'invalid');
+  assert.equal(changeBlock(f.root, 'X')?.code, 'change_log_invalid');
+  rmSync(f.log);
+  assert.equal(changeStatus(f.root, 'X').state, 'invalid');
+  assert.throws(() => f.record('baseline'), /not valid/);
+  writeFileSync(f.log, text);
+  assert.equal(changeStatus(f.root, 'X').state, 'recorded');
+});
+
+test('a seal write keeps the binding, so an accepted edit does not hide a deleted log', t => {
+  const f = fixture(t); f.record('baseline');
+  rmSync(f.log);
+  reseal(f.root, 'X', { tool: 'seal-accept', run_id: null }, 'person');
+  assert.equal(changeStatus(f.root, 'X').state, 'invalid');
+});
+
+test('each event moves the binding to the new log head', t => {
+  const f = fixture(t); f.record('baseline');
+  f.write('X.kicad_pcb', BOARD.replace('(thickness 1.5)', '(thickness 1.2)'));
+  f.record('stackup_change', 'thinner core');
+  assert.equal(changeStatus(f.root, 'X').state, 'recorded');
+  assert.equal(JSON.parse(readFileSync(join(f.folder, 'cad-seal.json'), 'utf8')).change_log_sha256, sha256File(f.log));
 });
 
 test('the table groups and the hashes have the same names', t => {
@@ -172,8 +215,8 @@ test('an event never makes evidence valid', async t => {
   writeFileSync(join(f.folder, 'SPEC.md'), 'source');
   f.write('placement-constraints.json', JSON.stringify({ schema: 'iot-lab.placement-constraints.v1', rules: [{ id: 'd', kind: 'part_distance', source: { path: 'hardware-design/boards/X/SPEC.md', sha256: 'x', page: 1 } }] }));
   writeFileSync(layoutPlanPath(f.root, 'X'), JSON.stringify({ schema: 'iot-lab.layout-plan.v1', intents: [{ id: 'a', statement: 'b', rule_ids: ['d'] }], route_plan: 'hardware-design/boards/X/route.json', approval: null }));
-  await approveFixture(f.root, 'X');
   f.record('baseline');
+  await approveFixture(f.root, 'X');
   f.write('X.kicad_pcb', BOARD.replace('(end 50 0)', '(end 60 0)'));
   assert.equal(layoutPlanStatus(f.root, 'X').state, 'stale');
   f.record('outline_change', 'wider board');
