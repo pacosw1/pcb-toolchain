@@ -34,7 +34,7 @@ digraph pcb_state_machine {
     A14 [label="A14 Staged route\nenforced · no repeat when stuck" fillcolor="#d7f0e0" color="#1f7a45"];
     A15 [label="A15 Stuck + decision\nenforced · move from a fixed list" fillcolor="#d7f0e0" color="#1f7a45"];
     A17 [label="A17 Finishing edits\nrecorded · stitch, silk, test points" fillcolor="#fff0c2" color="#c98a00"];
-    B17 [label="B17 Route env\nimplicit · process.env not recorded" fillcolor="#fbd5d5" color="#c0392b"];
+    B17 [label="B17 Route env\nenforced · set variable refuses the run" fillcolor="#d7f0e0" color="#1f7a45"];
     A16 [label="A16 Diagnose + repair\nenforced · bounded repair" fillcolor="#d7f0e0" color="#1f7a45"];
     B18 [label="B18 Dispatch fallback\nimplicit · stderr text match" fillcolor="#fbd5d5" color="#c0392b"];
   }

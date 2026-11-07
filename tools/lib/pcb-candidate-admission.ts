@@ -26,8 +26,14 @@ function specFor(root: string, operation: string, board: string, router: string,
   return join(boardConfig(root, board).folder, 'route.json');
 }
 
+// These change the features of a route, and no run record keeps them. The features come from route-features.json, the
+// route_features of the board gate.json (bound by the gate hash) and the route plan.
+const ROUTE_ENVIRONMENT = ['ROUTE_FEATURES', 'ROUTE_FEATURES_FILE', 'ROUTE_BOARD'];
+
 /** The manifest fields of this candidate. A continued run keeps the reviewed inputs of its parent. */
 export function candidateFields(root: string, operation: string, board: string, request: CandidateRequest, parent?: string, boardNets = boardPlanNets): Record<string, unknown> {
+  const unrecorded = CANDIDATE.has(operation) ? ROUTE_ENVIRONMENT.filter(name => process.env[name]) : [];
+  if (unrecorded.length) throw new Error(`${unrecorded.join(', ')} are set. They change a candidate run and no run record keeps them. Unset them and put route_features in the gate.json of the board`);
   const previous = parent ? readObject<Previous>(join(parent, 'run.json')) : undefined;
   const reviewed = (folder: string): string | undefined => { const path = join(root, 'hardware-design/registry', folder, `${board}.json`); return isFile(path) ? path : undefined; };
   const candidate = CANDIDATE.has(operation);

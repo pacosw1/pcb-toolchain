@@ -357,6 +357,13 @@ that record, is sealed as `error` with the file named.
 `pcb adopt` and `pcb next` read the same table. `adopt` refuses a run whose contract files are missing or unsealed. `next` marks
 such a run as not current, and for a run that waits for adoption it shows the image paths in `blocker.images`.
 
+## Route settings of the environment
+
+`build`, `edit`, `route` and `repair` refuse to start while `ROUTE_FEATURES`, `ROUTE_FEATURES_FILE` or `ROUTE_BOARD` is set
+(an empty value counts as unset). No run record keeps these variables, so two runs with the same recorded inputs could route
+differently. Set the features in `route_features` of the `gate.json` of the board, or in the route plan. `tools/route-features.json`
+holds the defaults. The comment in that file about the environment applies to tools that are not candidate runs.
+
 ## Release, blocks and measurement
 
 [Release workflow](RELEASE-WORKFLOW.md) describes fresh staged fabrication,

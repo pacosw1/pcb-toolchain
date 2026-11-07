@@ -130,9 +130,9 @@
 <rect x="120" y="1054" width="230" height="40" rx="6" fill="#fff0c2" stroke="#c98a00" stroke-width="1.6"/>
 <text x="235" y="1071" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A17 Finishing edits</text>
 <text x="235" y="1085" text-anchor="middle" font-size="10" fill="#333">recorded · stitch, silk, test points</text>
-<rect x="388" y="1054" width="232" height="40" rx="6" fill="#fbd5d5" stroke="#c0392b" stroke-width="1.6"/>
+<rect x="388" y="1054" width="232" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
 <text x="504" y="1071" text-anchor="middle" font-size="12" font-weight="700" fill="#111">B17 Route env</text>
-<text x="504" y="1085" text-anchor="middle" font-size="10" fill="#333">implicit · process.env not recorded</text>
+<text x="504" y="1085" text-anchor="middle" font-size="10" fill="#333">enforced · set variable refuses the run</text>
 <rect x="120" y="1112" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
 <text x="235" y="1129" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A16 Diagnose + repair</text>
 <text x="235" y="1143" text-anchor="middle" font-size="10" fill="#333">enforced · bounded repair</text>
