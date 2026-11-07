@@ -311,3 +311,61 @@ test("an interrupted partial last frame ends unknown rather than hanging forever
     f.cleanup();
   }
 });
+const progress = (timeMs: number) => ({
+  kind: "progress",
+  timeMs,
+  data: { stage: "routing", elapsedMs: 10, message: "search", metrics: {} },
+});
+test("after a restart a rebuilt verdict that differs does not leave the run unsettled; the journal's first verdict stays", async () => {
+  const f = fixture();
+  try {
+    f.write([progress(110)]);
+    Object.assign(f.jobs[0].attempts[0], { endedAt: new Date(200).toISOString() });
+    f.jobs[0].state = "failed";
+    const first = f.observer();
+    await first.poll();
+    assert.equal(first.settled(), true);
+    const id = f.live.journal.list()[0].runId;
+    assert.equal(f.live.journal.stateAt(id).finished?.outcome, "failed");
+    // The reader restarts with no cursors. The job record has moved on, so the rebuilt verdict is not the stored one.
+    f.jobs[0].state = "cancelled";
+    const restarted = f.observer();
+    await restarted.poll();
+    assert.equal(restarted.settled(), true);
+    assert.equal(f.live.journal.stateAt(id).finished?.outcome, "failed");
+  } finally {
+    f.cleanup();
+  }
+});
+test("a conflict on any event other than the verdict still keeps the run unsettled", async () => {
+  const f = fixture();
+  try {
+    f.write([progress(110)]);
+    const reader = new LiveJobs(() => f.jobs, {
+      importBoard: (b, s) => f.live.importBoard(b, s),
+      append: () => {
+        throw Error("Live event sequence reused with different content");
+      },
+    });
+    await reader.poll();
+    assert.equal(reader.settled(), false);
+  } finally {
+    f.cleanup();
+  }
+});
+test("a complete last frame without its newline is read once the attempt has ended", async () => {
+  const f = fixture();
+  try {
+    f.write([progress(110)]);
+    fs.appendFileSync(path.join(f.out, f.stem + ".ndjson"), JSON.stringify(progress(120)));
+    Object.assign(f.jobs[0].attempts[0], { endedAt: new Date(200).toISOString() });
+    const reader = f.observer();
+    await reader.poll();
+    await reader.poll();
+    assert.equal(reader.settled(), true);
+    const state = f.live.journal.stateAt(f.live.journal.list()[0].runId);
+    assert.equal(state.seq, 5, "started, snapshot, two progress frames, finished");
+  } finally {
+    f.cleanup();
+  }
+});

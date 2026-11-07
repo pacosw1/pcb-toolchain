@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite'
 import { createHash } from 'node:crypto'
-import { applyLiveEvent, emptyLiveState, validateLiveEvent } from './live-protocol.ts'
+import { applyLiveEvent, emptyLiveState, SEQUENCE_REUSED, validateLiveEvent } from './live-protocol.ts'
 import type { LiveEvent, LiveState, LiveTrack, LiveVia } from './live-protocol.ts'
 
 const MAX_EVENT = 8 * 1024 * 1024
@@ -89,10 +89,10 @@ export class LiveJournal {
     for (const item of prepared) {
       const { event, body, hash } = item, key = `${event.runId}\0${event.seq}`
       const duplicate = duplicateKeys.get(key)
-      if (duplicate !== undefined) { if (duplicate !== body) throw new Error('Live event sequence reused with different content'); continue }
+      if (duplicate !== undefined) { if (duplicate !== body) throw new Error(SEQUENCE_REUSED); continue }
       duplicateKeys.set(key, body)
       const old = this.db.prepare('SELECT body,digest FROM live_frames WHERE run_id=? AND seq=?').get(event.runId, event.seq) as unknown as Row | undefined
-      if (old) { if (checked(old) !== body || old.digest !== hash) throw new Error('Live event sequence reused with different content'); continue }
+      if (old) { if (checked(old) !== body || old.digest !== hash) throw new Error(SEQUENCE_REUSED); continue }
       const state = staged.get(event.runId) ?? this.stateAt(event.runId)
       applyLiveEvent(state, event); staged.set(event.runId, state); fresh.push(item)
     }

@@ -26,13 +26,37 @@ pub struct Spool {
     done: PathBuf,
     operation: String,
 }
+/// The file appears under its final name whole or not at all, and never replaces a file or link already there.
+/// The reader polls this folder: a half-written manifest or done record must not be visible, and a crash must not
+/// leave one behind. The bytes go to `<name>.tmp`, which no reader pattern matches, then a rename makes the name.
+/// A rename, not a hard link: the reader refuses a file with more than one link.
 fn create(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    create_with(path, bytes, |f, b| f.write_all(b))
+}
+fn create_with(
+    path: &Path,
+    bytes: &[u8],
+    write: impl FnOnce(&mut fs::File, &[u8]) -> std::io::Result<()>,
+) -> Result<(), String> {
+    // Not atomic against another writer, and none exists: the name holds a random id and this process owns it.
+    if path.symlink_metadata().is_ok() {
+        return Err(format!("{} exists", path.display()));
+    }
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
     let mut f = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(path)
+        .open(&tmp)
         .map_err(|e| e.to_string())?;
-    f.write_all(bytes).map_err(|e| e.to_string())
+    let done = write(&mut f, bytes)
+        .and_then(|_| f.sync_all())
+        .and_then(|_| fs::rename(&tmp, path));
+    if done.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    done.map_err(|e| e.to_string())
 }
 impl Spool {
     pub fn from_environment(
@@ -171,5 +195,48 @@ impl Drop for Spool {
             })
             .unwrap_or("failed");
         let _=create(&self.done,json!({"timeMs":now_ms(),"outcome":outcome,"message":"Native search ended; candidate is not independently verified"}).to_string().as_bytes());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn folder(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("live-spool-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn a_failed_write_leaves_nothing_under_the_final_name_or_the_temp_name() {
+        let d = folder("fail");
+        let p = d.join("pcb-live-x.done.json");
+        let r = create_with(&p, b"{\"a\":1}", |f, b| {
+            f.write_all(&b[..3])?;
+            Err(std::io::Error::other("disk full"))
+        });
+        assert!(r.is_err());
+        assert_eq!(fs::read_dir(&d).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_good_write_appears_whole_and_leaves_no_temp_file() {
+        let d = folder("good");
+        let p = d.join("pcb-live-x.manifest.json");
+        create(&p, b"{\"a\":1}").unwrap();
+        assert_eq!(fs::read(&p).unwrap(), b"{\"a\":1}");
+        assert_eq!(fs::read_dir(&d).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn an_existing_file_is_never_replaced() {
+        let d = folder("exists");
+        let p = d.join("pcb-live-x.done.json");
+        create(&p, b"first").unwrap();
+        assert!(create(&p, b"second").is_err());
+        assert_eq!(fs::read(&p).unwrap(), b"first");
+        assert_eq!(fs::read_dir(&d).unwrap().count(), 1);
     }
 }
