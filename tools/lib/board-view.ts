@@ -3,7 +3,7 @@
 import { existsSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { allowedEvents, commandEvidence, machineTable, position, type BoardState, type Evidenced } from './board-machine.ts';
-import { releaseEvidence, releaseText, releaseView, type ReleaseView } from './board-release.ts';
+import { releaseText, releaseView, type ReleaseView } from './board-release.ts';
 import { changeBlock, changeStatus } from './change-log.ts';
 import { boardConfig } from './pcb-workflow.ts';
 import { loadTransitions, redoFor, type Command, type Evidence, type Freshness, type Item, type Kind, type Readers, type RedoRow, type State, type TransitionTable } from './transitions.ts';
@@ -28,11 +28,14 @@ const READY: Evidenced = { ...DONE, release: 'current', readiness: 'missing' };
 /** What a blocker code of `pcb next` proves. A code with no row proves nothing. */
 const JUDGED: Record<string, Evidenced> = {
   board_unplaced: { placement: 'missing' }, bounded_route_repair: COPPER_OPEN, candidate_connectivity_open: COPPER_OPEN, route_stuck: COPPER_OPEN, engine_search_exhausted: COPPER_OPEN, route_move_accepted: COPPER_OPEN,
-  release_evidence_missing: { ...DONE, release: 'missing' }, assembly_readiness_unverified: READY, stock_day_expired: READY, readiness_requires_current_review: READY,
+  evidence_not_current: { ...DONE, gate: 'stale' }, release_evidence_missing: { ...DONE, release: 'missing' }, assembly_readiness_unverified: READY, stock_day_expired: READY, readiness_requires_current_review: READY,
 };
 export const judgedEvidence = (code: unknown): Evidenced => JUDGED[String(code)] ?? {};
 
 function decisionOf(decision: Decision): Decision { return (decision.board_state as Decision | undefined) ?? decision; }
+
+/** What the decision of `pcb next` proves now. A decision that fails throws: the caller says what that means. */
+export const judgedNow = async (root: string, board: string, decide: Decide): Promise<Evidenced> => judgedEvidence(decisionOf(await decide(root, board)).blocker?.code);
 
 function expand(item: Item, values: Record<string, string | null>, images: string[]): ItemView {
   if (!item.path) return { name: item.name, path: null, exists: false };
@@ -56,7 +59,7 @@ export async function boardView(root: string, board: string, base: string, decid
     run = typeof observed === 'string' ? join(base, observed) : null;
     judged = judgedEvidence(decision.blocker?.code);
   } catch (error) { next = { state: 'unavailable', cause: (error as Error).message }; }
-  const release = releaseView(root, board, base), evidence: Evidenced = { ...judged, ...commandEvidence(root, board), ...releaseEvidence(release) };
+  const release = releaseView(root, board, base), evidence: Evidenced = { ...judged, ...commandEvidence(root, board, base) };
   const at = position(table, evidence), change = changeStatus(root, board, table);
   const readers: Readers = Object.fromEntries(Object.entries(evidence).map(([name, freshness]) => [name, () => freshness]));
   const images: string[] = [], values = { root, board, project, run };

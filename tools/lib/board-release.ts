@@ -57,7 +57,8 @@ const ORDER = { same: 'current', differs: 'stale', unknown: 'unknown' } as const
 
 /** The classes that a release record proves. A missing record proves nothing, so it does not move the position. */
 export function releaseEvidence({ approval: { state }, cad_after_order: cad }: ReleaseView): Evidenced {
-  return { ...(state === 'missing' ? {} : { release_approval: APPROVAL[state] }), ...(cad === 'no_order' ? {} : { order: ORDER[cad] }) };
+  if (cad !== 'no_order') return { order: ORDER[cad] };   // an approval that goes stale after the order never opens the ordered CAD again
+  return state === 'missing' ? {} : { release_approval: APPROVAL[state] };
 }
 
 export function releaseText({ approval, orders, cad_after_order: cad, problems }: ReleaseView): string[] {

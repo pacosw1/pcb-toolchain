@@ -1,6 +1,7 @@
 // The read side of a supervised run: state, events and explanation from its durable folder. State and receipts stay as
 // jsonLoads gave them, so a number keeps its int or float type.
-import { closeSync, fstatSync, openSync, readdirSync, readSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readdirSync, readSync, realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { atomicJson } from './json-file.ts';
 import { lockHeld } from './file-lock.ts';
 import { verifySettled } from './pcb-evidence.ts';
@@ -11,6 +12,12 @@ import { caught, isDirectory, isFile, joinPath, jsonOf, pathExists } from './py-
 
 export const TERMINAL = new Set(['passed', 'failed', 'error', 'cancelled', 'timeout']);
 // JavaScript's $ also matches before a final newline; require the actual end, like Python fullmatch.
+/** The run folder of ROOT: GIVEN, then PCB_RUNS_DIR, then .gate/cli. */
+export function runsBase(root: string, given?: string): string {
+  const base = resolve(given ?? process.env.PCB_RUNS_DIR ?? resolve(root, '.gate/cli'));
+  try { return realpathSync(base); } catch { return base; }
+}
+
 export const RUN_ID = /^run-[A-Za-z0-9_-]+$(?![\s\S])/;
 export const EVENT_LIMIT = 100;
 const STARTUP_BUDGET_S = 10;

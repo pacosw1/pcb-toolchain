@@ -15,11 +15,14 @@ import { parentCandidate } from './pcb-candidate.ts';
 import { verify } from './pcb-evidence.ts';
 import { holdLock } from './file-lock.ts';
 import { assertCommand, commandOf } from './board-machine.ts';
+import { judgedNow, type Decide } from './board-view.ts';
 import { verifySeal } from './cad-seal.ts';
+import { nextAction } from './pcb-next.ts';
+import { nextReaders } from './pcb-next-readers.ts';
 import { assertRouteNotRepeated } from './route-repeat.ts';
 
 export interface LoopContext { id: string; round: number; launch_id: string; source_sha256: string; deadline_ms: number }
-export interface CheckOptions extends CandidateRequest { root: string; base: string; board: string; operation?: string; fromRun?: string; arguments?: string[]; timeout: number; heartbeat: number; changed?: boolean; fresh?: boolean; baseline?: string; cycle?: string; loopContext?: LoopContext }
+export interface CheckOptions extends CandidateRequest { decide?: Decide; root: string; base: string; board: string; operation?: string; fromRun?: string; arguments?: string[]; timeout: number; heartbeat: number; changed?: boolean; fresh?: boolean; baseline?: string; cycle?: string; loopContext?: LoopContext }
 
 function readDesign(args: string[]) {
   const option = (name: string) => { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : args.find(item => item.startsWith(name + '='))?.slice(name.length + 1); };
@@ -44,7 +47,8 @@ export async function startCheck(options: CheckOptions): Promise<string> {
   const config = configInfo ? join(configInfo.folder, 'gate.json') : undefined;
   if (configInfo) verifySeal(root, options.board);
   const event = configInfo ? commandOf(operation, options.kind) : null;
-  if (event) assertCommand(root, options.board, event);
+  // Only a release has moves that differ on what a run proves. A decision that fails stops the release.
+  if (event) assertCommand(root, options.board, event, event === 'release' ? await judgedNow(root, options.board, options.decide ?? ((where, name) => nextAction(where, name, { base, readers: nextReaders }))) : {});
   let baseline: string | undefined;
   if (options.baseline) {
     baseline = join(runDir(base, options.baseline), 'gate/findings.json');

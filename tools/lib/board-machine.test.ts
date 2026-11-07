@@ -3,11 +3,13 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import { assertCommand, BOARD_STATES, CHANGE_KINDS, commandOf, machineTable, position, transition, type BoardEvent, type BoardState, type Evidenced, type Guards } from './board-machine.ts';
+import { allowedEvents, assertCommand, BOARD_STATES, CHANGE_KINDS, commandEvidence, commandOf, machineTable, position, transition, type BoardEvent, type BoardState, type Evidenced, type Guards } from './board-machine.ts';
+import { judgedEvidence, type Decide } from './board-view.ts';
 import { reseal } from './cad-seal.ts';
 import { recordChange } from './change-log.ts';
 import { startCheck } from './pcb-check-start.ts';
 import { layoutPlanPath } from './layout-plan.ts';
+import { releaseOrdersPath } from './release-order.mjs';
 import { approveFixture } from './layout-plan-fixture.ts';
 import { COMMANDS, loadTransitions, parseTransitions } from './transitions.ts';
 
@@ -144,6 +146,43 @@ test('an unrecorded change refuses a guarded command and names the guard', async
   reseal(f.root, 'X', { tool: 'fixture', run_id: null });
   assert.throws(() => assertCommand(f.root, 'X', 'route'), /change_recorded.*no event/s);
   assert.doesNotThrow(() => assertCommand(f.root, 'X', 'check'));
+});
+
+const ORDER = { schema: 'iot-lab.release-order.v1', board: 'X', by: 'Ana', candidate_sha256: 'a'.repeat(64), approval_sha256: 'b'.repeat(64), what: 'boards', quantity: 5, reference: 'PO-1' };
+
+test('an order moves the board past the plan: its CAD stays closed, a check and a reorder stay open', async t => {
+  const f = fixture(t); f.plan();
+  await approveFixture(f.root, 'X');
+  writeFileSync(releaseOrdersPath(f.root, 'X'), JSON.stringify(ORDER) + '\n');
+  const run = join(f.root, '.gate/cli');
+  assert.equal(position(TABLE, commandEvidence(f.root, 'X', run)).state, 'A24');   // no sealed run gives the ordered CAD: the compare is unknown
+  for (const name of ['build', 'place', 'route', 'repair'] as const) assert.throws(() => assertCommand(f.root, 'X', name), new RegExp(`${name} is refused at A24`));
+  assert.doesNotThrow(() => assertCommand(f.root, 'X', 'check'));
+  assert.doesNotThrow(() => assertCommand(f.root, 'X', 'release'));
+});
+
+test('no move of A24 and A25 opens CAD work', () => {
+  for (const state of ['A24', 'A25'] as const) {
+    assert.deepEqual(allowedEvents(TABLE, state, OPEN), ['check', 'release']);
+    for (const name of ['edit', 'build', 'place', 'route', 'repair'] as const) assert.equal((transition(TABLE, state, command(name), OPEN) as { code?: string }).code, 'move_not_allowed');
+  }
+});
+
+test('what a run proves reaches the machine: open copper and a stale gate refuse a release', async t => {
+  const f = fixture(t); f.plan();
+  await approveFixture(f.root, 'X');
+  assert.throws(() => assertCommand(f.root, 'X', 'release', judgedEvidence('candidate_connectivity_open')), /release is refused at A13.*copper is missing/s);
+  assert.throws(() => assertCommand(f.root, 'X', 'release', judgedEvidence('evidence_not_current')), /release is refused at A18.*gate is stale/s);
+  assert.doesNotThrow(() => assertCommand(f.root, 'X', 'release', judgedEvidence('release_evidence_missing')));
+  assert.doesNotThrow(() => assertCommand(f.root, 'X', 'route', judgedEvidence('candidate_connectivity_open')));
+});
+
+test('startCheck reads the judged evidence for a release, and a decision that fails stops it', async t => {
+  const f = fixture(t), start = (decide: Decide) => startCheck({ root: f.root, base: join(f.root, '.gate/cli'), board: 'X', operation: 'release', timeout: 60, heartbeat: 1, decide });
+  f.plan();
+  await approveFixture(f.root, 'X');
+  await assert.rejects(start(async () => ({ blocker: { code: 'route_stuck' } })), /release is refused at A13/);
+  await assert.rejects(start(async () => { throw new Error('no decision'); }), /no decision/);
 });
 
 test('startCheck asks the machine before a run starts', async t => {
