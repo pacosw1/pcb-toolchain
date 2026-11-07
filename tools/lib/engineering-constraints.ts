@@ -20,7 +20,7 @@ import { isDict, need, pyFloat, sameValue, type Dict } from './py-values.ts';
 import { field, forms, type SList } from './sexpr.ts';
 
 export const SCHEMA = 'iot-lab.engineering-constraints.v1';
-const KINDS = ['fixed', 'rigid_group', 'pin_distance', 'part_distance', 'region', 'clearance', 'connector_access', 'escape'];
+export const KINDS = ['fixed', 'rigid_group', 'pin_distance', 'part_distance', 'region', 'clearance', 'connector_access', 'escape'];
 const CORE_FIELDS = ['schema', 'root', 'board', 'manifest', 'native', 'inputs', 'rules', 'geometry', 'bindings'] as const;
 export const RULE_FIELDS: Record<string, string[]> = {
   fixed: ['refs'], rigid_group: ['refs', 'binding'], pin_distance: ['a', 'b', 'metric', 'min_mm', 'max_mm'],
