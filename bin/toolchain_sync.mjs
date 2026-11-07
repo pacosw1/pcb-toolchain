@@ -9,7 +9,9 @@
 //
 // - PROJECT/tools/.toolchain-version holds "<version> <sha>"; same stamp and all files present = nothing to do.
 // - PROJECT/tools/.toolchain-files lists the copied files; a new version first removes the old list.
-// - A project file at a toolchain path is an error, unless its content is identical (then it is left alone).
+// - A project file at a toolchain path is an error, unless its content is identical (then it is kept and listed, so
+//   the next version replaces it like any other copy).
+// - The listing is written before the copy and the stamp after it, so a sync that stopped half way is recoverable.
 // - Copies are read-only: change a tool in the pcb-toolchain repo and release it, not here.
 // - Unless --no-exclude, the copied paths go into the git common dir info/exclude (one marked block).
 // Prints one line: PASS/FAIL.
@@ -27,6 +29,7 @@ const digest = p => createHash('sha256').update(fs.readFileSync(p)).digest('hex'
 const lexists = p => { try { fs.lstatSync(p); return true } catch { return false } }
 const isFile = p => { try { return fs.statSync(p).isFile() } catch { return false } }
 const read = p => fs.readFileSync(p, 'utf8')
+const put = (p, text) => { fs.writeFileSync(p + '.new', text); fs.renameSync(p + '.new', p) }   // whole or not at all
 
 function releaseFiles(bundle) {
   const tools = path.join(bundle, 'tools')
@@ -82,6 +85,10 @@ function main(argv) {
     const src = path.join(bundle, 'tools', r), dst = path.join(tools, r)
     if (!ours.has(r) && lexists(dst) && !(isFile(dst) && digest(dst) === digest(src))) { collision(r); return 1 }
   }
+  // The listing is written before any file changes, and holds the old and the new paths: a stop at any point leaves a
+  // listing that covers every file this script may have put there, so the next run owns them and does not call them a collision.
+  fs.mkdirSync(tools, { recursive: true })
+  put(listing, [...new Set([...ours, ...rels])].join('\n') + '\n')
   for (const r of ours) {
     const p = path.join(tools, r)
     if (lexists(p)) { fs.chmodSync(p, 0o600); fs.unlinkSync(p) }
@@ -102,8 +109,8 @@ function main(argv) {
     fs.chmodSync(dst, st.mode & 0o100 ? 0o555 : 0o444)
     copied.push(r)
   }
-  fs.writeFileSync(listing, copied.join('\n') + '\n')
-  fs.writeFileSync(stamp, stampText + '\n')
+  put(listing, rels.join('\n') + '\n')              // identical files too: they are the release's now, and the next version replaces them
+  put(stamp, stampText + '\n')                      // last: the stamp says the whole copy finished
   const how = argv.includes('--no-exclude') ? 'not excluded' : exclude(project, copied)
   console.error(`PASS: toolchain_sync: pcb-toolchain ${stampText} -> ${tools} (${copied.length} copied, ${kept} identical, ${how})`)
   return 0
