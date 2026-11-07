@@ -84,3 +84,24 @@ test('pcb layout --approve asks a person, and so does a direct edit of a layout 
   for (const command of ['tools/pcb layout X', 'tools/pcb layout X --json']) assert.equal(run({tool_name: 'Bash', tool_input: {command}}).stdout, '');
   assert.equal(run({tool_name: 'Edit', tool_input: {file_path: '/p/scratch/layout-plan.json'}}).stdout, '');
 });
+
+test('an edit of boards.json that writes an exemption asks a person; other edits pass', () => {
+  const REGISTRY = '/p/hardware-design/registry/boards.json';
+  const exempt = '"design_contract_exempt": {"reason": "x"}';
+  for (const [tool_name, tool_input] of [
+    ['Edit', {file_path: REGISTRY, old_string: '"id": "X"', new_string: `"id": "X", ${exempt}`}],
+    ['Write', {file_path: REGISTRY, content: '{"boards": [{"id": "X", "layout_plan_exempt": {"reason": "x"}}]}'}],
+    ['MultiEdit', {file_path: REGISTRY, edits: [{old_string: 'a', new_string: exempt}]}],
+  ]) {
+    const out = decisionOf(run({tool_name, tool_input}));
+    assert.equal(out.permissionDecision, 'ask', tool_name);
+    assert.match(out.permissionDecisionReason, /person/);
+  }
+  const command = 'tools/edit-registry hardware-design/registry/boards.json design_contract_exempt';
+  assert.equal(decisionOf(run({tool_name: 'Bash', tool_input: {command}})).permissionDecision, 'ask');
+  for (const input of [
+    {tool_name: 'Edit', tool_input: {file_path: REGISTRY, old_string: 'a', new_string: 'b'}},
+    {tool_name: 'Edit', tool_input: {file_path: '/p/scratch/boards.json', old_string: 'a', new_string: exempt}},
+    {tool_name: 'Bash', tool_input: {command: 'cat hardware-design/registry/boards.json'}},
+  ]) assert.equal(run(input).stdout, '');
+});

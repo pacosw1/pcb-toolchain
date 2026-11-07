@@ -36,6 +36,11 @@ function sealedFiles(root: string, board: string): Record<string, string> {
   return Object.fromEntries(found.map(path => [posix(relative(root, path)), sha256File(path)]).sort(([a], [b]) => (a! < b! ? -1 : 1)));
 }
 
+/** One hash of the sealed schematic files of BOARD (.kicad_sch and .kicad_pro), from the same file list as the seal. */
+export function schematicSha256(root: string, board: string): string {
+  return sha256Text(JSON.stringify(Object.fromEntries(Object.entries(sealedFiles(root, board)).filter(([path]) => /\.kicad_(?:sch|pro)$/.test(path)))));
+}
+
 function readSeal(root: string, board: string): Seal | null {
   const path = sealPath(root, board);
   if (!existsSync(path)) return null;

@@ -14,15 +14,17 @@ export const STAGE_CONTRACTS = {
   place: RUN,
   edit: RUN,
   route: RUN,
+  build: RUN,
+  repair: RUN,
   layout: { inputs: ['placement-constraints.json', 'route_plan'], outputs: ['image'], check: 'layout_plan' },
 } as const satisfies Record<string, StageContract>;
 
-type RunStage = 'place' | 'edit' | 'route';
+type RunStage = 'place' | 'edit' | 'route' | 'build' | 'repair';
 
-/** The stage of a candidate operation, or null for an operation with no contract (build, repair, release). */
+/** The stage of a candidate operation, or null for an operation with no contract (release). */
 export function contractKey(manifest: { operation: string; kind?: string }): RunStage | null {
   if (manifest.operation === 'edit') return manifest.kind === 'place' ? 'place' : 'edit';
-  return manifest.operation === 'route' ? 'route' : null;
+  return manifest.operation === 'route' || manifest.operation === 'build' || manifest.operation === 'repair' ? manifest.operation : null;
 }
 
 /** Why a passed run breaks its contract, or null. Each declared file must exist and its hash must be in the sealed record. */

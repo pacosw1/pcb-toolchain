@@ -244,3 +244,22 @@ test('design assessments stop at the repeated unchanged failure and expire with 
   atomicJson(contract, { identity: { design_id: 'IDEA' }, current_stage: 'architecture' });
   assert.equal((await nextAction(f.root, 'IDEA', f.options)).blocker?.code, 'design_assessment_stale');
 });
+
+test('a board whose placement rules fail is not placed: next names place, and names no place once they pass', async t => {
+  const f = fixture(t), native = join(f.board, 'cad/X.kicad_pcb');
+  const board = (at: string) => `(kicad_pcb (version 20240108) (generator test) (net 0 "") (gr_line (start 0 0) (end 9 0) (layer "Edge.Cuts")) (footprint "X" (layer "F.Cu") (at ${at}) (property "Reference" "U1")))\n`;
+  writeFileSync(join(f.board, 'SPEC.md'), 'limit');
+  writeFileSync(join(f.board, 'placement-constraints.json'), JSON.stringify({ schema: 'iot-lab.engineering-constraints.v1', rules: [{ id: 'island', kind: 'region', refs: ['U1'], box_mm: [0, 0, 2, 4], metric: 'origin_in_box', placement: 'inside', source: { path: 'hardware-design/boards/X/SPEC.md', sha256: sha256File(join(f.board, 'SPEC.md')), page: 1 } }] }));
+  writeFileSync(native, board('5 5'));
+  sealFixtureBoard(f.root, 'X');
+  const unplaced = await f.next();
+  assert.deepEqual([unplaced.state, unplaced.blocker?.code, unplaced.next_action?.command], ['needs_place', 'board_unplaced', 'tools/pcb place X --json']);
+  assert.equal(f.probes(), 0);
+  writeFileSync(native, board('1 2'));
+  sealFixtureBoard(f.root, 'X');
+  assert.notEqual((await f.next()).blocker?.code, 'board_unplaced');
+  writeFileSync(native, board('5 5'));
+  sealFixtureBoard(f.root, 'X');
+  f.run('run-place', 'edit');
+  assert.notEqual((await f.next()).blocker?.code, 'board_unplaced', 'a candidate run waits for adoption: the canonical board is unplaced until then');
+});
