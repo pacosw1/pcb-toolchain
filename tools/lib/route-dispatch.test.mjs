@@ -25,7 +25,7 @@ async function daemon(t,status=200){
 
 // The stand-in client plays one job. `job`: the record `status` prints; `out`: files of out/route, by name.
 // `queuedMs`, then the job's running line, then `runMs`: the time it waits and the time it runs.
-function clientSource(root,{job,exit,out={},stdout='',noId=false,stderr='',hang=false,queuedMs=0,runMs=0}){
+function clientSource(root,{job,exit,out={},stdout='',noId=false,stderr='',hang=false,queuedMs=0,runMs=0,state='running'}){
   return`import fs from 'node:fs';
 const root=${JSON.stringify(root)};
 const a=process.argv.slice(2);
@@ -38,7 +38,7 @@ fs.writeFileSync(root+'/inputs.json',JSON.stringify(ins.map(f=>({f,mtime:fs.stat
 ${noId?'':`console.error('pcb-job: job J1');`}
 ${stderr?`console.error(${JSON.stringify(stderr)});`:''}
 ${queuedMs||runMs?`const pause=ms=>Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,ms);
-pause(${queuedMs});console.error('[2026-11-04T16:59:08.408Z] running: attempt 1, after 333 s queued');pause(${runMs});`:''}
+pause(${queuedMs});console.error('[2026-11-04T16:59:08.408Z] ${state}: attempt 1, after 333 s queued');pause(${runMs});`:''}
 ${hang?'setInterval(()=>{},1000);':`
 for(const [n,text] of Object.entries(${JSON.stringify(out)})){
   const f=k('--results')+'/out/route/'+n;fs.mkdirSync(f.slice(0,f.lastIndexOf('/')),{recursive:true});fs.writeFileSync(f,text);
@@ -262,6 +262,7 @@ for(const [name,client,cause] of [
   ['a board that is not the record\'s',{exit:0,job:jobOf('passed','passed',0),out:files(record('PASS',{board_sha256:sha('other')}))},/not the board of its record/],
   ['another input than ours',{exit:0,job:jobOf('passed','passed',0),out:files(record('PASS',{input_sha256:sha('other')}))},/routed another input/],
   ['a submit with no answer',{exit:1,noId:true},/no job id: the job may exist/],
+  ['a job line whose id cannot be read',{exit:2,noId:true,stderr:'pcb-job: job J1 (queued)'},/job id cannot be read: the job may exist/],
   ['HTTP 500 at submit',{exit:2,noId:true,stderr:'pcb-job: 500: internal'},/no job id: the job may exist/],
   ['an attempt that ran before one that could not start',{exit:1,job:jobOf('failed','start',null,[{outcome:'infra'},{outcome:'start'}])},/start detail/],
 ]) test(`partway, ${name}: exit 2, a cause in result.json, no local run`,async t=>{
@@ -356,6 +357,15 @@ test('the queue clock counts from the job id to the running line, and stops ther
   const {seconds}=JSON.parse(readFileSync(clock,'utf8'));
   assert.ok(seconds>=1.2&&seconds<2.5,String(seconds));
   assert.deepEqual(readdirSync(dirname(clock)),['queue-wait.json']);
+});
+
+test('the queue clock also stops at a retrying line',async t=>{
+  const p=project(t,{client:{exit:0,job:jobOf('passed','passed',0),out:files(record('PASS')),queuedMs:1300,runMs:1500,state:'retrying'}});
+  const clock=join(p.root,'run/operation/queue-wait.json');
+  const r=await dispatch(p,{JOBD_URL:await daemon(t),PCB_QUEUE_CLOCK:clock});
+  assert.equal(r.status,0,r.stderr);
+  const {seconds}=JSON.parse(readFileSync(clock,'utf8'));
+  assert.ok(seconds>=1.2&&seconds<2.0,String(seconds));
 });
 
 test('the clock moves while the job waits, so a run deadline cannot pass it by',async t=>{

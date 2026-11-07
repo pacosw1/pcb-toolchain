@@ -7,7 +7,7 @@ import { randomBytes } from 'crypto'
 import { EventEmitter } from 'events'
 import { existsSync } from 'fs'
 import type { EngineStatus } from '../preload/types'
-import { toolPath } from './config'
+import { toolPath } from './config.ts'
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }
 
@@ -31,6 +31,7 @@ export class EngineSupervisor extends EventEmitter {
   private nextId = 1
   private pending = new Map<number, Pending>()
   private stopping = false
+  private restartTimer: NodeJS.Timeout | null = null
   private backoffMs = 500
   private token = ''
   /** Increments each time a new engine process is connected: a run id is only meaningful in its project, and a
@@ -38,11 +39,17 @@ export class EngineSupervisor extends EventEmitter {
   generation = 0
   status: EngineStatus = { state: 'stopped', port: null, pid: null, restarts: 0, lastError: null }
 
-  constructor(private engineEntry: string) {
+  private engineEntry: string
+
+  constructor(engineEntry: string) {
     super()
+    this.engineEntry = engineEntry
   }
 
   start(): void {
+    if (this.proc) return // one engine process at a time; start again after the state is 'stopped'
+    if (this.restartTimer) clearTimeout(this.restartTimer)
+    this.restartTimer = null
     this.stopping = false
     this.setStatus({ state: this.status.restarts ? 'restarting' : 'starting', port: null, pid: null })
     let proc: ChildProcessWithoutNullStreams
@@ -65,7 +72,7 @@ export class EngineSupervisor extends EventEmitter {
       while ((nl = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, nl).trim()
         buf = buf.slice(nl + 1)
-        if (line.startsWith('READY ')) this.connect(JSON.parse(line.slice(6)).port as number)
+        if (line.startsWith('READY ')) this.connect(JSON.parse(line.slice(6)).port as number, proc)
         else if (line) this.emit('log', line)
       }
     })
@@ -81,12 +88,15 @@ export class EngineSupervisor extends EventEmitter {
       }
       this.setStatus({ state: 'restarting', port: null, pid: null, restarts: this.status.restarts + 1,
         lastError: `engine exited (code ${code}, signal ${signal})` })
-      setTimeout(() => this.start(), this.backoffMs)
+      this.restartTimer = setTimeout(() => {
+        this.restartTimer = null
+        if (!this.stopping) this.start()
+      }, this.backoffMs)
       this.backoffMs = Math.min(this.backoffMs * 2, 10_000)
     })
   }
 
-  private connect(port: number): void {
+  private connect(port: number, proc: ChildProcessWithoutNullStreams): void {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/?t=${encodeURIComponent(this.token)}`)
     ws.onopen = () => {
       this.ws = ws
@@ -108,6 +118,14 @@ export class EngineSupervisor extends EventEmitter {
       else p.resolve(msg.result)
     }
     ws.onerror = () => this.setStatus({ lastError: 'engine socket error' })
+    // A socket that closes under a live engine leaves no way to call it: fail the waiters and let the exit path restart.
+    ws.onclose = () => {
+      if (this.stopping || this.proc !== proc) return
+      if (this.ws === ws) this.ws = null
+      this.failPending(new Error('engine connection closed'))
+      this.setStatus({ state: 'restarting', port: null, lastError: 'engine connection closed' })
+      proc.kill()
+    }
   }
 
   call(method: string, params?: unknown, timeoutMs = timeoutFor(method)): Promise<unknown> {
@@ -131,8 +149,15 @@ export class EngineSupervisor extends EventEmitter {
 
   stop(): void {
     this.stopping = true
-    this.proc?.stdin.end()
-    setTimeout(() => this.proc?.kill(), 3000)
+    if (this.restartTimer) clearTimeout(this.restartTimer)
+    this.restartTimer = null
+    const proc = this.proc
+    if (!proc) {
+      this.setStatus({ state: 'stopped', port: null, pid: null })
+      return
+    }
+    proc.stdin.end()
+    setTimeout(() => proc.kill(), 3000)
   }
 
   private failPending(err: Error): void {

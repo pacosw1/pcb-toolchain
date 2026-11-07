@@ -3,9 +3,11 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
+import { reseal } from './lib/cad-seal.ts';
+import { approveFixture } from './lib/layout-plan-fixture.ts';
 import { footprints } from './lib/native-board.ts';
 import { sha256File } from './lib/json-file.ts';
-import { placeBoard, placeCandidates, showCandidates } from './pcb-place.ts';
+import { admitPlace, placeBoard, placeCandidates, showCandidates } from './pcb-place.ts';
 import { placementSpec } from './placer/place-spec.ts';
 
 const board = (rows: [string, number, number, number][]): string => `(kicad_pcb (version 20240108) (generator test)\n${
@@ -88,6 +90,29 @@ test('multiple seeds keep a candidate with rule misses, report its misses, and l
   assert.deepEqual(writes.map(args => args.includes('--keep-misses')), [true, true, true]);
 });
 
+test('a candidate reports the search estimates, and null when the placer gave none', t => {
+  const root = project(t, [['U1', 1, 2, 0]]);
+  const components = { hpwl: 10, cong: 2.5, crossing: 7, via: 1, escape: 0.5 };
+  let seed = 0;
+  const report = placeCandidates(root, 'X', { seed: 1, epochs: 1, steps: 1 }, 2, args => {
+    if (args[0] === 'run') {
+      seed = Number(args[args.indexOf('--seed') + 1]);
+      writeFileSync(args[args.indexOf('-o') + 1]!, JSON.stringify({ candidates: [seed === 1 ? { components } : {}] }));
+    }
+    if (args[0] === 'write') {
+      const folder = join(args[args.indexOf('--outdir') + 1]!, 'cand0'); mkdirSync(folder, { recursive: true });
+      writeFileSync(join(folder, 'X.kicad_pcb'), board([['U1', seed + 5, 2, 0]]));
+    }
+  });
+  assert.deepEqual(report.candidates.map(row => row.estimates), [{ congestion: 2.5, crossings: 7, blocked_vias: 1, escape: 0.5 }, null]);
+  const lines: string[] = [], log = console.log;
+  console.log = (line: string) => { lines.push(line); };
+  try { showCandidates(report, false); } finally { console.log = log; }
+  assert.match(lines[0]!, /wirelength  congestion  crossings  blocked_vias  escape  misses/);
+  assert.match(lines[1]!, /10  2\.5  7  1  0\.5  -/);
+  assert.match(lines[2]!, /-  -  -  -  -  -/);
+});
+
 test('a candidate with no legal seed is still reported, and the command result is a failure', t => {
   const root = project(t, [['U1', 1, 2, 0]]);
   const report = placeCandidates(root, 'X', { seed: 1, epochs: 1, steps: 1 }, 2, args => {
@@ -112,6 +137,27 @@ test('a candidate with no legal seed is still reported, and the command result i
   assert.equal(lines.some(line => line.startsWith('tools/pcb edit')), false, 'no edit command for a candidate with misses');
   assert.equal(JSON.parse(lines.at(-1)!).candidates[0].misses[0].miss_mm, 1.5);
   assert.throws(() => placeCandidates(root, 'X', { seed: 1, epochs: 1, steps: 1 }, 0), /positive integer/);
+});
+
+test('a candidate that is illegal with no rule miss is reported by the names of the illegal items', t => {
+  const root = project(t, [['U1', 1, 2, 0]]);
+  const report = placeCandidates(root, 'X', { seed: 1, epochs: 1, steps: 1 }, 1, args => {
+    if (args[0] === 'run') {
+      writeFileSync(args[args.indexOf('-o') + 1]!, JSON.stringify({ candidates: [{ illegal: ['U1', 'edge:U1'], engineering: { blockers: [] } }] }));
+      throw new Error('failed');
+    }
+    if (args[0] === 'write') {
+      const folder = join(args[args.indexOf('--outdir') + 1]!, 'cand0'); mkdirSync(folder, { recursive: true });
+      writeFileSync(join(folder, 'X.kicad_pcb'), board([['U1', 4, 2, 0]]));
+    }
+  });
+  assert.equal(report.candidates[0]!.legal, false);
+  assert.deepEqual(report.candidates[0]!.misses, [{ id: 'U1', miss_mm: null }, { id: 'edge:U1', miss_mm: null }]);
+});
+
+test('a placer failure with no result is still an error', t => {
+  const root = project(t, [['U1', 1, 2, 0]]);
+  assert.throws(() => placeCandidates(root, 'X', { seed: 1, epochs: 1, steps: 1 }, 1, args => { if (args[0] === 'run') throw new Error('crashed'); }), /crashed/);
 });
 
 test('one seed with a legal result gives the exit code 0 and an edit command', t => {
@@ -166,4 +212,27 @@ test('a legal unmoved seed remains a candidate in comparison mode', t => {
     writeFileSync(join(out, 'X.kicad_pcb'), board([['U1', 1, 2, 0]]));
   });
   assert.equal(report.candidates[0]!.moved, 0);
+});
+
+test('place stops for a board with no approved layout plan, and continues for an approved or an exempt board', async t => {
+  const root = project(t, [['U1', 1, 2, 0]]), folder = join(root, 'hardware-design/boards/X'), log = join(root, '.gate/layout-plan/X.jsonl');
+  reseal(root, 'X', { tool: 'fixture', run_id: null });
+  assert.throws(() => admitPlace(root, 'X'), /X has no layout plan[^]*tools\/pcb layout X --approve/);
+  writeFileSync(join(folder, 'SPEC.md'), 'limit');
+  writeFileSync(join(folder, 'route.json'), JSON.stringify({ schema: 'iot-lab.route.v1', backend: 'tracemaker', layers: ['F.Cu', 'B.Cu'], stages: [{ name: 'main' }] }));
+  writeFileSync(join(folder, 'placement-constraints.json'), JSON.stringify({ schema: 'iot-lab.engineering-constraints.v1', rules: [{ id: 'near', kind: 'part_distance', source: { path: 'hardware-design/boards/X/SPEC.md', sha256: sha256File(join(folder, 'SPEC.md')), page: 1 } }] }));
+  writeFileSync(join(folder, 'layout-plan.json'), JSON.stringify({ schema: 'iot-lab.layout-plan.v1', intents: [{ id: 'a', statement: 'U1 near the edge', rule_ids: ['near'] }], route_plan: 'hardware-design/boards/X/route.json', approval: null }));
+  reseal(root, 'X', { tool: 'fixture', run_id: null });
+  assert.throws(() => admitPlace(root, 'X'), /not approved/);
+  await approveFixture(root, 'X');
+  admitPlace(root, 'X');
+  const events = (): Record<string, unknown>[] => readFileSync(log, 'utf8').trim().split('\n').map(row => JSON.parse(row) as Record<string, unknown>).filter(row => row.type === 'layout_plan.exempt');
+  assert.equal(events().length, 0, 'an approved board writes no exemption event');
+  writeFileSync(join(folder, 'route.json'), JSON.stringify({ schema: 'iot-lab.route.v1', backend: 'tracemaker', layers: ['F.Cu'], stages: [{ name: 'main' }] }));
+  assert.throws(() => admitPlace(root, 'X'), /stale/);
+  mkdirSync(join(root, 'hardware-design/registry'), { recursive: true });
+  writeFileSync(join(root, 'hardware-design/registry/boards.json'), JSON.stringify({ schema_version: 1, boards: [{ id: 'X', layout_plan_exempt: { reason: 'legacy board' } }] }));
+  admitPlace(root, 'X');
+  assert.equal(events().length, 1);
+  assert.deepEqual([events()[0]!.board, events()[0]!.reason], ['X', 'legacy board']);
 });

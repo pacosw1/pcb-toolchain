@@ -6,14 +6,16 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { sealFixtureBoard } from './cad-seal-fixture.ts';
+import { fakeRenderer } from './fake-renderer-fixture.ts';
 import { iotrouteMissing } from './iotroute-bin.ts';
 import { exemptBoard } from './design-exempt-fixture.ts';
 import { BOARD as FIXTURE_BOARD, makeFixture } from './part-fixture.ts';
 import { verify } from './pcb-evidence.ts';
 import { postVerifyCommands } from './pcb-candidate-run.ts';
-import { candidateLayoutCheck, designAdmission, type OperationManifest } from './pcb-candidate-screens.ts';
+import { approveFixture } from './layout-plan-fixture.ts';
+import { candidateLayoutCheck, designAdmission, layoutAdmission, type OperationManifest } from './pcb-candidate-screens.ts';
 import { EscapeStageReceipts } from './route-decision-escape.ts';
 import { status } from './pcb-runs.ts';
 import { sha } from './pcb-workflow.ts';
@@ -58,7 +60,10 @@ function project(t: { after(fn: () => void): void }, writer = WRITER(MOVED), gat
   return root;
 }
 
-let fixtureEnv: NodeJS.ProcessEnv = {};
+// A place, edit or route run draws its board: the stand-ins write the two images, so no KiCad is needed.
+const RENDERER_DIR = mkdtempSync(join(tmpdir(), 'pcb-operation-renderer-')), RENDERER_ENV = fakeRenderer(RENDERER_DIR);
+after(() => rmSync(RENDERER_DIR, { recursive: true, force: true }));
+let fixtureEnv: NodeJS.ProcessEnv = RENDERER_ENV;
 const pcb = (root: string, ...args: string[]) => spawnSync(join(tools, 'pcb'), ['--project', root, ...args], { encoding: 'utf8', cwd: root, env: { ...process.env, ...fixtureEnv } });
 
 async function settled(folder: string): Promise<Row> {
@@ -101,6 +106,40 @@ test('a verified candidate stays isolated and seals its board, gate and source r
   for (const type of ['tool.start', 'tool.output', 'tool.exit', 'gate.start', 'gate.end', 'run.end']) assert.ok(types.includes(type), type);
   assert.ok(rows.some(row => row.type === 'stage.end' && row.stage === 'snapshot'));
   assert.equal(rows.filter(row => row.type === 'gate.end').length, 1);
+});
+
+test('a passed place, edit or route run writes top and bottom images and seals them in its record', needsBinary, async t => {
+  const placed = await edit(project(t));
+  assert.equal(placed.result.status, 'passed', String(placed.result.cause));
+  for (const name of ['images/top.svg', 'images/bottom.svg']) {
+    assert.ok(existsSync(join(placed.folder, name)), name);
+    assert.match(readFileSync(join(placed.folder, name), 'utf8'), /^<svg\b/, name);
+    assert.equal(placed.result.evidence_sha256[name], sha(join(placed.folder, name)), name);
+  }
+  const root = project(t);
+  iotroute(root, `writeFileSync(routed, ${JSON.stringify(MOVED)});
+writeFileSync(record + '/result.json', JSON.stringify({ status: 'PASS', board_file: routed, drc_errors: 0, unconnected: 0, parity: 0 }));`);
+  const routed = await run(root, 'route', 'X', '--router', 'iotroute');
+  assert.equal(routed.result.status, 'passed', String(routed.result.cause));
+  assert.ok(routed.result.evidence_sha256['images/top.svg'] && routed.result.evidence_sha256['images/bottom.svg']);
+  assert.equal(verify(routed.folder).get('status'), 'passed');
+});
+
+test('a missing or failing renderer fails the run and names the renderer; a candidate that failed keeps its own cause', needsBinary, async t => {
+  t.after(() => { fixtureEnv = RENDERER_ENV; });
+  fixtureEnv = { ...RENDERER_ENV, KICAD_CLI: '/missing/kicad-cli' };
+  const noCli = await edit(project(t));
+  assert.equal(noCli.result.status, 'failed');
+  assert.match(String(noCli.result.cause), /image renderer: kicad-cli could not start/);
+  assert.equal(noCli.result.candidate_verified, false);
+  assert.equal(noCli.result.exit_code, 1);
+  // The tool fails before there is a board to draw: the original failure is reported, and no image exists.
+  const stopped = await edit(project(t, WRITER(BOARD, 3)));
+  assert.equal(stopped.result.cause, 'edit tool failed');
+  assert.equal(existsSync(join(stopped.folder, 'images')), false);
+  const gateFailed = await edit(project(t, WRITER(MOVED), GATE(1)));
+  assert.equal(gateFailed.result.cause, 'candidate does not meet configured gate targets');
+  assert.equal(existsSync(join(gateFailed.folder, 'images')), false);
 });
 
 test('a failing gate keeps the candidate as a failed, sealed observation', needsBinary, async t => {
@@ -157,8 +196,8 @@ test('a candidate continues from its sealed parent; changed canonical inputs ref
   const parent = await edit(root), id = parent.folder.split('/').at(-1)!;
   assert.equal(parent.result.status, 'passed', String(parent.result.cause));
   const second = MOVED.replace('(start 1 1)', '(start 3 3)');
-  t.after(() => { fixtureEnv = {}; });
-  fixtureEnv = { FIXTURE_EXPECT: MOVED, FIXTURE_BOARD: second };
+  t.after(() => { fixtureEnv = RENDERER_ENV; });
+  fixtureEnv = { ...RENDERER_ENV, FIXTURE_EXPECT: MOVED, FIXTURE_BOARD: second };
   const child = await edit(root, '--from-run', id);
   assert.equal(child.result.status, 'passed', String(child.result.cause));
   assert.equal(readFileSync(child.result.candidate, 'utf8'), second);
@@ -507,7 +546,7 @@ test('a board with no design contract and no exemption stops before the snapshot
   assert.equal(result.scope, 'design_preflight');
   assert.equal(result.candidate_verified, false);
   assert.match(String(result.cause), /board has no design contract/);
-  assert.match(String(result.cause), /design_contract_exempt/);
+  assert.match(String(result.cause), /a person must decide/);
   assert.ok(result.evidence_sha256['operation/design-preflight.json']);
   assert.equal(existsSync(join(folder, 'workspace')), false);
 });
@@ -539,6 +578,8 @@ test('design admission without a binding: exempt continues, a registered contrac
   assert.deepEqual([none.result?.status, none.result?.scope, none.result?.candidate_verified, none.result?.qualified, none.result?.release_approved], ['failed', 'design_preflight', false, false, false]);
   assert.match(String(none.result?.cause), /board has no design contract/);
   assert.match(String(none.result?.cause), /--design-contract/);
+  assert.match(String(none.result?.cause), /a person must decide/, 'an exemption is a decision of a person');
+  assert.doesNotMatch(String(none.result?.cause), /exempt/, 'the cause gives an agent no way to add an exemption');
   assert.deepEqual(none.events, []);
   const file = 'hardware-design/registry/design-contracts/X.json';
   mkdirSync(join(root, dirname(file)), { recursive: true });
@@ -554,6 +595,67 @@ test('design admission refuses a malformed exemption instead of continuing', asy
   const root = project(t);
   writeFileSync(join(root, 'hardware-design/registry/boards.json'), JSON.stringify({ schema_version: 1, boards: [{ id: 'X', design_contract_exempt: { reason: '' } }] }));
   await assert.rejects(admission(t, root), /design_contract_exempt/);
+});
+
+function layoutStop(root: string, operation: string, kind?: string) {
+  const folder = mkdtempSync(join(root, 'run-')), events: Row[] = [];
+  mkdirSync(join(folder, 'operation'), { recursive: true });
+  const manifest = { root, board: 'X', operation, kind, node: process.execPath, timeout_s: 1 } as OperationManifest;
+  const stopped = layoutAdmission(root, folder, manifest, (type, data) => { events.push({ type, ...data }); });
+  return { stopped, events, result: existsSync(join(folder, 'operation/result.json')) ? JSON.parse(readFileSync(join(folder, 'operation/result.json'), 'utf8')) as Row : null };
+}
+
+test('layout admission stops a place or route run with no approved plan, and names the board and the command', t => {
+  const root = project(t);
+  exemptBoard(root, 'X', undefined, {}, false);
+  for (const [operation, kind] of [['edit', 'place'], ['edit', 'route'], ['route', undefined], ['repair', undefined], ['build', undefined]] as const) {
+    const { stopped, events, result } = layoutStop(root, operation, kind);
+    assert.equal(stopped, true, `${operation} ${kind}`);
+    assert.deepEqual(events, []);
+    assert.deepEqual([result?.status, result?.exit_code, result?.scope, result?.blocker, result?.candidate_verified, result?.qualified, result?.release_approved], ['failed', 1, 'layout_plan', 'layout_plan_missing', false, false, false]);
+    assert.match(String(result?.cause), /X has no layout plan/);
+    assert.match(String(result?.cause), /tools\/pcb layout X --approve/);
+  }
+});
+
+test('layout admission does not gate a run that neither builds, places nor routes', t => {
+  const root = project(t);
+  exemptBoard(root, 'X', undefined, {}, false);
+  for (const [operation, kind] of [['release', undefined], ['check', undefined]] as const) {
+    assert.deepEqual(layoutStop(root, operation, kind), { stopped: false, events: [], result: null }, operation);
+  }
+});
+
+test('layout admission: an exempt board continues with one layout_plan.exempt event; an approved plan continues with none', async t => {
+  const root = project(t);
+  const exempt = layoutStop(root, 'edit', 'place');
+  assert.equal(exempt.stopped, false);
+  assert.deepEqual(exempt.events.map(row => [row.type, row.board, row.reason]), [['layout_plan.exempt', 'X', 'test fixture has no layout plan']]);
+  assert.equal(exempt.result, null);
+  exemptBoard(root, 'X', undefined, {}, false);
+  const folder = join(root, 'hardware-design/boards/X');
+  writeFileSync(join(folder, 'SPEC.md'), 'limit');
+  writeFileSync(join(folder, 'route.json'), JSON.stringify({ schema: 'iot-lab.route.v1', backend: 'tracemaker', layers: ['F.Cu', 'B.Cu'], stages: [{ name: 'main' }] }));
+  writeFileSync(join(folder, 'placement-constraints.json'), JSON.stringify({ schema: 'iot-lab.engineering-constraints.v1', rules: [{ id: 'near', kind: 'part_distance', source: { path: 'hardware-design/boards/X/SPEC.md', sha256: sha(join(folder, 'SPEC.md')), page: 1 } }] }));
+  writeFileSync(join(folder, 'layout-plan.json'), JSON.stringify({ schema: 'iot-lab.layout-plan.v1', intents: [{ id: 'a', statement: 'U1 near the edge', rule_ids: ['near'] }], route_plan: 'hardware-design/boards/X/route.json', approval: null }));
+  sealFixtureBoard(root, 'X');
+  assert.match(String(layoutStop(root, 'route').result?.cause), /not approved/);
+  await approveFixture(root, 'X');
+  assert.deepEqual(layoutStop(root, 'route'), { stopped: false, events: [], result: null });
+  writeFileSync(join(folder, 'route.json'), JSON.stringify({ schema: 'iot-lab.route.v1', backend: 'tracemaker', layers: ['F.Cu'], stages: [{ name: 'main' }] }));
+  const stale = layoutStop(root, 'route');
+  assert.equal(stale.stopped, true);
+  assert.equal(stale.result?.blocker, 'layout_plan_stale');
+});
+
+test('a place run for a board with no approved layout plan fails before the snapshot', needsBinary, async t => {
+  const root = project(t);
+  exemptBoard(root, 'X', undefined, {}, false);
+  const { folder, result } = await edit(root);
+  assert.equal(result.status, 'failed', String(result.cause));
+  assert.equal(result.scope, 'layout_plan');
+  assert.match(String(result.cause), /tools\/pcb layout X --approve/);
+  assert.equal(existsSync(join(folder, 'workspace')), false);
 });
 
 test('the candidate layout screen writes a blocked report for a contract it cannot judge', t => {
@@ -577,8 +679,8 @@ writeFileSync(process.argv[3], readFileSync(process.argv[2], 'utf8').length + '\
   assert.equal(result.status, 'passed', String(result.cause));
   assert.ok(existsSync(join(folder, 'operation/board-semantic-0.log')));
   assert.equal(readFileSync(join(folder, 'operation/board-check.txt'), 'utf8').trim(), String(MOVED.length));
-  t.after(() => { fixtureEnv = {}; });
-  fixtureEnv = { SEMANTIC_EXIT: '1' };
+  t.after(() => { fixtureEnv = RENDERER_ENV; });
+  fixtureEnv = { ...RENDERER_ENV, SEMANTIC_EXIT: '1' };
   const failed = await edit(root);
   assert.equal(failed.result.status, 'failed');
   assert.equal(failed.result.candidate_verified, false);
@@ -591,8 +693,8 @@ test('gate.json place_check hooks stop a placement edit before the full gate', n
   const { folder, result } = await edit(root);
   assert.equal(result.status, 'passed', String(result.cause));
   assert.ok(existsSync(join(folder, 'operation/board-placement.log')));
-  t.after(() => { fixtureEnv = {}; });
-  fixtureEnv = { RULES_EXIT: '1' };
+  t.after(() => { fixtureEnv = RENDERER_ENV; });
+  fixtureEnv = { ...RENDERER_ENV, RULES_EXIT: '1' };
   const failed = await edit(root);
   assert.equal(failed.result.status, 'failed');
   assert.equal(failed.result.candidate_verified, false);
@@ -613,6 +715,25 @@ test('post_verify hooks fill their placeholders and require a stage and argv', (
   assert.deepEqual(hooks, [{ stage: 'semantic', command: ['/bin/node', 'check.mjs', '/run/board.kicad_pcb', '/run/operation'], env: { KEEP: '1', OUT: '/run/x' } }]);
   assert.throws(() => postVerifyCommands([{ run: ['x'] }], '/r', '/c', 'n', {}), /stage and a run argv/);
   assert.deepEqual(postVerifyCommands(null, '/r', '/c', 'n', {}), []);
+});
+
+test('a route run on an unplaced board stops before the router, with no contract and no engineering manifest', needsBinary, async t => {
+  const unplaced = BOARD.replace('(net 0 "")', '(net 0 "") (footprint "X" (layer "F.Cu") (at 5 5) (property "Reference" "U1"))');
+  const root = project(t), boardFolder = join(root, 'hardware-design/boards/X');
+  writeFileSync(join(boardFolder, 'cad/X.kicad_pcb'), unplaced);
+  writeFileSync(join(boardFolder, 'SPEC.md'), 'limit');
+  writeFileSync(join(boardFolder, 'placement-constraints.json'), JSON.stringify({ schema: 'iot-lab.engineering-constraints.v1', rules: [{ id: 'island', kind: 'region', refs: ['U1'], box_mm: [0, 0, 2, 4], metric: 'origin_in_box', placement: 'inside', source: { path: 'hardware-design/boards/X/SPEC.md', sha256: sha(join(boardFolder, 'SPEC.md')), page: 1 } }] }));
+  sealFixtureBoard(root, 'X');
+  iotroute(root, "writeFileSync(record + '/ran', 'x');");
+  const { folder, result } = await run(root, 'route', 'X', '--router', 'iotroute');
+  assert.equal(result.status, 'failed', String(result.cause));
+  assert.equal(result.scope, 'placement_rules');
+  assert.equal(result.blocker, 'board_unplaced');
+  assert.equal(result.candidate_verified, false);
+  assert.match(String(result.cause), /X is not placed/);
+  assert.match(String(result.cause), /tools\/pcb place X/);
+  assert.ok(result.evidence_sha256['operation/placement-rules-preflight.json']);
+  assert.equal(eventRows(folder).some(row => row.type === 'tool.start'), false, 'the router did not start');
 });
 
 test('built-in rules reject a place edit after hooks without a checker hook', needsBinary, async t => {

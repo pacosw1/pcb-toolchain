@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { openNoFollow } from "./store.ts";
-import { isDigest, validateLiveEvent } from "./live-protocol.ts";
+import { isDigest, SEQUENCE_REUSED, validateLiveEvent } from "./live-protocol.ts";
 import type { LiveEvent, LivePayload, LivePlacement } from "./live-protocol.ts";
 
 const digest = (b: Buffer): string =>
@@ -225,7 +225,16 @@ export class LiveJobs {
           Math.min(stat.size - c.offset, 8 * 1024 * 1024),
         );
         const count = fs.readSync(fd, buffer, 0, buffer.length, c.offset);
-        const end = buffer.subarray(0, count).lastIndexOf(10);
+        let end = buffer.subarray(0, count).lastIndexOf(10);
+        if (attempt.endedAt && c.offset + count >= stat.size && end < count - 1) {
+          // The writer is gone, so an unterminated tail will never be finished: read it if it is whole, else say so.
+          try {
+            JSON.parse(buffer.subarray(end + 1, count).toString("utf8"));
+            end = count;
+          } catch {
+            this.warn(runId, `dropped ${count - end - 1} bytes of an incomplete last frame`);
+          }
+        }
         if (end < 0) {
           if (count === 8 * 1024 * 1024)
             throw Error("Native frame exceeds limit");
@@ -277,7 +286,8 @@ export class LiveJobs {
           if (!this.stopped) await this.sink.append(batch);
           c.line = lineNumber;
           c.time = time;
-          c.offset = offset;
+          // A last frame without its newline has no byte to skip: stop at the bytes that were read.
+          c.offset = Math.min(offset, c.offset + count);
         }
         if (c.offset < stat.size && !(attempt.endedAt && end < 0)) return;
       } finally {
@@ -287,27 +297,33 @@ export class LiveJobs {
     if (!doneBytes && !attempt.endedAt) return;
     const done = doneBytes ? JSON.parse(doneBytes.toString()) : null;
     const time = Math.max(c.time, done?.timeMs ?? Date.parse(attempt.endedAt!));
-    await this.append(
-      runId,
-      c,
-      {
-        kind: "run.finished",
-        data: {
-          outcome:
-            done?.outcome === "passed"
-              ? "passed"
-              : job.state === "cancelled"
-                ? "cancelled"
-                : "failed",
-          message:
-            done?.message ??
-            "Job ended without a native completion record; result is unknown",
-          verified: false,
+    try {
+      await this.append(
+        runId,
+        c,
+        {
+          kind: "run.finished",
+          data: {
+            outcome:
+              done?.outcome === "passed"
+                ? "passed"
+                : job.state === "cancelled"
+                  ? "cancelled"
+                  : "failed",
+            message:
+              done?.message ??
+              "Job ended without a native completion record; result is unknown",
+            verified: false,
+          },
         },
-      },
-      c.line + 3,
-      time,
-    );
+        c.line + 3,
+        time,
+      );
+    } catch (error) {
+      // Cursors live in memory only. After a restart this verdict is built again from a job record that may have moved
+      // on, and the journal already holds the first one. The first verdict stands: the run is settled, not stuck.
+      if (!String(error).includes(SEQUENCE_REUSED)) throw error;
+    }
     c.done = true;
     c.manifest.footprints = [];
   }

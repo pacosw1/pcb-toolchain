@@ -26,6 +26,13 @@ test('a good case validates and defaults design_contract_exempt to false', () =>
   assert.equal(value.board, 'ENV-SENSE');
 });
 
+test('a gate-only board pins the CAD in the folder of its owner board', () => {
+  const value = good();
+  value.board = 'CELLULAR-B';
+  value.inputs = [{ path: 'hardware-design/boards/CELLULAR/cad/revB/CELLULAR.kicad_pcb', sha256: sha('pcb') }];
+  assert.equal(validateCase(value).board, 'CELLULAR-B');
+});
+
 test('a bad case is a clear error', () => {
   bad(v => { v.schema = 'x'; }, /schema must be iot-lab.agent-case.v1/);
   bad(v => { v.case_id = 'a b'; }, /case_id/);

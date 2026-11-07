@@ -64,3 +64,60 @@ test("ordinary local observer uploads native records and preserves command exit"
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+/** Runs the client with no daemon: these cases upload nothing. */
+function runClient(args: string[]): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      ["--experimental-strip-types", "--no-warnings", fileURLToPath(new URL("../src/client.ts", import.meta.url)), ...args],
+      { env: { ...process.env, JOBD_URL: "http://127.0.0.1:9", JOBD_TOKEN: "fixture-token" }, stdio: "ignore" },
+    );
+    child.on("error", reject);
+    child.on("close", resolve);
+  });
+}
+
+test("a command that cannot start ends once, with code 127 and a failed record", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "live-local-"));
+  try {
+    const spool = path.join(root, "spool");
+    const code = await runClient(["observe", spool, "--", path.join(root, "no-such-command")]);
+    assert.equal(code, 127);
+    const dirs = fs.readdirSync(spool);
+    assert.equal(dirs.length, 1);
+    const meta = JSON.parse(fs.readFileSync(path.join(spool, dirs[0]!, "observer.json"), "utf8"));
+    assert.equal(meta.state, "failed");
+    assert.equal(meta.exitCode, 127);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("resuming an interrupted observation does not report success", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "live-local-"));
+  try {
+    fs.writeFileSync(
+      path.join(root, "observer.json"),
+      JSON.stringify({ id: "local-x", name: "spool", state: "running", attempts: [{ n: 1, out: root }] }),
+    );
+    assert.equal(await runClient(["observe-resume", root]), 1);
+    const meta = JSON.parse(fs.readFileSync(path.join(root, "observer.json"), "utf8"));
+    assert.equal(meta.state, "failed");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("resuming a finished observation keeps the recorded command exit", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "live-local-"));
+  try {
+    fs.writeFileSync(
+      path.join(root, "observer.json"),
+      JSON.stringify({ id: "local-x", name: "spool", state: "failed", exitCode: 3, attempts: [{ n: 1, out: root, endedAt: "2026-11-04T12:00:00Z" }] }),
+    );
+    assert.equal(await runClient(["observe-resume", root]), 3);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

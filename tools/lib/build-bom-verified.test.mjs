@@ -6,6 +6,7 @@ import {spawnSync} from 'node:child_process';
 import {copyFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {delimiter, join} from 'node:path';
+import {parseCsv} from './csv.mjs';
 import {findText, iter, parseXml} from './xml-read.mjs';
 
 const tools = new URL('..', import.meta.url).pathname;
@@ -17,7 +18,7 @@ const NET = `<?xml version="1.0" encoding="UTF-8"?>
 <comp ref="J1"><value>x</value><footprint>Other:Lib</footprint></comp>
 </components></export>
 `;
-function fixture(t) {
+function fixture(t, registry) {
   const root = mkdtempSync(join(tmpdir(), 'bomv-'));
   t.after(() => rmSync(root, {recursive: true, force: true}));
   mkdirSync(join(root, 'tools/lib'), {recursive: true});
@@ -27,18 +28,35 @@ function fixture(t) {
   mkdirSync(board, {recursive: true});
   writeFileSync(join(board, 'gate.json'), '{"project":"cad/B"}');
   mkdirSync(join(root, 'bin'));
-  writeFileSync(join(root, 'bin/kicad-cli'), `#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && { out=$2; shift; }; shift; done\ncp "${root}/net.xml" "$out"\n`, {mode: 0o755});
+  writeFileSync(join(root, 'bin/kicad-cli'), `#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && { out=$2; shift; }; last=$1; shift; done\nprintf '%s' "$last" > "${root}/sch.arg"\ncp "${root}/net.xml" "$out"\n`, {mode: 0o755});
   writeFileSync(join(root, 'bin/curl'), `#!/bin/sh\nprintf '%s' '{"data":{"componentPageInfo":{"list":[{"componentCode":"C1","componentModelEn":"M","componentLibraryType":"base","stockCount":99999,"componentPrices":[]}]}}}'\n`, {mode: 0o755});
   writeFileSync(join(root, 'net.xml'), NET);
-  const run = () => spawnSync(process.execPath, [join(root, 'tools/build-bom-verified.mjs'), 'B'], {encoding: 'utf8',
+  if (registry) {
+    mkdirSync(join(root, 'hardware-design/registry'), {recursive: true});
+    writeFileSync(join(root, 'hardware-design/registry/boards.json'), JSON.stringify({schema_version: 1, boards: registry}));
+  }
+  const run = (name = 'B') => spawnSync(process.execPath, [join(root, 'tools/build-bom-verified.mjs'), name], {encoding: 'utf8',
     env: {...process.env, PATH: join(root, 'bin') + delimiter + process.env.PATH, KICAD_CLI: join(root, 'bin/kicad-cli')}});
   return {root, board, run};
 }
+const evidence = (f, path, code = 'C1', record = {}) => {
+  const file = join(f.root, 'hardware-design/registry/evidence', path);
+  mkdirSync(join(file, '..'), {recursive: true});
+  writeFileSync(file, JSON.stringify({purchase_record: {componentCode: code, componentModelEn: 'M-' + path, componentSpecificationEn: '0603', componentBrandEn: 'Brand', ...record}}));
+};
+const datasheet = (f, name, sidecar) => {
+  const dir = join(f.root, 'hardware-design/registry/datasheets');
+  mkdirSync(dir, {recursive: true});
+  writeFileSync(join(dir, name), '');
+  if (sidecar) writeFileSync(join(dir, name + '.source.json'), JSON.stringify(sidecar));
+};
+const rows = (f, dir = f.board) => parseCsv(readFileSync(join(dir, 'BOM-VERIFIED.csv'), 'utf8'));
+const BRAND = 5, SHEET = 6;
 
 test('writes both CSV files with CRLF and sorted refs, through the Node jlc_stock', t => {
   const f = fixture(t);
   mkdirSync(join(f.root, 'hardware-design/registry/evidence/2026-01-01/x/C1'), {recursive: true});
-  writeFileSync(join(f.root, 'hardware-design/registry/evidence/2026-01-01/x/C1/C1.json'), '{"purchase_record":{"componentModelEn":"MPN, one","componentSpecificationEn":"Plugin","componentBrandEn":"Brand"}}');
+  writeFileSync(join(f.root, 'hardware-design/registry/evidence/2026-01-01/x/C1/C1.json'), '{"purchase_record":{"componentCode":"C1","componentModelEn":"MPN, one","componentSpecificationEn":"Plugin","componentBrandEn":"Brand"}}');
   mkdirSync(join(f.root, 'hardware-design/registry/datasheets'), {recursive: true});
   writeFileSync(join(f.root, 'hardware-design/registry/datasheets/Part_C1.pdf'), '');
   const r = f.run();
@@ -59,6 +77,118 @@ test('a board without a gate config ends like StopIteration', () => {
   const r = spawnSync(process.execPath, [join(tools, 'build-bom-verified.mjs'), 'NO-SUCH-BOARD'], {encoding: 'utf8'});
   assert.equal(r.status, 1);
   assert.equal(r.stderr, 'StopIteration\n');
+});
+test('finds snapshots at every lab layout and uses the newest one', t => {
+  const f = fixture(t);
+  evidence(f, '2026-01-01/x/C1/C1.json');
+  evidence(f, '2026-01-02/C1.json');
+  evidence(f, '2026-01-03/set/C1.json');
+  assert.equal(f.run().status, 0);
+  assert.equal(rows(f)[1][2], 'M-2026-01-03/set/C1.json');
+  for (const path of ['2026-01-01/C1.json', '2026-01-01/set/C1.json', '2026-01-01/set/C1/C1.json']) {
+    const g = fixture(t);
+    evidence(g, path);
+    const r = g.run();
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stdout, /no JLC snapshot/, path);
+    assert.equal(rows(g)[1][2], 'M-' + path);
+  }
+});
+test('a C-named file that is not a purchase record of the part is not a snapshot', t => {
+  const f = fixture(t);
+  evidence(f, '2026-01-01/C1.json');
+  mkdirSync(join(f.root, 'hardware-design/registry/evidence/2026-01-03/s'), {recursive: true});
+  writeFileSync(join(f.root, 'hardware-design/registry/evidence/2026-01-03/s/C1.json'), '{"code":200,"data":{},"message":"ok"}');
+  evidence(f, '2026-01-04/C1.json', 'C2');
+  const r = f.run();
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /no JLC snapshot/);
+  assert.equal(rows(f)[1][2], 'M-2026-01-01/C1.json');
+  const g = fixture(t);
+  evidence(g, '2026-01-04/C1.json', 'C2');
+  assert.match(g.run().stdout, /C1: no JLC snapshot/);
+});
+test('links a datasheet stored under the MPN only when its source record names the part', t => {
+  for (const sidecar of [{catalog_url: 'https://jlcpcb.com/partdetail/Maker-Part/C1'}, {catalog_url: 'https://jlcpcb.com/partdetail/C1'},
+    {catalog_snapshot: 'hardware-design/registry/evidence/2026-01-01/set/C1.json'}]) {
+    const f = fixture(t);
+    evidence(f, '2026-01-01/C1.json');
+    datasheet(f, 'Part-MPN.pdf', sidecar);
+    const r = f.run();
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stdout, /no datasheet/, JSON.stringify(sidecar));
+    assert.equal(rows(f)[1][SHEET], '../../registry/datasheets/Part-MPN.pdf');
+  }
+});
+test('does not link a datasheet that is not proven to be for the part', t => {
+  const f = fixture(t);
+  evidence(f, '2026-01-01/C1.json');
+  datasheet(f, 'BZT52C1.pdf', {catalog_url: 'https://jlcpcb.com/partdetail/C173427', catalog_snapshot: 'x/C173427.json'});
+  datasheet(f, 'Part.pdf');
+  datasheet(f, 'Other.pdf', {catalog_url: 'https://jlcpcb.com/partdetail/C2'});
+  datasheet(f, 'PartC1.pdf');
+  datasheet(f, 'Conflict_C1.pdf', {catalog_url: 'https://jlcpcb.com/partdetail/C2'});
+  datasheet(f, 'Mixed.pdf', {catalog_url: 'https://jlcpcb.com/partdetail/C1', catalog_snapshot: 'x/C2.json'});
+  const r = f.run();
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /C1: no datasheet/);
+  assert.equal(rows(f)[1][SHEET], '');
+});
+test('a gate-only board writes into the directory of the board that owns its revision', t => {
+  const f = fixture(t, [
+    {id: 'GO', directory: 'GO', kind: 'gate-only', lifecycle: 'active', owner: 'OWN', revision: 'B'},
+    {id: 'OWN', directory: 'OWN', kind: 'board', lifecycle: 'planned', revisions: [{revision: 'A', gate: 'OWN'}, {revision: 'B', gate: 'GO'}]},
+  ]);
+  mkdirSync(join(f.root, 'hardware-design/boards/GO'));
+  mkdirSync(join(f.root, 'hardware-design/boards/OWN'));
+  writeFileSync(join(f.root, 'hardware-design/boards/GO/gate.json'), '{"project":"../OWN/cad/revB/OWN"}');
+  evidence(f, '2026-01-01/C1.json');
+  datasheet(f, 'Part_C1.pdf');
+  const r = f.run('GO');
+  assert.equal(r.status, 0, r.stderr);
+  const own = join(f.root, 'hardware-design/boards/OWN');
+  assert.deepEqual(readdirSync(own).sort(), ['BOM-JLC.csv', 'BOM-VERIFIED.csv']);
+  assert.equal(rows(f, own)[1][SHEET], '../../registry/datasheets/Part_C1.pdf');
+  assert.equal(readFileSync(join(own, 'BOM-JLC.csv'), 'utf8'), 'Comment,Designator,Footprint,LCSC Part #\r\n1k & more,"R10,R2",C1,C1\r\n');
+  assert.deepEqual(readdirSync(join(f.root, 'hardware-design/boards/GO')), ['gate.json']);
+});
+// The gate state of a board comes from its registry row, not from which gate file names exist.
+function gateFixture(t, row, files) {
+  const f = fixture(t, [{id: 'B', directory: 'B', kind: 'board', lifecycle: 'planned', ...row}]);
+  rmSync(join(f.board, 'gate.json'));
+  for (const name of files) writeFileSync(join(f.board, name), JSON.stringify({project: `cad/${name}`}));
+  evidence(f, '2026-01-01/C1.json');
+  datasheet(f, 'Part_C1.pdf');
+  return f;
+}
+const schematic = f => readFileSync(join(f.root, 'sch.arg'), 'utf8');
+test('both gate files and no pending_gate in the registry row: gate.json is the active gate', t => {
+  const f = gateFixture(t, {}, ['gate.json', 'gate.pending.json']);
+  const r = f.run();
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(schematic(f), /hardware-design\/boards\/B\/cad\/gate.json\.kicad_sch$/);
+});
+test('pending_gate in the registry row and only gate.pending.json: the pending gate is read', t => {
+  const f = gateFixture(t, {pending_gate: 'gate.pending.json'}, ['gate.pending.json']);
+  const r = f.run();
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(schematic(f), /hardware-design\/boards\/B\/cad\/gate.pending.json\.kicad_sch$/);
+});
+test('pending_gate in the registry row and a gate.json: refuses and writes nothing', t => {
+  const f = gateFixture(t, {pending_gate: 'gate.pending.json'}, ['gate.json', 'gate.pending.json']);
+  const r = f.run();
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /^ValueError: B: the registry row has pending_gate but gate\.json exists\n$/);
+  assert.deepEqual(readdirSync(f.board).sort(), ['gate.json', 'gate.pending.json']);
+});
+test('only gate.pending.json and no pending_gate in the registry row: refuses', t => {
+  for (const row of [{}, {pending_gate: 'gate.json'}]) {
+    const f = gateFixture(t, row, ['gate.pending.json']);
+    const r = f.run();
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /^ValueError: B: .*pending_gate/);
+    assert.deepEqual(readdirSync(f.board), ['gate.pending.json']);
+  }
 });
 test('xml-read follows ElementTree on the KiCad netlist shape', () => {
   const root = parseXml('<?xml version="1.0"?><!-- c --><a x="1 &amp; 2" y=\'q\'><b>t<c/>tail</b><b/><d><![CDATA[<raw>]]></d></a>');

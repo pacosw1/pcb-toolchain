@@ -88,8 +88,6 @@ async function run(path: string, values: { out?: string; 'runs-dir'?: string; ro
   const out = resolve(values.out);
   const suite = loadSuite(path);
   verifyInputs(suite, root);
-  const suiteCopy = join(out, 'suite.json');
-  if (existsSync(suiteCopy) && sha256File(suiteCopy) !== sha256File(path)) throw new Error(`${out} already holds a different suite; use a new --out`);
   const release = values['no-lock'] ? async () => {} : await acquire({ label: `bench ${suite.suite_id} -> ${out}`, wait: values.wait,
     onWait: owner => console.error(`bench lock held by ${describeOwner(owner)}; waiting`) });
   if (!values['no-lock'] && !values.json) console.error(`bench lock acquired (pid ${process.pid})`);
@@ -118,6 +116,7 @@ async function runLocked(path: string, values: { 'runs-dir'?: string; 'no-analyz
   mkdirSync(out, { recursive: true });
   const suiteCopy = join(out, 'suite.json');
   if (!existsSync(suiteCopy)) copyFileSync(path, suiteCopy);
+  else if (sha256File(suiteCopy) !== sha256File(path)) throw new Error(`${out} already holds a different suite; use a new --out`);
   const records = await runSuite(suite, {
     root, runsDir: resolve(values['runs-dir'] ?? join(root, '.gate/cli')), out, executor: spawnExecutor, signal: context.signal,
     onTrial: (trial, item, index, total) => { if (!values.json) console.error(`[${index + 1}/${total}] ${trial.id}: ${item.status}${item.cause ? ` (${item.cause})` : ''} ${item.wall_s.toFixed(0)}s`); },

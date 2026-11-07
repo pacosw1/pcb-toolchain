@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { runMain, UsageError } from './lib/cli.ts';
 import { checkPlacementRules, placementRulesPath } from './lib/placement-rules.ts';
 import { verifySeal } from './lib/cad-seal.ts';
+import { layoutGate, layoutLog } from './lib/layout-plan.ts';
 import type { Dict } from './lib/py-values.ts';
 import { footprints } from './lib/native-board.ts';
 import { boardConfig } from './lib/pcb-workflow.ts';
@@ -29,7 +30,8 @@ const placer: Placer = args => {
 
 interface Placement { board: string; spec: string; moved: number; edit: string }
 interface Miss { id: string; miss_mm: number | null }
-interface Candidate extends Placement { seed: number; margins: { smallest_mm: number | null; rules: { id: string; margin_mm: number | null }[] }; wirelength: number | null; legal: boolean; misses: Miss[] }
+interface Estimates { congestion: number; crossings: number; blocked_vias: number; escape: number }
+interface Candidate extends Placement { seed: number; margins: { smallest_mm: number | null; rules: { id: string; margin_mm: number | null }[] }; wirelength: number | null; estimates: Estimates | null; legal: boolean; misses: Miss[] }
 class RuleMiss extends Error {
   readonly ids: string[];
   constructor(ids: string[]) { super('placement rule misses: ' + ids.join(', ')); this.ids = ids; }
@@ -46,16 +48,16 @@ function placeCandidate(root: string, board: string, options: PlaceOptions, run:
     let failure: unknown;
     try { run(['run', problem, '-o', result, '--top', '1', '--workers', '1', '--seed', String(options.seed), '--epochs', String(options.epochs), '--steps', String(options.steps)]); }
     catch (error) { failure = error; }
-    const found = existsSync(result) ? (JSON.parse(readFileSync(result, 'utf8')) as { candidates: { components?: { hpwl?: number }; engineering?: { blockers: Dict[] } }[] }).candidates[0] : undefined;
-    const reported = found?.engineering?.blockers ?? [];
+    const found = existsSync(result) ? (JSON.parse(readFileSync(result, 'utf8')) as { candidates: { components?: { hpwl?: number; cong: number; crossing: number; via: number; escape: number }; engineering?: { blockers: Dict[] }; illegal?: string[] }[] }).candidates[0] : undefined;
+    const reported = found?.engineering?.blockers ?? [], illegal = found?.illegal ?? [], terms = found?.components;
     if (reported.length && !compare) throw new RuleMiss(reported.map(row => String(row.id ?? row.code)));
-    if (failure && !reported.length) throw failure;
+    if (failure && !reported.length && !(compare && illegal.length)) throw failure;
     run(['write', native, problem, result, '--outdir', output, ...(compare ? ['--keep-misses'] : [])]);
     const candidate = join(output, 'cand0', basename(native));
     const checked = checkPlacementRules(root, board, candidate);
     const blockers = checked && checked.status !== 'passed' ? checked.blockers as Dict[] : reported;
     if (blockers.length && !compare) throw new RuleMiss(blockers.map(row => String(row.id ?? row.code)));
-    const misses = blockers.map(row => ({ id: String(row.id ?? row.code), miss_mm: typeof row.miss === 'number' ? row.miss : null }));
+    const misses = [...blockers.map(row => ({ id: String(row.id ?? row.code), miss_mm: typeof row.miss === 'number' ? row.miss : null })), ...illegal.map(id => ({ id, miss_mm: null }))];
     const margins = ((checked?.measurements ?? []) as Dict[]).map(row => ({ id: String(row.id), margin_mm: typeof row.margin_mm === 'number' ? row.margin_mm : null }));
     const numericMargins = margins.flatMap(row => row.margin_mm === null ? [] : [row.margin_mm]);
     const spec = placementSpec(footprints(native), footprints(candidate));
@@ -64,7 +66,7 @@ function placeCandidate(root: string, board: string, options: PlaceOptions, run:
     const path = resolve(options.out ?? join(root, '.gate/place', `${board}.json`));
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, `${jsonDumps(spec)}\n`);
-    return { seed: options.seed, margins: { smallest_mm: numericMargins.length ? Math.min(...numericMargins) : null, rules: margins }, wirelength: found?.components?.hpwl ?? null, legal: !misses.length, misses, board, spec: path, moved, edit: `tools/pcb edit ${board} --kind place --spec ${path} --json` };
+    return { seed: options.seed, margins: { smallest_mm: numericMargins.length ? Math.min(...numericMargins) : null, rules: margins }, wirelength: found?.components?.hpwl ?? null, estimates: terms ? { congestion: terms.cong, crossings: terms.crossing, blocked_vias: terms.via, escape: terms.escape } : null, legal: !misses.length, misses, board, spec: path, moved, edit: `tools/pcb edit ${board} --kind place --spec ${path} --json` };
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }
@@ -91,12 +93,19 @@ export function showCandidates(report: { candidates: Candidate[] }, json: boolea
   const legal = report.candidates.filter(row => row.legal);
   if (json) console.log(jsonDumps(report));
   else {
-    console.log('seed  legal  moved  margin_mm  wirelength  misses  spec');
-    for (const row of report.candidates) console.log([row.seed, row.legal ? 'yes' : 'no', row.moved, row.margins.smallest_mm ?? '-', row.wirelength ?? '-', row.misses.map(miss => `${miss.id}=${miss.miss_mm ?? '?'}`).join(',') || '-', row.spec].join('  '));
+    console.log('seed  legal  moved  margin_mm  wirelength  congestion  crossings  blocked_vias  escape  misses  spec');
+    for (const row of report.candidates) console.log([row.seed, row.legal ? 'yes' : 'no', row.moved, row.margins.smallest_mm ?? '-', row.wirelength ?? '-', row.estimates?.congestion ?? '-', row.estimates?.crossings ?? '-', row.estimates?.blocked_vias ?? '-', row.estimates?.escape ?? '-', row.misses.map(miss => `${miss.id}=${miss.miss_mm ?? '?'}`).join(',') || '-', row.spec].join('  '));
     for (const row of legal) console.log(row.edit);
     if (!legal.length) console.log('NO LEGAL CANDIDATE');
   }
   return legal.length ? 0 : 3;
+}
+
+/** `place` runs only on a sealed board with an approved layout plan or a recorded exemption. */
+export function admitPlace(root: string, board: string): void {
+  verifySeal(root, board);
+  const block = layoutGate(root, board, layoutLog(root, board));
+  if (block) throw new Error(block.message);
 }
 
 function main(given: string[]): number {
@@ -109,7 +118,7 @@ function main(given: string[]): number {
   const [board] = a.positionals;
   if (!board) throw new UsageError(USAGE);
   const root = projectRoot(explicit);
-  verifySeal(root, board);
+  admitPlace(root, board);
   const options = { out: a.text('--out'), seed: a.int('--seed') ?? 1, epochs: a.int('--epochs') ?? 8, steps: a.int('--steps') ?? 20000 };
   if (!a.has('--seeds')) console.log(jsonDumps(placeBoard(root, board, options)));
   else {

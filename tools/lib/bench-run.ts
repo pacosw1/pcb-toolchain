@@ -1,6 +1,6 @@
 // Run a benchmark suite trial by trial through the ordinary pcb run path and describe the sealed runs as a study.
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { atomicJson, sha256File } from './json-file.ts';
 import { expandTrials, type PlannedTrial, type Suite } from './bench-suite.ts';
@@ -13,7 +13,8 @@ export interface TrialRecord {
   schema: typeof TRIAL_RECORD; id: string; arm: string; status: TrialStatus; run_id: string | null; run_path: string | null;
   result_sha256: string | null; wall_s: number; exit_code: number | null; cause: string | null; command: string[];
   parent_run?: { path: string; sha256: string }; placement_input?: { path: string; sha256: string } | null;
-  /** The sealed run's own terminal status (passed, failed, timeout, cancelled), read from its result.json. */
+  /** The sealed run's own terminal status (passed, failed, timeout, cancelled), read from its result.json. Only a
+   *  `sealed` trial has one: a `timeout` trial has one verdict, the deadline, and its cause names what the run said. */
   run_status?: string | null;
 }
 export interface ExecContext { root: string; runsDir: string; timeoutMs: number; work?: string; signal?: AbortSignal }
@@ -96,6 +97,7 @@ export const spawnExecutor: Executor = async (trial, context) => {
   const started = performance.now();
   const deadline = started + context.timeoutMs;
   const work = context.work ? join(context.work, trial.id) : join(context.runsDir, '..', 'bench-work', trial.id);
+  rmSync(work, { recursive: true, force: true });                   // a killed attempt's files are not this attempt's
   mkdirSync(work, { recursive: true });
   const steps = trial.steps?.length ? trial.steps : [trial.argv];
   let previous: Sealed | null = null, parent: Sealed | null = null, last: StepOutcome | null = null, sealed: Sealed | null = null;
@@ -118,14 +120,14 @@ export const spawnExecutor: Executor = async (trial, context) => {
   }
   const wall_s = (performance.now() - started) / 1000;
   const outcome = last!;
-  const cause = outcome.error ?? (outcome.timedOut ? 'deadline reached' : null);
+  const cause = outcome.error ?? (outcome.timedOut ? `deadline reached${sealed?.status ? ` (the run sealed as ${sealed.status})` : ''}` : null);
   if (!sealed) return record(trial, { status: outcome.timedOut ? 'timeout' : 'no_run', run_id: runIdOf(outcome.stdout), wall_s, exit_code: outcome.code, cause: cause ?? (outcome.stderr.trim() || 'no sealed result') });
   let chain: Partial<TrialRecord> = parent ? { parent_run: { path: parent.path, sha256: parent.sha }, placement_input: candidateOf(parent, context) } : {};
   if (trial.route_input) {
     const file = resolve(context.root, fill(trial.route_input, { work }));
     chain = { ...chain, placement_input: existsSync(file) ? { path: relative(context.root, file), sha256: sha256File(file) } : null };
   }
-  return record(trial, { status: outcome.timedOut ? 'timeout' : 'sealed', run_id: sealed.id, run_path: sealed.path, result_sha256: sealed.sha, run_status: sealed.status ?? null, wall_s, exit_code: outcome.code, cause, ...chain });
+  return record(trial, { status: outcome.timedOut ? 'timeout' : 'sealed', run_id: sealed.id, run_path: sealed.path, result_sha256: sealed.sha, run_status: outcome.timedOut ? null : sealed.status ?? null, wall_s, exit_code: outcome.code, cause, ...chain });
 };
 
 export const recordPath = (out: string, id: string): string => join(out, 'trials', `${id}.json`);
@@ -137,6 +139,9 @@ export function readRecord(out: string, id: string): TrialRecord | null {
 
 export interface RunOptions { root: string; runsDir: string; out: string; executor: Executor; signal?: AbortSignal; onTrial?: (trial: PlannedTrial, record: TrialRecord, index: number, total: number) => void }
 
+/** A kept record is final when the trial reached a verdict (sealed or timeout). A trial that made no run is tried again. */
+const settled = (item: TrialRecord | null): item is TrialRecord => item !== null && item.status !== 'no_run';
+
 /** Sequential on purpose: trials share the machine, and a finished trial's record is kept so a rerun resumes. */
 export async function runSuite(suite: Suite, options: RunOptions): Promise<TrialRecord[]> {
   mkdirSync(join(options.out, 'trials'), { recursive: true });
@@ -145,7 +150,8 @@ export async function runSuite(suite: Suite, options: RunOptions): Promise<Trial
   const context: ExecContext = { root: options.root, runsDir: options.runsDir, timeoutMs: Math.round(suite.budget.timeout_s * 1000), work: join(options.out, 'work'), signal: options.signal };
   for (const [index, trial] of trials.entries()) {
     if (options.signal?.aborted) break;
-    const kept = readRecord(options.out, trial.id);
+    const read = readRecord(options.out, trial.id);
+    const kept = settled(read) ? read : null;
     const current = kept ?? await options.executor(trial, context);
     if (!kept) atomicJson(recordPath(options.out, trial.id), current);
     records.push(current);

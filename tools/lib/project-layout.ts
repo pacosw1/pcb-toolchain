@@ -247,9 +247,10 @@ function registryEntries(audit: Audit): Entry[] {
     const kind = typeof raw.kind === 'string' && KINDS.includes(raw.kind) ? raw.kind : null;
     if (!lifecycle) fail(`lifecycle must be one of ${LIFECYCLES.join(', ')}`);
     if (!kind) fail(`kind must be one of ${KINDS.join(', ')}`);
-    if ('design_contract_exempt' in raw) {
-      const exempt = raw.design_contract_exempt;
-      if (!isObject(exempt) || typeof exempt.reason !== 'string' || !exempt.reason.trim()) fail('design_contract_exempt must be an object with a non-empty reason');
+    for (const field of ['design_contract_exempt', 'layout_plan_exempt']) {
+      if (!(field in raw)) continue;
+      const exempt = raw[field];
+      if (!isObject(exempt) || typeof exempt.reason !== 'string' || !exempt.reason.trim()) fail(`${field} must be an object with a non-empty reason`);
     }
     let directory: string | null = null;
     if (raw.directory !== undefined && raw.directory !== null) {

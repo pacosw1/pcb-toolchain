@@ -51,13 +51,26 @@ function prepare(archive, manifest, stage) {
   syncDir(stage); syncDir(path.dirname(stage));
 }
 
+const LEFTOVER = /^\.src-(?:backup|failed|stage)-[0-9a-f]{16}$/;
+// Only the backup of the newest deployment stays, as the way back. Other backups, failed sources and stages are leftovers.
+function prune(root, keepBackup) {
+  for (const n of fs.readdirSync(root)) if (LEFTOVER.test(n) && n !== keepBackup) fs.rmSync(path.join(root, n), { recursive: true, force: true });
+}
+
 // service.restart() and service.healthy(expectedHash) are supplied separately so the transaction is testable.
-export async function recover(root, service) {
+// rollbackOnly: the caller has just seen the target fail its health check, so do not wait for it a second time.
+export async function recover(root, service, { rollbackOnly = false } = {}) {
   const journalFile = path.join(root, '.deploy-journal.json');
   if (!fs.existsSync(journalFile)) throw Error('no interrupted deployment');
   const j = JSON.parse(fs.readFileSync(journalFile, 'utf8'));
   if (!/^[0-9a-f]{16}$/.test(j.id) || !/^[0-9a-f]{64}$/.test(j.previous)) throw Error('invalid recovery journal');
   const src = path.join(root, 'src'), backup = path.join(root, `.src-backup-${j.id}`), displaced = path.join(root, `.src-failed-${j.id}`);
+  // A crash after the target proved healthy and before the journal went: the deployment is done, so finish it forward.
+  if (!rollbackOnly && /^[0-9a-f]{64}$/.test(j.target ?? '') && fs.existsSync(src) && identity(src) === j.target && await service.healthy(j.target)) {
+    fs.unlinkSync(journalFile); syncDir(root);
+    prune(root, path.basename(backup));
+    return { committed: j.target };
+  }
   if (fs.existsSync(backup)) {
     if (identity(backup) !== j.previous) throw Error('backup source cannot be verified');
     if (fs.existsSync(src)) {
@@ -79,6 +92,8 @@ export async function install(root, archive, manifest, expectedArchiveSha256, se
   const id = randomBytes(8).toString('hex');
   const stage = path.join(root, `.src-stage-${id}`), backup = path.join(root, `.src-backup-${id}`), src = path.join(root, 'src');
   const previous = identity(src);
+  // No journal, so no deployment is in flight: a stage directory here is what a crash during prepare left behind.
+  for (const n of fs.readdirSync(root)) if (/^\.src-stage-[0-9a-f]{16}$/.test(n)) fs.rmSync(path.join(root, n), { recursive: true, force: true });
   if (!await service.healthy(previous)) throw Error('current service identity is not verified; bootstrap separately');
   try { prepare(archive, manifest, stage); }
   catch (e) { fs.rmSync(stage, { recursive: true, force: true }); throw e; }
@@ -89,12 +104,37 @@ export async function install(root, archive, manifest, expectedArchiveSha256, se
     await service.restart();
     if (!await service.healthy(manifest.sourceSha256)) throw Error('new service did not pass identity health check');
     fs.unlinkSync(journal); syncDir(root);
+    prune(root, path.basename(backup));
     return { sourceSha256: manifest.sourceSha256, backup };
   } catch (e) {
-    try { await recover(root, service); }
+    try { await recover(root, service, { rollbackOnly: true }); }
     catch (recovery) { throw Error(`deployment failed: ${e.message}; recovery required: ${recovery.message}`); }
     throw Error(`deployment failed and previous service restored: ${e.message}`);
   }
+}
+
+const isAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+const UNMARKED_LOCK_MS = 60_000;
+// One installer at a time. The lock names its holder, so a lock left by a killed installer is taken over, not removed by hand.
+export function acquireLock(lock, { pid = process.pid, alive = isAlive, now = Date.now } = {}) {
+  for (let n = 0; n < 2; n++) {
+    try { fs.mkdirSync(lock); }
+    catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      let holder = 0;
+      try { holder = Number(fs.readFileSync(path.join(lock, 'pid'), 'utf8')); } catch { /* no pid file yet, or none */ }
+      if (Number.isInteger(holder) && holder > 0) { if (alive(holder)) throw Error(`another installer is running (pid ${holder}): ${lock}`); }
+      else if (now() - fs.statSync(lock).mtimeMs < UNMARKED_LOCK_MS) throw Error(`deploy lock ${lock} is being created`);
+      // Stale. A rename is the take-over: of two installers that see it, one wins and the other starts again.
+      const stale = `${lock}.stale-${pid}-${now()}`;
+      try { fs.renameSync(lock, stale); fs.rmSync(stale, { recursive: true, force: true }); }
+      catch (err) { if (err.code !== 'ENOENT') throw err; }
+      continue;
+    }
+    fs.writeFileSync(path.join(lock, 'pid'), String(pid));
+    return () => fs.rmSync(lock, { recursive: true, force: true });
+  }
+  throw Error(`deploy lock ${lock} changed while it was taken over; run again`);
 }
 
 export function verifySocket(socket, uid) {
@@ -116,7 +156,7 @@ async function main() {
   };
   const token = fs.readFileSync(tokenFile, 'utf8').trim(); if (token.length < 32) throw Error('invalid token');
   const root = '/opt/pcb-job-daemon', lock = path.join(root, '.deploy-lock');
-  fs.mkdirSync(lock); // On interruption the lock remains: verify no installer is running before removing it.
+  const release = acquireLock(lock);
   const service = {
     restart: async () => { execFileSync('systemctl', ['restart', 'pcb-job-daemon.service']); },
     healthy: async (expected) => {
@@ -143,6 +183,6 @@ async function main() {
   try {
     const result = operation === 'recover' ? await recover(root, service) : await install(root, archive, JSON.parse(fs.readFileSync(`${archive}.json`, 'utf8')), expectedArchiveSha256, service);
     console.log(JSON.stringify(result));
-  } finally { fs.rmdirSync(lock); }
+  } finally { release(); }
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((e) => { console.error(`install-release: ${e.message}`); process.exitCode = 1; });

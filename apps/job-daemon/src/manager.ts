@@ -117,6 +117,8 @@ export class JobManager {
   private recovered = false;
   private lastSweep = 0;
   private diskMisses = new Map<string, number>();
+  /** Containers whose runtime.start has not answered. The attempt is `running` on record, but nothing exists to measure. */
+  private starting = new Set<string>();
   /** What was last logged for each waiting job. Lost at a restart, which logs each hold once more. */
   private holdLogged = new Map<string, { kind: string; at: number }>();
 
@@ -339,7 +341,7 @@ export class JobManager {
 
   private async checkDisk(job: JobRecord): Promise<void> {
     const attempt = job.attempts[job.attempts.length - 1];
-    if (job.cancelRequested || attempt.killedFor) return;
+    if (job.cancelRequested || attempt.killedFor || this.starting.has(attempt.container)) return;
     const [files, layer] = await Promise.all([
       dirBytes([this.store.workDir(job.id, attempt.n), this.store.outDir(job.id, attempt.n)]),
       this.runtime.layerBytes(attempt.container),
@@ -426,7 +428,12 @@ export class JobManager {
 
   /** One start per tick, so that the next job is judged on a host that has seen this one at least begin. */
   private async admit(): Promise<void> {
-    const due = (j: JobRecord): boolean => j.state === 'queued' || Date.parse(j.nextAttemptAt ?? '') <= this.now();
+    // A retrying record with no readable time must not wait for ever: NaN is never due. It is due now.
+    const due = (j: JobRecord): boolean => {
+      if (j.state === 'queued') return true;
+      const at = Date.parse(j.nextAttemptAt ?? '');
+      return Number.isNaN(at) || at <= this.now();
+    };
     const [next, ...behind] = this.list('queued', 'retrying').filter(due);
     if (!next) {
       this.hold = '';
@@ -461,6 +468,7 @@ export class JobManager {
     const n = job.attempts.length + 1;
     const attempt: Attempt = { n, container: `pcbjob-${job.id}-${n}`, startedAt: this.iso() };
     const waited = n === 1 ? `, after ${this.waitedS(job)} s queued` : '';
+    this.starting.add(attempt.container); // in the same step as the push: watchDisk never sees the attempt without it
     job.attempts.push(attempt);
     job.nextAttemptAt = undefined;
     // Durable before the side effects: a crash from here on leaves "running" with no container, which reconcile
@@ -478,11 +486,17 @@ export class JobManager {
         fs.chownSync(outDir, this.cfg.jobUid, this.cfg.jobUid);
       }
     } catch (e) {
+      this.starting.delete(attempt.container);
       return this.finish(job, attempt, { outcome: 'infra', exitCode: null, detail: `job folder: ${String(e)}` });
     }
     const { image, cpus, memGb, diskGb, timeoutS, command } = job.spec;
     const inputTar = this.store.inputTar(job.id);
-    const r = await this.runtime.start({ container: attempt.container, workDir, outDir, inputTar, image, cpus, memGb, diskGb, timeoutS, command });
+    let r;
+    try {
+      r = await this.runtime.start({ container: attempt.container, workDir, outDir, inputTar, image, cpus, memGb, diskGb, timeoutS, command });
+    } finally {
+      this.starting.delete(attempt.container);
+    }
     if (r.ok) return;
     // The container may exist all the same, if docker run timed out. clean() checks before it touches anything.
     this.finish(job, attempt, { outcome: r.permanent ? 'start' : 'infra', exitCode: null, detail: r.detail });

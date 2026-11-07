@@ -21,6 +21,10 @@ fs.writeFileSync(folder+'/seen.json',JSON.stringify({clock:process.env.PCB_QUEUE
   deadline:process.env.IOT_LEAN_DEADLINE,at:Date.now()}));
 if(queued!=='0'&&process.env.PCB_QUEUE_CLOCK)fs.writeFileSync(process.env.PCB_QUEUE_CLOCK,queued==='broken'?'{"seconds"':JSON.stringify({seconds:Number(queued)}));
 setTimeout(()=>{
+  // A passed route run must hold the files of its stage contract (lib/stage-contracts.ts), or the finalizer seals it as an error.
+  fs.writeFileSync(folder+'/operation/source.json','{}');
+  fs.mkdirSync(folder+'/images',{recursive:true});
+  for(const side of ['top','bottom'])fs.writeFileSync(folder+'/images/'+side+'.svg','<svg xmlns="http://www.w3.org/2000/svg"/>');
   fs.writeFileSync(folder+'/operation/result.json',JSON.stringify({status:'passed',exit_code:0,cause:'stand-in'}));
   process.exit(0);
 },Number(runMs));`;

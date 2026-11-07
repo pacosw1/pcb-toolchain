@@ -14,7 +14,8 @@
 // Studio runs are durable too: each run has a random id (`r-` + 16 hex digits, unique across engine restarts) and a
 // folder `<project>/.gate/studio/runs/<id>/` with `run.json` (the record, rewritten atomically at each state change)
 // and `events.jsonl` (every event, appended). load(root) brings back the runs of earlier engine processes; a run still
-// `running` in its record lost its supervisor when that engine died and becomes `interrupted`.
+// `running` in its record lost its supervisor when that engine died and becomes `interrupted`. A run whose engine is
+// still alive (`owner_pid`) belongs to that engine: another process that opens the project never rewrites it.
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
@@ -33,11 +34,17 @@ const POLICY_SCHEMA = 'iot-lab.iotroute-policy.v1'
 const POLICY_FIELDS = ['schema', 'iters', 'max_time_s', 'keep', 'layers', 'nets']
 const STORE = '.gate/studio/runs'
 const RECORD_FIELDS = ['id', 'op', 'board', 'mode', 'argv', 'policy', 'started', 'state', 'exit_code', 'run_id', 'end',
-                       'adoption', 'stderr'] as const
+                       'adoption', 'stderr', 'owner_pid'] as const
 
 type Json = Record<string, unknown>
 export type RunState = RunSummary['state']
 export type RunOp = RunSummary['op']
+
+// A run starts `running` and moves once, to one of the others. Nothing leaves a finished state.
+const NEXT: Record<RunState, readonly RunState[]> = {
+  running: ['passed', 'failed', 'error', 'cancelled', 'interrupted'],
+  passed: [], failed: [], error: [], cancelled: [], interrupted: []
+}
 
 export interface RoutingPolicy { schema: string, iters: number, max_time_s: number, keep: string, layers: string[], nets: string[] }
 
@@ -45,6 +52,11 @@ const isObject = (x: unknown): x is Json => x !== null && typeof x === 'object' 
 const isFile = (p: string): boolean => { try { return fs.statSync(p).isFile() } catch { return false } }
 const isInside = (base: string, p: string): boolean => p.startsWith(base + path.sep)
 const newId = (): string => 'r-' + randomBytes(8).toString('hex')
+const ownerAlive = (pid: unknown): boolean => {
+  if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) return false     // a record from before owners: dead
+  if (pid === process.pid) return true
+  try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM' }
+}
 const message = (e: unknown): string => e instanceof Error ? `${e.name}: ${e.message}` : String(e)
 
 /** One text line at a time, split on \n only; a last line without \n counts. Lines have no length limit. */
@@ -82,6 +94,7 @@ export class Run {
   end: Json | null = null
   events: Json[] = []
   stderr: string[] = []
+  owner_pid: number | null = process.pid   // the engine process that supervises this run
   proc: ChildProcess | null = null
   adoption: Json | null = null      // the adopt receipt (target, before/after sha256) once adopted
   adopting = false                  // a `tools/pcb adopt` of this run is in progress
@@ -94,6 +107,20 @@ export class Run {
     this.mode = mode
     this.argv = argv
     this.root = root
+  }
+
+  transition(next: RunState): void {
+    if (!NEXT[this.state].includes(next)) throw new Error(`illegal run transition ${this.state} -> ${next}`)
+    this.state = next
+  }
+
+  /** The state a run reaches when its process has exited. A pass the CLI sealed stays a pass: a cancel that came
+   *  after the seal arrived too late. */
+  outcome(): RunState {
+    const status = this.end?.status
+    const sealedPass = status === 'passed' && (this.exit_code ?? this.end?.exit_code) === 0
+    if (this.cancelRequested && !sealedPass) return 'cancelled'
+    return sealedPass ? 'passed' : this.end && status !== 'error' ? 'failed' : 'error'
   }
 
   dir(): string | null { return this.root === null ? null : path.join(this.root, STORE, this.id) }
@@ -243,6 +270,7 @@ export class Runs {
         if (!isObject(rec) || typeof rec.id !== 'string' || typeof rec.board !== 'string' || typeof rec.mode !== 'string' ||
             !Array.isArray(rec.argv)) throw new TypeError('record lacks id, board, mode or argv')
         run = new Run(rec.id, (rec.op as RunOp) ?? 'check', rec.board, rec.mode, rec.argv as string[], root)
+        run.owner_pid = null                        // a record without an owner has none that is alive
         for (const k of RECORD_FIELDS) if (k in rec) Object.assign(run, { [k]: rec[k] })
       } catch (e) {
         console.error(`pcbstudio: skip unreadable run record ${d}: ${message(e)}`)
@@ -255,9 +283,16 @@ export class Runs {
           try { run.events.push(JSON.parse(line) as Json) } catch { /* a torn last line */ }
         }
       }
-      if (run.state === 'running') {                // its engine died: nobody supervises it any more
-        run.state = 'interrupted'
-        run.stderr.push('interrupted: the engine that supervised this run stopped')
+      if (run.state === 'running') {
+        if (ownerAlive(run.owner_pid)) continue     // another engine process supervises it: its record is not ours
+        const sealed = [...run.events].reverse().find(ev => ev.type === 'run.end')
+        if (sealed) {                               // the CLI sealed it before its engine died
+          run.end = sealed
+          run.transition(run.outcome())
+        } else {                                    // its engine died: nobody supervises it any more
+          run.transition('interrupted')
+          run.stderr.push('interrupted: the engine that supervised this run stopped')
+        }
         run.persist()
       }
       this.runs.set(run.id, run)
@@ -305,6 +340,7 @@ export class Runs {
   }
 
   private async supervise(run: Run, root: string): Promise<void> {
+    let spawnFailed = false
     try {
       const child = spawn(run.argv[0], run.argv.slice(1), { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], detached: true, env: { ...process.env } })
       run.proc = child
@@ -319,14 +355,9 @@ export class Runs {
       })
     } catch (e) {                                   // reported on the run, never swallowed
       run.stderr.push(message(e))
-      run.state = 'error'
+      spawnFailed = true
     }
-    if (run.state === 'running' && run.cancelRequested) {
-      run.state = 'cancelled'
-    } else if (run.state === 'running') {
-      const status = run.end?.status
-      run.state = status === 'passed' && run.exit_code === 0 ? 'passed' : run.end && status !== 'error' ? 'failed' : 'error'
-    }
+    run.transition(spawnFailed ? 'error' : run.outcome())
     if (run.op === 'route') fs.rmSync(run.argv[run.argv.indexOf('--spec') + 1], { force: true })  // the CLI keeps a copy
     run.persist()
     publish('run.state', run.summary())
@@ -414,7 +445,7 @@ export class Runs {
   /** Ask a running run to stop. The state becomes `cancelled` only when its process has exited. */
   cancel(runId: string): RunSummary {
     const run = this.get(runId)
-    if (run.state === 'running') {
+    if (run.state === 'running' && run.end === null) {     // after the CLI sealed its end, a cancel is too late
       run.cancelRequested = true
       const p = run.proc
       if (p?.pid !== undefined && p.exitCode === null && p.signalCode === null) killGroup(p.pid)   // the CLI cleans its family

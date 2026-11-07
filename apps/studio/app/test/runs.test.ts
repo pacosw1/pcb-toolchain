@@ -1,7 +1,7 @@
 // Runs, candidates and durable records, with a stand-in tools/pcb that writes
 // CLI style run records. Run: node --test test/
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -49,6 +49,19 @@ if [ "$board" = SLOW ]; then echo $$ > "$(pwd)/slow.pid"; exec sleep 30; fi
 echo '{"schema_version": 1, "run_id": "run-'$board'", "seq": 2, "type": "run.end", "status": "passed", "exit_code": 0, "cause": "ok", "metrics": {"drc_errors": 0}, "findings": [], "elapsed_s": 0.1}'
 `
 
+// Sends its sealed run.end, then waits for a file named `go` before it exits 0: the window between seal and exit.
+const SEALED = `#!/bin/sh
+echo '{"schema_version": 1, "run_id": "run-sealed", "seq": 1, "type": "run.end", "status": "passed", "exit_code": 0, "cause": "ok", "metrics": {}, "findings": [], "elapsed_s": 0.1}'
+echo $$ > "$(pwd)/sealed.pid"
+while [ ! -f "$(pwd)/go" ]; do sleep 0.05; done
+`
+
+/** A pid that no process has now: a child that has exited. */
+const deadPid = (): number => {
+  const p = spawnSync('true')
+  return p.pid
+}
+
 function project(t: TestContext, tool: string): string {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'runs-')))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
@@ -66,6 +79,11 @@ async function finish(run: Run): Promise<void> {
 
 const record = (root: string, id: string): Record<string, unknown> =>
   JSON.parse(fs.readFileSync(path.join(root, '.gate/studio/runs', id, 'run.json'), 'utf8'))
+
+function setOwner(root: string, id: string, pid: number): void {
+  const file = path.join(root, '.gate/studio/runs', id, 'run.json')
+  fs.writeFileSync(file, JSON.stringify({ ...record(root, id), owner_pid: pid }))
+}
 
 test('a gate check streams its events', async t => {
   const root = project(t, CHECK), seen: string[] = [], states: string[] = []
@@ -230,7 +248,8 @@ test('runs survive an engine crash', async t => {
   for (let i = 0; i < 200 && !fs.existsSync(path.join(root, 'slow.pid')); i++) await sleep(10)
   await sleep(50)
   assert.equal(record(root, slow.id).state, 'running')
-  const second = new Runs()                         // a new engine: the first one is gone, its record says running
+  setOwner(root, slow.id, deadPid())                // the first engine is gone: its record says running
+  const second = new Runs()
   assert.equal(second.load(root), 2)
   assert.equal(second.load(root), 0)                // known runs are not loaded twice
   assert.equal(second.get(fast.id).state, 'passed')
@@ -240,6 +259,51 @@ test('runs survive an engine crash', async t => {
   assert.equal(record(root, slow.id).state, 'interrupted')    // the record itself is updated
   first.cancel(slow.id)
   await finish(slow)
+})
+
+test('a run of a live engine is not rewritten by another process that opens the project', async t => {
+  const root = project(t, SLOW), first = new Runs(), slow = first.start(root, 'check', 'SLOW')
+  for (let i = 0; i < 200 && !fs.existsSync(path.join(root, 'slow.pid')); i++) await sleep(10)
+  const viewer = new Runs()                          // the web viewer: another registry, same project
+  assert.equal(viewer.load(root), 0)
+  assert.equal(viewer.runs.has(slow.id), false)
+  assert.equal(record(root, slow.id).state, 'running')
+  first.cancel(slow.id)
+  await finish(slow)
+  assert.equal(viewer.load(root), 1)                // once it has ended, the viewer shows it
+  assert.equal(viewer.get(slow.id).state, 'cancelled')
+})
+
+test('a run whose engine died after the CLI sealed it settles from its events', t => {
+  const root = project(t, CHECK), store = path.join(root, '.gate/studio/runs/r-00000000000000aa')
+  fs.mkdirSync(store, { recursive: true })
+  fs.writeFileSync(path.join(store, 'run.json'), JSON.stringify({ id: 'r-00000000000000aa', op: 'check', board: 'DEMO', mode: 'fresh', argv: ['x'],
+    policy: null, started: 1, state: 'running', exit_code: null, run_id: 'run-1', end: null, adoption: null, stderr: [], owner_pid: deadPid() }))
+  fs.writeFileSync(path.join(store, 'events.jsonl'), '{"type": "run.start"}\n{"type": "run.end", "status": "passed", "exit_code": 0, "cause": "ok"}\n')
+  const r = new Runs()
+  assert.equal(r.load(root), 1)
+  assert.equal(r.get('r-00000000000000aa').state, 'passed')
+  assert.equal(record(root, 'r-00000000000000aa').state, 'passed')
+})
+
+test('a cancel after the CLI sealed a pass does not turn it into cancelled', async t => {
+  const root = project(t, SEALED), r = new Runs(), run = r.start(root, 'check', 'DEMO')
+  for (let i = 0; i < 200 && !fs.existsSync(path.join(root, 'sealed.pid')); i++) await sleep(10)
+  for (let i = 0; i < 200 && run.end === null; i++) await sleep(10)
+  assert.ok(run.end, 'run.end was not read')
+  assert.equal(r.cancel(run.id).state, 'running')
+  assert.equal(run.cancelRequested, false)           // nothing was signalled: the run had ended
+  fs.writeFileSync(path.join(root, 'go'), '')
+  await finish(run)
+  assert.equal(run.state, 'passed')
+  assert.equal(run.exit_code, 0)
+})
+
+test('a finished run keeps its state: only running moves', () => {
+  const run = new Run('r-3', 'check', 'DEMO', 'fresh', [], null)
+  run.transition('passed')
+  for (const next of ['cancelled', 'interrupted', 'error', 'running'] as const) assert.throws(() => run.transition(next), /illegal run transition passed -> /)
+  assert.equal(run.state, 'passed')
 })
 
 test('a record written by the Python engine loads, and a broken one is skipped', t => {

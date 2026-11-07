@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { exemptBoard } from './design-exempt-fixture.ts';
 import { sealFixtureBoard } from './cad-seal-fixture.ts';
+import { fakeRenderer } from './fake-renderer-fixture.ts';
 import { iotrouteMissing } from './iotroute-bin.ts';
 import { defaultLoopBackend } from './route-loop-backend.ts';
 import { startLoop, statusLoop, decideLoop } from './route-loop.ts';
@@ -38,6 +39,9 @@ test(
   async (t) => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'loop-backend-'))),
       native = join(root, 'hardware-design/boards/X/cad/X.kicad_pcb');
+    // A passing round needs its two images, and the CI container has no kicad-cli.
+    mkdirSync(join(root, 'renderer'));
+    Object.assign(process.env, fakeRenderer(join(root, 'renderer')));
     t.after(async () => {
       const base = join(root, '.gate/cli');
       if (existsSync(base)) {

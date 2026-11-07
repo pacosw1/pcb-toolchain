@@ -9,6 +9,7 @@ import { now } from './lib/lean-clock.ts';
 import { compactTerminal, events, gateDirectory, type Dict } from './lib/pcb-runs.ts';
 import { OPERATIONS } from './lib/pcb-candidate-admission.ts';
 import { evidenceFiles } from './lib/pcb-evidence.ts';
+import { contractProblem } from './lib/stage-contracts.ts';
 import { gateOutcome, type Finding } from './lib/pcb-gate-outcome.ts';
 import { jsonDumps, jsonLoads } from './lib/py-compat.mjs';
 import { CheckJournal, type Row } from './lib/pcb-check-journal.ts';
@@ -102,6 +103,9 @@ function finalize(ownerPath: string): number {
   journal.emit('stage.start', { ...sealing.fields });
   try { result.evidence_sha256 = evidenceFiles(folder); journal.emit('stage.end', sealing.end()); }
   catch (error) { journal.emit('stage.end', sealing.end('error')); Object.assign(result, { status: 'error', exit_code: 2, cause: `cannot bind run evidence: ${String(error)}` }); }
+  // A place, edit or route run passes only when each file of its stage contract is in the sealed record.
+  const broken = result.status === 'passed' ? contractProblem(manifest, folder, result.evidence_sha256 as Record<string, string>) : null;
+  if (broken) Object.assign(result, { status: 'error', exit_code: 2, candidate_verified: false, cause: `stage contract not met: ${broken}` });
   Object.assign(result, { elapsed_s: Math.round((now() - started) * 1000) / 1000,
     timing: timingJson(journal.timeline.summary(undefined, true)), ended_unix_s: Date.now() / 1000 });
   verifyLock(folder);

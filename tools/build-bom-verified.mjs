@@ -3,18 +3,21 @@
 //
 //   node tools/build-bom-verified.mjs BOARD [--boards N]
 //
-// 1. kicad-cli netlist of the board schematic (gate.json / gate.pending.json names the project); one line per C-number
+// 1. kicad-cli netlist of the board schematic (gate.json, or gate.pending.json when the registry row has pending_gate, names the project); one line per C-number
 //    (footprint iot-lab:<C>), DNP parts on their own line.
 // 2. BOARD/BOM-JLC.csv (Designator, Value, LCSC Part #) -> tools/jlc_stock.mjs -> registry/evidence/<today>/<BOARD>-stock.json
 //    (class Basic / Extended, stock, sha256 of the response).
 // 3. BOARD/BOM-VERIFIED.csv in the ESP32-CORE column set: manufacturer / MPN / package from the newest JLC snapshot
-//    (registry/evidence/*/*/<C>/<C>.json), datasheet = registry/datasheets/*<C>.pdf.
+//    (registry/evidence/<day>/**/<C>.json, purchase_record of that C), datasheet = a registry/datasheets/*.pdf proven to be
+//    for that C (tools/lib/bom-evidence.mjs). The files go to the packet folder: for a revision gate (CELLULAR-B), the owner board.
 // Stock is not reserved: recheck it on the order day. One line PASS / FAIL at the end (FAIL: a C-number without snapshot,
 // datasheet or stock record).
 import {existsSync, mkdirSync, mkdtempSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, relative} from 'node:path';
-import {PyError, cli, compare, csvLine, get, globNames, head, item, jsonLoad, lexists, osError, parseArgs, print, processText, pyStr, readText, run, sorted, splitlines, strip, today, truthy} from './lib/py-compat.mjs';
+import {PyError, cli, compare, csvLine, get, head, item, jsonLoad, osError, parseArgs, print, processText, pyStr, readText, run, sorted, splitlines, strip, today, truthy} from './lib/py-compat.mjs';
+import {gateFileName, packetDirectory} from './lib/board-registry.mjs';
+import {evidenceLookup} from './lib/bom-evidence.mjs';
 import {fileRoot} from './lib/project-root.mjs';
 import {findText, iter, parseXml} from './lib/xml-read.mjs';
 
@@ -24,10 +27,11 @@ const write = (path, text) => { try { writeFileSync(path, text); } catch (error)
 
 function main() {
   const a = parseArgs({prog: 'build-bom-verified.mjs', positionals: ['board'], options: [{flag: '--boards', type: 'int', fallback: 5n}]}, process.argv.slice(2));
-  const bdir = join(ROOT, 'hardware-design/boards', a.board);
-  const config = ['gate.json', 'gate.pending.json'].map(name => join(bdir, name)).find(path => existsSync(path));
-  if (config === undefined) throw new PyError('StopIteration', '');
-  const sch = join(bdir, item(jsonLoad(config), 'project') + '.kicad_sch');
+  const gdir = join(ROOT, 'hardware-design/boards', a.board);   // gate folder
+  const bdir = join(ROOT, 'hardware-design/boards', packetDirectory(ROOT, a.board));   // packet folder: the owner of a revision gate
+  const gate = gateFileName(ROOT, a.board, gdir);   // the registry row decides active or pending; a conflict is refused
+  if (gate === null) throw new PyError('StopIteration', '');
+  const sch = join(gdir, item(jsonLoad(join(gdir, gate)), 'project') + '.kicad_sch');
   const xml = join(mkdtempSync(join(tmpdir(), 'tmp')), 'net.xml');
   run(KCLI, ['sch', 'export', 'netlist', '--format', 'kicadxml', '-o', xml, sch], {check: true});
   const lines = new Map();   // "<C>|<dnp>" -> line, in netlist order
@@ -52,15 +56,14 @@ function main() {
   const stock = existsSync(stockOut) ? jsonLoad(stockOut) : new Map();
   const parts = stock instanceof Map ? get(stock, 'parts', stock) : new Map();
   const fails = [], rows = [];
-  const evidence = join(ROOT, 'hardware-design/registry/evidence'), datasheets = join(ROOT, 'hardware-design/registry/datasheets');
+  const found = evidenceLookup(join(ROOT, 'hardware-design/registry/evidence'), join(ROOT, 'hardware-design/registry/datasheets'));
   const firstRef = line => sorted(line.refs)[0];
   for (const line of [...lines.values()].sort((x, y) => compare(firstRef(x), firstRef(y)))) {
     const {c, dnp} = line;
-    const snaps = sorted(globNames(evidence).flatMap(day => globNames(join(evidence, day)).map(name => join(evidence, day, name, c, `${c}.json`))).filter(lexists));
-    const pr = snaps.length ? item(jsonLoad(snaps.at(-1)), 'purchase_record') : new Map();
-    const ds = sorted(globNames(datasheets).filter(name => name.endsWith(`${c}.pdf`)).map(name => join(datasheets, name)));
+    const snap = found.snapshot(c), ds = found.datasheets(c);
+    const pr = snap ? item(jsonLoad(snap), 'purchase_record') : new Map();
     const st = parts instanceof Map ? get(parts, c, new Map()) : new Map();
-    if (!snaps.length) fails.push(`${c}: no JLC snapshot`);
+    if (!snap) fails.push(`${c}: no JLC snapshot`);
     if (!ds.length) fails.push(`${c}: no datasheet`);
     if (!dnp && !truthy(st)) fails.push(`${c}: no stock record`);
     const spec = get(pr, 'componentSpecificationEn', '');

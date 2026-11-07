@@ -270,6 +270,11 @@ fn rigid_nets(board: &Board, patterns: &[String], g: &mut Grouping) {
 
 /// A 2-pad capacitor with one pad on GND whose other pad is within `dist` mm of a pin of the same net on an IC joins the nearest
 /// such IC. Every such cap is listed, also those that had a unit.
+/// A tie keeps the relative pose of its parts, and the search does not check the parts of one unit: a tie must not freeze an overlap.
+fn overlaps(a: &Footprint, b: &Footprint) -> bool {
+    a.layer == b.layer && fp_rect(a).meets(fp_rect(b))
+}
+
 fn decaps(board: &Board, dist: f64, g: &mut Grouping) {
     let ics: Vec<&Footprint> = board.footprints.iter().filter(|f| f.pads.len() > 3 && ref_prefix(&f.reference) == "U").collect();
     for fp in &board.footprints {
@@ -279,7 +284,7 @@ fn decaps(board: &Board, dist: f64, g: &mut Grouping) {
         }
         let Some(power) = fp.pads.iter().find(|p| p.net != "GND" && !p.net.is_empty()) else { continue };
         let mut best: Option<(f64, &str)> = None;
-        for ic in &ics {
+        for ic in ics.iter().filter(|ic| !overlaps(fp, ic)) {
             for pin in ic.pads.iter().filter(|q| q.net == power.net) {
                 let gap = pad_gap(power, pin);
                 if best.is_none_or(|(b, _)| gap < b) {
@@ -305,7 +310,7 @@ fn support_ties(board: &Board, tie: f64, skip: &[String], g: &mut Grouping) {
         }
         let (c, nets) = (fp_rect(fp), nets_of(fp));
         let mut best: Option<(f64, &str)> = None;
-        for ic in &ics {
+        for ic in ics.iter().filter(|ic| !overlaps(fp, ic)) {
             let q = fp_rect(ic);
             let gap = (q.x0 - c.x1).max(c.x0 - q.x1).max(q.y0 - c.y1).max(c.y0 - q.y1);
             if gap <= tie && !nets.is_disjoint(&nets_of(ic)) && best.is_none_or(|(b, _)| gap < b) {

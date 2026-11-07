@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,7 +38,7 @@ test('direct blocks CLI supervises the real inventory backend and seals its evid
 });
 
 test('owned block bind returns a sealed draft artifact and rejects changed identity', { skip: iotrouteMissing() }, async t => {
-  const root = mkdtempSync(join(tmpdir(), 'pcb-block-bind-'));t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'pcb-block-bind-')));t.after(() => rmSync(root, { recursive: true, force: true }));
   const tools = fileURLToPath(new URL('..', import.meta.url));symlinkSync(tools, join(root, 'tools'));
   const source = join(root, 'hardware-design/blocks/iot-lab.kicad_blocks/MODULE.kicad_block');mkdirSync(source, { recursive: true });
   const fp = (ref: string, path: string, net: string, xy: string, angle: number) => `(footprint "Lib:Exact" (layer "F.Cu") (at ${xy} ${angle})
