@@ -65,8 +65,8 @@ export async function startCheck(options: CheckOptions): Promise<string> {
       || !Number.isSafeInteger(options.loopContext.round) || options.loopContext.round < 1 || options.loopContext.round > 8
       || !/^[a-f0-9]{24}$/.test(options.loopContext.launch_id) || options.loopContext.source_sha256 !== actionRecord?.source_revision
       || !Number.isFinite(options.loopContext.deadline_ms) || options.loopContext.deadline_ms <= Date.now())) throw new Error('invalid or expired loop context');
-  // A loop round is a decision of its own (tools/ROUTING-LOOP.md): its context is checked above.
-  if (operation === 'route' && !options.loopContext) assertRouteNotRepeated(base, root, options.board, actionRecord);
+  // A loop round passes only with inputs that differ from the stuck run or with a recorded decision, as any other route.
+  if (operation === 'route') assertRouteNotRepeated(base, root, options.board, actionRecord);
   const node = which(process.env.NODE ?? 'node');
   if (!node) throw new Error('Node.js is required to run the existing gate');
   mkdirSync(base, { recursive: true });

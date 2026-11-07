@@ -80,7 +80,7 @@ test('a missing runs folder has no stuck route', () => {
   assertRouteNotRepeated(join(tmpdir(), 'route-repeat-missing-folder'), ROOT, 'X', same);
 });
 
-test('route admission stops a repeat of a stuck route before a run folder or a worker exists', async t => {
+function stuckStart(t: { after(fn: () => void): void }) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'route-repeat-start-'))), base = join(root, '.gate/cli');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const board = join(root, 'hardware-design/boards/X');
@@ -98,6 +98,25 @@ test('route admission stops a repeat of a stuck route before a run folder or a w
   mkdirSync(join(base, 'run-a/operation'), { recursive: true });
   writeFileSync(join(base, 'run-a/run.json'), JSON.stringify({ root, board: 'X', operation: 'route', created_at: '2026-11-06T10:00:00Z', action: admitted }));
   writeFileSync(join(base, 'run-a/operation/stuck.json'), '{}');
-  await assert.rejects(startCheck(request), /route stopped.*run-a.*routing --json --follow move X --evidence/s);
-  assert.deepEqual(readdirSync(base), ['run-a']);
+  return { base, request, revision: (admitted as { source_revision: string }).source_revision };
+}
+
+const loop = (source_sha256: string, deadline_ms: number) => ({ id: 'loop-0123456789abcdef', round: 2, launch_id: 'a'.repeat(24), source_sha256, deadline_ms });
+
+test('route admission stops a repeat of a stuck route before a run folder or a worker exists', async t => {
+  const f = stuckStart(t);
+  await assert.rejects(startCheck(f.request), /route stopped.*run-a.*routing --json --follow move X --evidence/s);
+  assert.deepEqual(readdirSync(f.base), ['run-a']);
+});
+
+test('B10: a valid loop context does not skip the stop of a repeated route', async t => {
+  const f = stuckStart(t);
+  await assert.rejects(startCheck({ ...f.request, loopContext: loop(f.revision, Date.now() + 60_000) }), /route stopped.*run-a/s);
+  assert.deepEqual(readdirSync(f.base), ['run-a']);
+});
+
+test('B10: a loop context with another source, an old deadline or a bad id stops the start', async t => {
+  const f = stuckStart(t), now = Date.now();
+  for (const loopContext of [loop('other', now + 60_000), loop(f.revision, now - 1), { ...loop(f.revision, now + 60_000), id: 'loop-x' }, { ...loop(f.revision, now + 60_000), round: 9 }])
+    await assert.rejects(startCheck({ ...f.request, loopContext }), /invalid or expired loop context/);
 });
