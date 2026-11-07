@@ -380,6 +380,17 @@ next to it, and one line in `.gate/release-approval/BOARD.jsonl`. The states are
 `g5_ready: false`. `--by` is any text: the tool does not check who the person is. The `claude-cad-guard.mjs` hook
 asks a person before `--approve` and before an edit of a `release-approval*` file.
 
+### Order record
+
+`tools/pcb release-order BOARD` lists the recorded orders of a board. A person records an order after they place it,
+with `--record --candidate DIR --by NAME --what TEXT --quantity N --reference TEXT`. The tool never orders and never
+uploads: it only records. The command stops unless the release approval for the candidate is `approved`. It stops on a
+quantity that is not a positive whole number and on an order reference that exists. It appends one line to
+`hardware-design/boards/BOARD/release-orders.jsonl` (schema `iot-lab.release-order.v1`) with `by`, `what`, `quantity`,
+`reference`, the sha256 of the candidate manifest (the release) and the sha256 of the approval record. A damaged line
+is an error, not an empty list. The file is no gate input. The hook asks a person before `--record` and before an edit
+of this file.
+
 [Block qualification](BLOCK-QUALIFICATION.md) describes native inventory and
 source/target-bound receipts. Draft, verified applicability and measured bench
 proof remain different states. Missing native bindings/reviews stay draft.

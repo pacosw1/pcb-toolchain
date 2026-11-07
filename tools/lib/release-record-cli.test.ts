@@ -27,7 +27,8 @@ function fixture(t: { after(fn: () => void): void }) {
   sealFixtureBoard(root, 'X');
   const call = (...args: string[]) => spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', cli, '--project', root, ...args], { encoding: 'utf8' });
   const approve = (...more: string[]) => call('release-approval', 'X', '--candidate', join(root, 'candidate'), '--approve', '--by', 'Ana', '--reason', 'checked', '--report', join(root, 'report.json'), '--image', join(root, 'top.png'), ...more);
-  return { root, board, call, approve, pcb: join(board, 'cad/X.kicad_pcb') };
+  const order = (...more: string[]) => call('release-order', 'X', '--record', '--candidate', join(root, 'candidate'), '--by', 'Ana', '--what', '5 boards', '--quantity', '5', '--reference', 'JLC-1', ...more);
+  return { root, board, call, approve, order, pcb: join(board, 'cad/X.kicad_pcb') };
 }
 
 test('without a record the release is not approved and the command exits 1', t => {
@@ -77,3 +78,29 @@ test('approve needs all four values, and the other values need approve', t => {
   assert.notEqual(f.call('release-approval', 'NOPE', '--candidate', join(f.root, 'candidate')).status, 0);
 });
 
+test('an order is recorded for an approved release and listed; it places no order', t => {
+  const f = fixture(t);
+  assert.equal(f.approve().status, 0);
+  const done = f.order('--json');
+  assert.equal(done.status, 0, done.stderr);
+  assert.equal(JSON.parse(done.stdout).reference, 'JLC-1');
+  const text = f.order('--reference', 'JLC-2');
+  assert.match(text.stdout, /placed no order/);
+  const list = f.call('release-order', 'X', '--json');
+  assert.deepEqual(JSON.parse(list.stdout).orders.map((entry: { reference: string }) => entry.reference), ['JLC-1', 'JLC-2']);
+});
+
+test('an order is refused with no approval, with a stale approval, and with a bad quantity', t => {
+  const f = fixture(t);
+  const none = f.order();
+  assert.notEqual(none.status, 0);
+  assert.match(none.stderr, /no approved release/);
+  assert.equal(f.approve().status, 0);
+  assert.equal(f.order('--quantity', '0').status, 2);
+  assert.equal(f.order('--quantity', 'many').status, 2);
+  writeFileSync(join(f.root, 'candidate/release-manifest.json'), MANIFEST.replace('false', 'true'));
+  const stale = f.order();
+  assert.notEqual(stale.status, 0);
+  assert.match(stale.stderr, /stale/);
+  assert.equal(existsSync(join(f.board, 'release-orders.jsonl')), false);
+});
