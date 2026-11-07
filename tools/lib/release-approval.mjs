@@ -7,6 +7,7 @@
 import {createHash,randomBytes} from 'node:crypto';
 import {existsSync,mkdirSync,readFileSync,renameSync,rmSync,writeFileSync} from 'node:fs';
 import {join,relative,resolve,sep} from 'node:path';
+import {withdrawnBy} from './change-log.ts';
 import {assertCommand} from './board-machine.ts';
 
 export const RELEASE_APPROVAL_SCHEMA='iot-lab.release-approval.v1';
@@ -56,7 +57,8 @@ export function releaseApprovalStatus(root,board,candidate) {
   for(const key of ['report','image'])if(text(record[key]) && (record[key].startsWith('/') || record[key].split('/').includes('..')))problems.push(`${key} must be a path inside the project`);
  }
  if(problems.length)return status('invalid',{problems});
- const stale=[],current=candidateSha256(candidate);
+ const stale=[],current=candidateSha256(candidate),withdrawn=withdrawnBy(root,board,'release',sha256(readFileSync(path)));
+ if(withdrawn)stale.push(withdrawn);
  if(current===null)stale.push(`the candidate has no release-manifest.json (${join(candidate,'release-manifest.json')})`);
  else if(current!==record.candidate_sha256)stale.push('the release candidate changed since the approval');
  for(const [key,name] of [['report','report'],['image','image']]) {

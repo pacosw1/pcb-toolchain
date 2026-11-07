@@ -4,6 +4,7 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Evidenced } from './board-machine.ts';
+import { closedRevisions } from './change-log.ts';
 import { readObject, sha256File } from './json-file.ts';
 import { verifySettled } from './pcb-evidence.ts';
 import { RUN_ID } from './pcb-runs.ts';
@@ -44,10 +45,10 @@ function cadAfterOrder(root: string, board: string, run: ReleaseRun | undefined)
 
 export function releaseView(root: string, board: string, base: string): ReleaseView {
   const runs = sealedReleases(base, board), problems: string[] = [];
-  let orders: ReleaseOrder[] = [];
-  try { orders = releaseOrders(root, board); } catch (error) { problems.push((error as Error).message); }
+  let orders: ReleaseOrder[] = [], closed = new Set<string>();
+  try { orders = releaseOrders(root, board); closed = closedRevisions(root, board); } catch (error) { problems.push((error as Error).message); }
   // The newest sealed release is the candidate, so a newer release makes the approval stale. `base` holds no manifest, so no run reads as stale.
-  const status = releaseApprovalStatus(root, board, runs.at(-1)?.candidate ?? base), last = orders.at(-1);
+  const status = releaseApprovalStatus(root, board, runs.at(-1)?.candidate ?? base), last = orders.filter(order => !closed.has(order.candidate_sha256)).at(-1);
   const cad = problems.length ? 'unknown' : last ? cadAfterOrder(root, board, runs.find(run => run.manifest === last.candidate_sha256)) : 'no_order';
   return { approval: { state: status.state, path: status.path, by: status.approval?.by ?? null, problems: status.problems, stale: status.stale }, orders, cad_after_order: cad, problems };
 }

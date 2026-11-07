@@ -7,6 +7,8 @@ import {tmpdir} from 'node:os';
 import {dirname,join} from 'node:path';
 import {test} from 'node:test';
 import {approveRelease} from './release-approval.mjs';
+import {recordChange} from './change-log.ts';
+import {recordOrder} from './release-order.mjs';
 import {releaseFixtureBoard} from './cad-seal-fixture.ts';
 import {releaseReadiness} from './release-readiness.mjs';
 
@@ -24,6 +26,17 @@ function fixture(t) {
  const image=put('top.svg','<svg xmlns="http://www.w3.org/2000/svg"/>');
  return {root,candidate:join(root,'candidate'),approve:()=>approveRelease(root,'X',join(root,'candidate'),{by:'Ana',reason:'checked',report,image})};
 }
+
+test('an open defect blocks readiness of its release until a decision ends it',async t=>{
+ const f=fixture(t),hash=sha(MANIFEST),defect=result=>result.findings.filter(row=>row.check==='open_defect').length;
+ f.approve();
+ recordOrder(f.root,'X',f.candidate,{by:'Ana',what:'5 boards',quantity:5,reference:'PO-1'});
+ assert.equal(defect(await releaseReadiness(f.root,'X',f.candidate)),0);
+ recordChange(f.root,'X',{kind:'fab_defect',reason:'short on U3',by:'Ana',refs:[hash]});
+ assert.equal(defect(await releaseReadiness(f.root,'X',f.candidate)),1);
+ recordChange(f.root,'X',{kind:'defect_closed',reason:'reworked',by:'Ana',refs:[hash,'use_as_is']});
+ assert.equal(defect(await releaseReadiness(f.root,'X',f.candidate)),0);
+});
 
 test('readiness reports a missing approval and keeps G5 false',async t=>{
  const f=fixture(t);

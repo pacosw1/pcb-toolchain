@@ -7,7 +7,7 @@ import test, { type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { boardView, judgedEvidence, viewText, type Decide } from './board-view.ts';
 import { reseal } from './cad-seal.ts';
-import { sealFixtureBoard } from './cad-seal-fixture.ts';
+import { ORDERED_HASH, orderFixture, sealFixtureBoard } from './cad-seal-fixture.ts';
 import { recordChange } from './change-log.ts';
 import { layoutPlanPath } from './layout-plan.ts';
 import { orderCandidate, approveCandidate, releaseRun } from './release-run-fixture.ts';
@@ -88,7 +88,8 @@ test('an unrecorded change shows what to redo and keep from the widest row', asy
 
 test('the last event shows what it asks to redo, with the state of each class now', async t => {
   const f = fixture(t);
-  recordChange(f.root, 'X', { kind: 'fab_defect', reason: 'short on U3', by: 'Ana', refs: ['U3'] });
+  orderFixture(f.root, 'X');
+  recordChange(f.root, 'X', { kind: 'fab_defect', reason: 'short on U3', by: 'Ana', refs: [ORDERED_HASH] });
   const view = await boardView(f.root, 'X', f.base, decide('blocked', 'x'));
   assert.equal(view.change.last?.kind, 'fab_defect');
   assert.equal(view.change.last?.reason, 'short on U3');

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { reseal } from './cad-seal.ts';
+import { ORDERED_HASH, orderFixture } from './cad-seal-fixture.ts';
 import { changeBlock, changePath, changeStatus, groupHashes, readChanges, recordChange } from './change-log.ts';
 import { sha256Text } from './fingerprint.ts';
 import { gateInputs } from './gate-inputs.mjs';
@@ -30,7 +31,8 @@ function fixture(t: TestContext) {
   writeFileSync(join(folder, 'X.kicad_pro'), '{}');
   reseal(root, 'X', { tool: 'fixture', run_id: null });
   const write = (name: string, text: string) => { writeFileSync(join(folder, name), text); reseal(root, 'X', { tool: 'fixture', run_id: null }); };
-  const record = (kind: string, reason = 'a reason', by = 'Ana') => recordChange(root, 'X', { kind, reason, by, refs: [], now: NOW });
+  orderFixture(root, 'X');
+  const record = (kind: string, reason = 'a reason', by = 'Ana') => recordChange(root, 'X', { kind, reason, by, refs: kind === 'fab_defect' ? [ORDERED_HASH] : [], now: NOW });
   return { root, folder, write, record, log: changePath(root, 'X') };
 }
 
@@ -92,7 +94,8 @@ test('the baseline records each group, starts the chain and can be first only', 
   assert.equal(event.id, 'c-0001');
   assert.equal(event.prev_sha256, null);
   assert.equal(event.at, '2026-11-06T10:00:00.000Z');
-  assert.deepEqual(event.groups.schematic, { before: null, after: hashes.schematic });
+  assert.deepEqual({ ...event.groups.schematic, facts: null }, { before: null, after: hashes.schematic, facts: null });
+  assert.deepEqual(Object.keys(event.groups.schematic!.facts), ['values', 'footprints', 'wiring']);
   assert.equal(changeStatus(f.root, 'X').state, 'recorded');
   assert.throws(() => f.record('baseline'), /already has a baseline/);
 });
@@ -111,7 +114,7 @@ test('a kind of a group needs a change in that group and records before and afte
   const event = f.record('stackup_change', 'thinner core');
   assert.equal(event.id, 'c-0002');
   assert.deepEqual(Object.keys(event.groups), ['board_shape']);
-  assert.deepEqual(event.groups.board_shape, { before: before.board_shape, after: groupHashes(f.root, 'X').board_shape });
+  assert.deepEqual({ ...event.groups.board_shape, facts: null }, { before: before.board_shape, after: groupHashes(f.root, 'X').board_shape, facts: null });
   const first = readFileSync(f.log, 'utf8').split('\n')[0]!;
   assert.equal(event.prev_sha256, sha256Text(first));
   assert.equal(changeStatus(f.root, 'X').state, 'recorded');
@@ -178,6 +181,33 @@ test('a JSON file that no check names is no rule', t => {
   assert.equal(changeBlock(f.root, 'X'), null);
 });
 
+const PARTS = '(kicad_sch (symbol (property "Value" "1k") (property "Footprint" "R_0402") (pin "1")))';
+
+test('a kind that cannot explain the diff is refused, and the message names one that can', t => {
+  const f = fixture(t);
+  f.write('X.kicad_sch', PARTS); f.record('baseline');
+  f.write('X.kicad_sch', PARTS.replace('1k', '2k'));
+  assert.throws(() => f.record('net_change', 'false'), /net_change cannot explain the change of values in group schematic\. Use part_swap_new_footprint or part_swap_same_footprint or part_value_change/);
+  f.record('part_value_change', 'true');
+  f.write('X.kicad_sch', PARTS.replace('1k', '2k').replace('(pin "1")', '(pin "2")'));
+  assert.throws(() => f.record('part_value_change', 'false'), /cannot explain the change of wiring/);
+  f.record('net_change', 'true');
+  f.write('X.kicad_sch', PARTS.replace('1k', '2k').replace('(pin "1")', '(pin "2")').replace('R_0402', 'R_0603'));
+  assert.throws(() => f.record('part_swap_same_footprint', 'false'), /cannot explain the change of footprints/);
+  f.record('part_swap_new_footprint', 'true');
+  assert.equal(changeBlock(f.root, 'X'), null);
+});
+
+test('a board shape kind must fit the shape diff', t => {
+  const f = fixture(t); f.record('baseline');
+  f.write('X.kicad_pcb', BOARD.replace('(thickness 1.5)', '(thickness 1.2)'));
+  assert.throws(() => f.record('outline_change', 'false'), /outline_change cannot explain the change of stackup/);
+  f.record('stackup_change', 'true');
+  f.write('X.kicad_pcb', BOARD.replace('(thickness 1.5)', '(thickness 1.2)').replace('(end 50 0)', '(end 60 0)'));
+  assert.throws(() => f.record('design_rule_change', 'false'), /cannot explain the change of outline/);
+  f.record('outline_change', 'true');
+});
+
 test('placement and copper are not an unrecorded change', t => {
   const f = fixture(t); f.record('baseline');
   f.write('X.kicad_pcb', BOARD.replace('(at 1 1)', '(at 9 9)').replace('(gr_line', '(segment (start 1 1) (end 2 2) (width 0.2) (layer "F.Cu") (net 1)) (gr_line'));
@@ -194,7 +224,7 @@ test('a hand edit of the log breaks the chain and fails closed', t => {
     ['unknown kind', text => text.replace('fab_defect', 'nothing')],
   ];
   for (const [name, edit] of edits) {
-    const f = fixture(t); f.record('baseline'); f.record('fab_defect'); f.record('out_of_stock');
+    const f = fixture(t); f.record('baseline'); f.record('fab_defect'); f.record('fab_defect');
     writeFileSync(f.log, edit(readFileSync(f.log, 'utf8')));
     const status = changeStatus(f.root, 'X');
     assert.equal(status.state, 'invalid', name);
@@ -264,9 +294,9 @@ test('pcb change appends one line and a refused request exits with the cause', t
   const refused = run('--kind', 'nothing', '--reason', 'r', '--by', 'Ana');
   assert.notEqual(refused.status, 0);
   assert.match(refused.stderr, /unknown change kind/);
-  const text = run('--kind', 'fab_defect', '--reason', 'short on U3', '--by', 'Ana', '--refs', 'U3,U4');
+  const text = run('--kind', 'fab_defect', '--reason', 'short on U3', '--by', 'Ana', '--refs', ORDERED_HASH);
   assert.equal(text.status, 0, text.stderr);
   assert.match(text.stdout, /c-0002 fab_defect/);
-  assert.deepEqual(readChanges(f.root, 'X')[1]!.refs, ['U3', 'U4']);
+  assert.deepEqual(readChanges(f.root, 'X')[1]!.refs, [ORDERED_HASH]);
   assert.equal(run('--reason', 'r', '--by', 'Ana').status === 0, false);
 });

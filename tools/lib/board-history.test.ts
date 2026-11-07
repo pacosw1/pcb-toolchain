@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { releaseFixtureBoard } from './cad-seal-fixture.ts';
+import { ORDERED_HASH, orderFixture, releaseFixtureBoard } from './cad-seal-fixture.ts';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -41,10 +41,11 @@ test('the log joins the change log, the seal log, the layout log and the runs in
   f.run('run-b', '2026-11-06T12:00:00+00:00');
   reseal(f.root, 'X', { tool: 'pcb-adopt', run_id: 'run-b' });
   recordChange(f.root, 'X', { kind: 'baseline', reason: 'start', by: 'Ana', refs: [], now: at('2026-11-06T13:00:00Z') });
-  recordChange(f.root, 'X', { kind: 'fab_defect', reason: 'short on U3', by: 'Ana', refs: ['U3'], now: at('2026-11-06T15:00:00Z') });
+  orderFixture(f.root, 'X');
+  recordChange(f.root, 'X', { kind: 'fab_defect', reason: 'short on U3', by: 'Ana', refs: [ORDERED_HASH], now: at('2026-11-06T15:00:00Z') });
   writeFileSync(join(f.root, '.gate/layout-plan/X.jsonl'), JSON.stringify({ time: '2026-11-06T14:00:00.000Z', type: 'layout_plan.approved', board: 'X', by: 'Ana', reason: 'reviewed', rules_sha256: 'r', route_plan_sha256: 'p', schematic_sha256: 'c', image: 'i.png', image_sha256: 'h' }) + '\n');
   const history = boardHistory(f.root, 'X', f.base);
-  assert.deepEqual(history.entries.map(entry => [entry.source, entry.id]), [['run', 'run-b'], ['seal', 'seal-1'], ['change', 'c-0001'], ['layout', 'layout-1'], ['change', 'c-0002']]);
+  assert.deepEqual(history.entries.filter(entry => entry.source !== 'release').map(entry => [entry.source, entry.id]), [['run', 'run-b'], ['seal', 'seal-1'], ['change', 'c-0001'], ['layout', 'layout-1'], ['change', 'c-0002']]);
   assert.deepEqual(history.problems, []);
 });
 
@@ -53,7 +54,8 @@ test('each entry has its inputs and outputs', t => {
   f.run('run-a', '2026-11-06T10:00:00+00:00');
   reseal(f.root, 'X', { tool: 'fixture', run_id: null });
   recordChange(f.root, 'X', { kind: 'baseline', reason: 'start', by: 'Ana', refs: [] });
-  recordChange(f.root, 'X', { kind: 'fab_defect', reason: 'short', by: 'Ana', refs: ['U3'] });
+  orderFixture(f.root, 'X');
+  recordChange(f.root, 'X', { kind: 'fab_defect', reason: 'short', by: 'Ana', refs: [ORDERED_HASH] });
   const { entries } = boardHistory(f.root, 'X', f.base);
   const run = entries.find(entry => entry.id === 'run-a')!, seal = entries.find(entry => entry.source === 'seal')!, change = entries.find(entry => entry.id === 'c-0002')!, base = entries.find(entry => entry.id === 'c-0001')!;
   assert.equal(run.sealed, true);
@@ -62,7 +64,7 @@ test('each entry has its inputs and outputs', t => {
   assert.deepEqual(run.outputs.map(item => item.path), [join(f.base, 'run-a/run.json'), join(f.base, 'run-a/images/top.svg')]);
   assert.equal(seal.inputs[0]!.sha256, null);
   assert.ok(seal.outputs[0]!.sha256);
-  assert.deepEqual(change.inputs, [{ name: 'U3' }]);
+  assert.deepEqual(change.inputs, [{ name: ORDERED_HASH }]);
   assert.equal(base.outputs.length, 3);
   assert.equal(change.by, 'Ana');
 });

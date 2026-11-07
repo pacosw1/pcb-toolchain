@@ -5,16 +5,19 @@
 // The log is mandatory: a sealed board with no log stops at each guarded command until `--kind baseline` starts the log.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { boardShapeSha256 } from './board-shape.ts';
-import { bindChangeLog, isCanonicalRoot, schematicSha256, sealedChangeLog, sealedJson, verifySeal, withSealLock } from './cad-seal.ts';
+import { boardFacts, boardShapeSha256 } from './board-shape.ts';
+import { bindChangeLog, isCanonicalRoot, schematicFiles, schematicSha256, sealedChangeLog, sealedJson, verifySeal, withSealLock } from './cad-seal.ts';
 import { sha256Text } from './fingerprint.ts';
 import { sha256File } from './json-file.ts';
 import { durableAppend } from './pcb-check-durable.ts';
+import { layoutPlanStatus } from './layout-plan.ts';
 import { CHANGE_FILE } from './pcb-source-policy.ts';
+import { releaseApprovalPath } from './release-approval.mjs';
+import { releaseOrders } from './release-order.mjs';
 import { loadTransitions, widestKind, type Kind, type TransitionTable } from './transitions.ts';
 
 type Row = Record<string, unknown>;
-export interface GroupChange { before: string | null; after: string }
+export interface GroupChange { before: string | null; after: string; facts: Record<string, string> }
 export interface ChangeEvent {
   id: string; at: string; by: string; kind: string; reason: string; refs: string[];
   groups: Record<string, GroupChange>; prev_sha256: string | null;
@@ -53,6 +56,19 @@ export function groupHashes(root: string, board: string, table: TransitionTable 
   }));
 }
 
+const PART_TEXT = /(\(property "(?:Value|Footprint)" ")((?:[^"\\]|\\.)*)"/g;
+
+/** One hash for each fact of the schematic group. A value and a footprint are fields; each other difference counts as wiring. */
+function schematicFacts(root: string, board: string): Record<string, string> {
+  const texts = schematicFiles(root, board).map(path => readFileSync(path, 'utf8'));
+  const field = (name: string): string => sha256Text(JSON.stringify(texts.flatMap(text => [...text.matchAll(PART_TEXT)].filter(match => match[1]!.includes(name)).map(match => match[2]))));
+  return { values: field('"Value"'), footprints: field('"Footprint"'), wiring: sha256Text(JSON.stringify(texts.map(text => text.replace(PART_TEXT, '$1"')))) };
+}
+
+function factsOf(root: string, board: string, group: string, hash: string): Record<string, string> {
+  return group === 'schematic' ? schematicFacts(root, board) : group === 'board_shape' ? boardFacts(root, board) : { all: hash };
+}
+
 function checkLine(row: unknown, index: number, previous: string | null, table: TransitionTable): string | null {
   const name = `line ${index + 1}`;
   if (!isObject(row)) return `${name} is not an object`;
@@ -88,6 +104,72 @@ function recorded(events: ChangeEvent[]): Record<string, string> {
   const hashes: Record<string, string> = {};
   for (const event of events) for (const [group, change] of Object.entries(event.groups)) hashes[group] = change.after;
   return hashes;
+}
+
+/** The facts of GROUP at the last event that recorded it. */
+function recordedFacts(events: ChangeEvent[], group: string): Record<string, string> {
+  return events.findLast(event => group in event.groups)?.groups[group]?.facts ?? {};
+}
+
+const DECISIONS = ['new_revision', 'use_as_is', 'reorder'];
+const isOrdered = (root: string, board: string, hash: string | undefined): boolean => releaseOrders(root, board).some((order: { candidate_sha256: string }) => order.candidate_sha256 === hash);
+
+function defects(events: ChangeEvent[]): Set<string> {
+  const open = new Set<string>();
+  for (const event of events) {
+    if (event.kind === 'fab_defect' || event.kind === 'bringup_failure') open.add(event.refs[0]!);
+    if (event.kind === 'defect_closed') open.delete(event.refs[0]!);
+  }
+  return open;
+}
+
+/** The release hashes with a defect that no `defect_closed` ended. An unreadable log throws: the callers stop on it. */
+export const openDefects = (root: string, board: string): Set<string> => defects(readChanges(root, board));
+
+/** The release hashes that a person ended: their CAD is free for a new revision. An order of such a hash proves no position. */
+export const closedRevisions = (root: string, board: string): Set<string> => new Set(readChanges(root, board)
+  .filter(event => event.kind === 'cad_after_order' || (event.kind === 'defect_closed' && event.refs[1] === 'new_revision')).map(event => event.refs[0]!));
+
+/** The event that withdrew this approval, as a stale line, or null. A log that cannot be read proves no approval. */
+export function withdrawnBy(root: string, board: string, target: 'layout' | 'release', sha256: string): string | null {
+  try {
+    const event = readChanges(root, board).find(row => row.kind === 'approval_withdrawn' && row.refs[0] === target && row.refs[1] === sha256);
+    return event ? `the approval was withdrawn by ${event.id}: ${event.reason}` : null;
+  } catch (error) { return `the change log cannot be read: ${(error as Error).message}`; }
+}
+
+/** The hash that names the current approval of TARGET. */
+function approvalSha256(root: string, board: string, target: string): string {
+  if (target === 'release' && existsSync(releaseApprovalPath(root, board))) return sha256File(releaseApprovalPath(root, board));
+  const approval = target === 'layout' ? layoutPlanStatus(root, board).approval : null;
+  if (approval) return sha256Text(JSON.stringify(approval));
+  throw new Error(`${board} has no ${target} approval to withdraw`);
+}
+
+/** The refs of the event. A kind that names a release or an approval must name a real one. The reason and the facts of a defect stay the claim of a person. */
+function eventRefs(root: string, board: string, kind: string, refs: string[], events: ChangeEvent[]): string[] {
+  const [first, second] = refs;
+  if (kind === 'approval_withdrawn') {
+    if (refs.length !== 1 || (first !== 'layout' && first !== 'release')) throw new Error('approval_withdrawn requires --refs layout or --refs release');
+    return [first, approvalSha256(root, board, first)];
+  }
+  if (kind === 'defect_closed') {
+    if (refs.length !== 2 || !DECISIONS.includes(second!)) throw new Error(`defect_closed requires --refs SHA,DECISION with a decision of ${DECISIONS.join(', ')}`);
+    if (!defects(events).has(first!)) throw new Error(`release ${first} has no open defect`);
+    return refs;
+  }
+  if (kind === 'fab_defect' || kind === 'bringup_failure' || kind === 'cad_after_order') {
+    if (refs.length !== 1 || !isOrdered(root, board, first)) throw new Error(`${kind} requires --refs SHA: the release hash of a recorded order of ${board}`);
+  }
+  return refs;
+}
+
+/** A kind names what it changed. The diff checks that name: each fact that changed must be one that the kind explains. */
+function assertExplained(kind: Kind, before: Record<string, string>, now: Record<string, string>, table: TransitionTable): void {
+  const wrong = Object.keys(now).filter(fact => before[fact] !== now[fact] && !kind.explains!.includes(fact));
+  if (!wrong.length) return;
+  const others = table.kinds.filter(row => row.group === kind.group && wrong.every(fact => row.explains!.includes(fact))).map(row => row.id);
+  throw new Error(`${kind.id} cannot explain the change of ${wrong.join(', ')} in group ${kind.group}. Use ${others.join(' or ')}`);
 }
 
 /** The log must be the one that the seal holds. A workspace copy has no log and a board with no seal has no hash, so neither has a compare. */
@@ -139,9 +221,11 @@ export function recordChange(root: string, board: string, request: ChangeRequest
     const hashes = kind.role === 'baseline' || kind.group ? groupHashes(root, board, table) : {}, last = recorded(status.events);
     if (kind.group && last[kind.group] === hashes[kind.group]) throw new Error(`no change in group ${kind.group} since the last event`);
     const names = kind.role === 'baseline' ? Object.keys(hashes) : kind.group ? [kind.group] : [];
-    const groups = Object.fromEntries(names.map(group => [group, { before: last[group] ?? null, after: hashes[group]! }]));
+    const groups = Object.fromEntries(names.map(group => [group, { before: last[group] ?? null, after: hashes[group]!, facts: factsOf(root, board, group, hashes[group]!) }]));
+    if (kind.group) assertExplained(kind, recordedFacts(status.events, kind.group), groups[kind.group]!.facts, table);
+    const named = eventRefs(root, board, kind.id, refs, status.events);
     const path = changePath(root, board), previous = existsSync(path) ? readFileSync(path, 'utf8').slice(0, -1).split('\n').at(-1)! : null;
-    const event: ChangeEvent = { id: eventId(status.events.length), at: now().toISOString(), by: by.trim(), kind: kind.id, reason: reason.trim(), refs, groups, prev_sha256: previous === null ? null : sha256Text(previous) };
+    const event: ChangeEvent = { id: eventId(status.events.length), at: now().toISOString(), by: by.trim(), kind: kind.id, reason: reason.trim(), refs: named, groups, prev_sha256: previous === null ? null : sha256Text(previous) };
     durableAppend(path, JSON.stringify(event) + '\n');
     bindChangeLog(root, board, sha256File(path));   // a crash before this line leaves a log that fails closed
     return event;

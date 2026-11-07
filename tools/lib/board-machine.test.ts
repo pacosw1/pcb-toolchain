@@ -9,10 +9,10 @@ import { judgedEvidence, type Decide } from './board-view.ts';
 import { acceptSeal, oneEdit, reseal, sealedWrite } from './cad-seal.ts';
 import { changeBlock, changePath, recordChange } from './change-log.ts';
 import { startCheck } from './pcb-check-start.ts';
-import { layoutPlanPath } from './layout-plan.ts';
+import { layoutPlanPath, layoutPlanStatus } from './layout-plan.ts';
 import { recordOrder, releaseOrdersPath } from './release-order.mjs';
 import { approveFixture, PNG } from './layout-plan-fixture.ts';
-import { approveRelease, releaseApprovalPath } from './release-approval.mjs';
+import { approveRelease, releaseApprovalPath, releaseApprovalStatus } from './release-approval.mjs';
 import { admitPlace } from '../pcb-place.ts';
 import { COMMANDS, loadTransitions, parseTransitions } from './transitions.ts';
 
@@ -90,7 +90,7 @@ test('a command with no target stays in its state', () => {
 });
 
 test('a change goes back to its earliest state and never goes forward', () => {
-  const gate = transition(TABLE, 'A18', { type: 'change', kind: 'gate_failed' }, OPEN);
+  const gate = transition(TABLE, 'A18', { type: 'change', kind: 'net_change' }, OPEN);
   assert.deepEqual([gate.ok, gate.ok && gate.to], [true, 'A4']);
   const early = transition(TABLE, 'A2', { type: 'change', kind: 'outline_change' }, OPEN);
   assert.deepEqual([early.ok, early.ok && early.to], [true, 'A2']);
@@ -278,6 +278,61 @@ test('a release approval and an order stop where the machine stops a release, an
   await approveFixture(f.root, 'X');
   assert.equal(approveRelease(f.root, 'X', candidate, { by: 'Ana', reason: 'ok', report, image }).state, 'approved');
   assert.equal(recordOrder(f.root, 'X', candidate, { by: 'Ana', what: 'boards', quantity: 5, reference: 'PO-1' }).reference, 'PO-1');
+});
+
+async function ordered(t: TestContext) {
+  const f = fixture(t), inputs = releaseInputs(f.root); f.plan();
+  await approveFixture(f.root, 'X');
+  const order = (reference: string) => recordOrder(f.root, 'X', inputs.candidate, { by: 'Ana', what: 'boards', quantity: 5, reference });
+  approveRelease(f.root, 'X', inputs.candidate, { by: 'Ana', reason: 'ok', ...inputs });
+  const hash = order('PO-1').candidate_sha256, change = (kind: string, refs: string[]) => recordChange(f.root, 'X', { kind, reason: 'why', by: 'Ana', refs });
+  return { ...f, order, hash, change };
+}
+
+test('a defect names a recorded release, stops its next order, and ends only with a decision', async t => {
+  const f = await ordered(t);
+  assert.throws(() => f.change('fab_defect', ['U3']), /release hash of a recorded order/);
+  assert.throws(() => f.change('bringup_failure', []), /release hash of a recorded order/);
+  f.change('fab_defect', [f.hash]);
+  assert.throws(() => f.order('PO-2'), /open defect.*defect_closed/);
+  assert.throws(() => f.change('defect_closed', [f.hash, 'later']), /new_revision, use_as_is, reorder/);
+  f.change('defect_closed', [f.hash, 'reorder']);
+  assert.equal(f.order('PO-2').reference, 'PO-2');
+  assert.throws(() => f.change('defect_closed', [f.hash, 'reorder']), /no open defect/);
+});
+
+test('a new revision ends the ordered CAD: the order proves no position, and the hash takes no order', async t => {
+  const f = await ordered(t);
+  f.change('bringup_failure', [f.hash]);
+  assert.throws(() => assertCommand(f.root, 'X', 'edit'), /edit is refused at A24/);
+  f.change('defect_closed', [f.hash, 'new_revision']);
+  assert.doesNotThrow(() => assertCommand(f.root, 'X', 'edit'));
+  assert.throws(() => f.order('PO-2'), /closed revision/);
+});
+
+test('cad_after_order names the ordered release and opens CAD work for the next revision', async t => {
+  const f = await ordered(t);
+  assert.throws(() => f.change('cad_after_order', []), /release hash of a recorded order/);
+  f.change('cad_after_order', [f.hash]);
+  assert.doesNotThrow(() => assertCommand(f.root, 'X', 'edit'));
+});
+
+test('a withdrawn approval reads as stale until a new approval, and a kind must name a real approval', async t => {
+  const f = fixture(t), change = (refs: string[]) => recordChange(f.root, 'X', { kind: 'approval_withdrawn', reason: 'no longer true', by: 'Ana', refs });
+  f.plan();
+  await approveFixture(f.root, 'X');
+  assert.throws(() => change(['plan']), /--refs layout or --refs release/);
+  assert.throws(() => change(['release']), /no release approval/);
+  change(['layout']);
+  assert.deepEqual(layoutPlanStatus(f.root, 'X').stale, ['the approval was withdrawn by c-0002: no longer true']);
+  assert.throws(() => assertCommand(f.root, 'X', 'route'), /refused at A8.*layout_approval is stale/s);
+  const inputs = releaseInputs(f.root);
+  await approveFixture(f.root, 'X', 'Ana', 'a new look at the plan');
+  assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved');
+  approveRelease(f.root, 'X', inputs.candidate, { by: 'Ana', reason: 'ok', ...inputs });
+  change(['release']);
+  assert.match(releaseApprovalStatus(f.root, 'X', inputs.candidate).stale[0]!, /withdrawn by c-0003/);
+  assert.throws(() => recordOrder(f.root, 'X', inputs.candidate, { by: 'Ana', what: 'boards', quantity: 5, reference: 'PO-1' }), /no approved release/);
 });
 
 test('startCheck asks the machine before a run starts', async t => {

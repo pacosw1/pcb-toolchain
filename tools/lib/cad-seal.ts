@@ -49,6 +49,11 @@ export function schematicSha256(root: string, board: string): string {
   return sha256Text(JSON.stringify(Object.fromEntries(Object.entries(sealedFiles(root, board)).filter(([path]) => /\.kicad_(?:sch|pro)$/.test(path)))));
 }
 
+/** The sealed schematic files of BOARD as full paths. */
+export function schematicFiles(root: string, board: string): string[] {
+  return Object.keys(sealedFiles(root, board)).filter(path => /\.kicad_(?:sch|pro)$/.test(path)).map(path => join(root, path));
+}
+
 /** The sealed JSON files of BOARD with their hashes: the gate data files and each rule file that gate.json names. */
 export function sealedJson(root: string, board: string): Record<string, string> {
   return Object.fromEntries(Object.entries(sealedFiles(root, board)).filter(([path]) => path.endsWith('.json')));

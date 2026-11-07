@@ -53,10 +53,11 @@ test('each state with a gap in section H has that gap in the table, and no other
 
 test('each row of table G.3 has a kind with the same re-enter states', () => {
   const table = raw(), changes = rows('### G.3 Table of change kinds');
-  assert.equal(changes.length, 20);
+  assert.equal(changes.length, 21);
+  const noKind = ['T5', 'T6', 'T10', 'T12', 'T13', 'T14', 'T17', 'T19'];   // the readers of the evidence find these; a kind would add no effect
   for (const [row, , , , reenter] of changes) {
     const kinds = table.kinds.filter((kind: { doc: string }) => kind.doc === row);
-    assert.ok(kinds.length, `${row} has a kind`);
+    assert.equal(kinds.length > 0, !noKind.includes(row!), `${row} has a kind, or is one of the rows with none`);
     for (const kind of kinds) for (const state of ids(reenter!)) assert.ok(kind.reenter.includes(state), `${row} re-enters ${state}`);
   }
 });

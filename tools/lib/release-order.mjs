@@ -6,6 +6,7 @@ import {createHash} from 'node:crypto';
 import {closeSync,existsSync,fsyncSync,mkdirSync,openSync,readFileSync,writeSync} from 'node:fs';
 import {join} from 'node:path';
 import {assertCommand} from './board-machine.ts';
+import {closedRevisions,openDefects} from './change-log.ts';
 import {releaseApprovalPath,releaseApprovalStatus} from './release-approval.mjs';
 
 export const RELEASE_ORDER_SCHEMA='iot-lab.release-order.v1';
@@ -46,6 +47,9 @@ export function recordOrder(root,board,candidate,{by,what,quantity,reference}={}
  const approval=releaseApprovalStatus(root,board,candidate);
  const details=[...approval.problems,...approval.stale].join('; ');
  need(approval.state==='approved',`${board} has no approved release (approval state: ${approval.state})${details?`: ${details}`:''}. A person approves the release first: tools/pcb release-approval ${board} --candidate DIR --approve --by NAME --reason TEXT --report FILE --image FILE`);
+ const hash=approval.approval.candidate_sha256;
+ need(!openDefects(root,board).has(hash),`release ${hash} has an open defect. End it: tools/pcb change ${board} --kind defect_closed --refs ${hash},DECISION --reason TEXT --by NAME`);
+ need(!closedRevisions(root,board).has(hash),`release ${hash} is a closed revision: make a new release`);
  const orders=releaseOrders(root,board);
  need(!orders.some(entry=>entry.reference===reference.trim()),`order reference ${reference.trim()} is already recorded for ${board}`);
  const entry={schema:RELEASE_ORDER_SCHEMA,board,by:by.trim(),candidate_sha256:approval.approval.candidate_sha256,

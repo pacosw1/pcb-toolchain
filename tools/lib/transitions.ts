@@ -30,7 +30,7 @@ export interface State {
   readonly inputs: readonly Item[]; readonly outputs: readonly Item[]; readonly gap?: string;
 }
 export interface Kind {
-  readonly id: string; readonly doc: string; readonly role: Role; readonly group: string | null; readonly reenter: readonly StateId[];
+  readonly id: string; readonly doc: string; readonly role: Role; readonly group: string | null; readonly explains?: readonly string[]; readonly reenter: readonly StateId[];
   readonly redo: readonly Evidence[]; readonly keep: readonly Evidence[]; readonly approve: readonly Approver[];
 }
 /** A command that may run from each state of `from`. `to` is null when the command stays in its state. */
@@ -45,7 +45,9 @@ export type Readers = Partial<Record<Evidence, () => Freshness>>;
 type Row = Record<string, unknown>;
 const TOP_KEYS = ['schema', 'groups', 'states', 'kinds', 'moves'];
 const STATE_KEYS = ['id', 'name', 'status', 'evidence', 'next', 'back', 'inputs', 'outputs', 'gap'];
-const KIND_KEYS = ['id', 'doc', 'role', 'group', 'reenter', 'redo', 'keep', 'approve'];
+const KIND_KEYS = ['id', 'doc', 'role', 'group', 'explains', 'reenter', 'redo', 'keep', 'approve'];
+/** What a diff can tell apart in each group. A kind names the facts that it explains. */
+export const FACTS: Record<string, readonly string[]> = { schematic: ['values', 'footprints', 'wiring'], board_shape: ['stackup', 'outline', 'design_rules'], rules: ['all'] };
 const PLACEHOLDERS = ['board', 'project', 'run'];
 const STATE_ID = /^[AB][1-9]\d*$/;
 const FILE = fileURLToPath(new URL('../pcb-transitions.json', import.meta.url));
@@ -124,6 +126,8 @@ function checkKind(kind: unknown, ids: Set<string>, groups: string[], problems: 
   for (const key of ['redo', 'keep'] as const) for (const item of list(kind[key])) if (!member(EVIDENCE, item)) problems.push(`${id}: ${key} ${String(item)} is not a class`);
   for (const item of list(kind.approve)) if (!member(APPROVALS, item)) problems.push(`${id}: approve ${String(item)} is not an approver`);
   for (const item of list(kind.redo)) if (list(kind.keep).includes(item)) problems.push(`${id}: ${String(item)} is in redo and keep`);
+  if ((kind.group === null) !== (kind.explains === undefined)) problems.push(`${id}: a kind of a group names what it explains, and only such a kind`);
+  for (const fact of list(kind.explains)) if (!FACTS[String(kind.group)]?.includes(String(fact))) problems.push(`${id}: ${String(fact)} is no fact of group ${String(kind.group)}`);
   if (kind.role === 'change' && !list(kind.reenter).length) problems.push(`${id}: reenter needs at least one state`);
   if (kind.role !== 'change' && (kind.group !== null || list(kind.reenter).length || list(kind.redo).length || list(kind.keep).length)) problems.push(`${id}: role ${String(kind.role)} has no group, reenter, redo or keep`);
 }
