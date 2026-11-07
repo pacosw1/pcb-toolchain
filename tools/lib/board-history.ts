@@ -8,15 +8,20 @@ import { verifySettled } from './pcb-evidence.ts';
 import { RUN_ID } from './pcb-runs.ts';
 import { releaseApprovalStatus } from './release-approval.mjs';
 import { releaseOrders, type ReleaseOrder } from './release-order.mjs';
+import { loadTransitions } from './transitions.ts';
 
 type Row = Record<string, unknown>;
 export interface HistoryItem { name: string; sha256?: string | null; path?: string }
 export interface HistoryEntry {
   at: string | null; placed_by: 'time' | 'run' | 'log_order'; source: 'change' | 'seal' | 'layout' | 'run' | 'release'; id: string; type: string; by: string | null; summary: string;
-  inputs: HistoryItem[]; outputs: HistoryItem[]; status?: string; sealed?: boolean; cause?: string;
+  stages: string[]; inputs: HistoryItem[]; outputs: HistoryItem[]; status?: string; sealed?: boolean; cause?: string;
 }
 export interface BoardHistory { schema: 'iot-lab.board-history.v1'; board: string; entries: HistoryEntry[]; problems: string[] }
 type Placed = HistoryEntry & { order: number };
+
+/** The stage that a run of each operation belongs to. An edit run belongs to the stage of its kind. */
+const RUN_STAGE: Record<string, string> = { design: 'A1', parts: 'A3', place: 'A11', route: 'A14', repair: 'A16', check: 'A18', build: 'A20', release: 'A21' };
+const runStages = (operation: string, kind: unknown): string[] => { const stage = RUN_STAGE[operation === 'edit' ? String(kind) : operation]; return stage ? [stage] : []; };
 
 const messageOf = (error: unknown): string => (error as Error).message;
 const text = (value: unknown): string | null => typeof value === 'string' ? value : null;
@@ -35,7 +40,7 @@ function changes(root: string, board: string, problems: string[]): Placed[] {
   try {
     return readChanges(root, board).map(event => {
       const groups = Object.entries(event.groups);
-      return { at: event.at, placed_by: 'time', order: timeOf(event.at), source: 'change', id: event.id, type: event.kind, by: event.by, summary: event.reason,
+      return { at: event.at, placed_by: 'time', order: timeOf(event.at), source: 'change', id: event.id, type: event.kind, by: event.by, summary: event.reason, stages: [...(loadTransitions().kinds.find(kind => kind.id === event.kind)?.reenter ?? [])],
         inputs: [...event.refs.map(name => ({ name })), ...groups.filter(([, change]) => event.kind !== 'baseline' || change.before).map(([name, change]) => ({ name, sha256: change.before }))],
         outputs: groups.map(([name, change]) => ({ name, sha256: change.after })) };
     });
@@ -45,7 +50,7 @@ function changes(root: string, board: string, problems: string[]): Placed[] {
 function layouts(root: string, board: string, problems: string[]): Placed[] {
   return jsonLines(join(root, '.gate/layout-plan', `${board}.jsonl`), 'layout log', problems).map((row, index) => {
     const at = text(row.time), keys = ['rules_sha256', 'route_plan_sha256', 'schematic_sha256', 'board_shape_sha256'].filter(key => key in row);
-    return { at, placed_by: 'time', order: at ? timeOf(at) : -Infinity, source: 'layout', id: `layout-${index + 1}`, type: String(row.type), by: text(row.by), summary: text(row.reason) ?? '',
+    return { at, placed_by: 'time', order: at ? timeOf(at) : -Infinity, source: 'layout', id: `layout-${index + 1}`, type: String(row.type), by: text(row.by), summary: text(row.reason) ?? '', stages: [row.type === 'layout_plan.approved' ? 'A8' : 'A7'],
       inputs: keys.map(key => ({ name: key.replace('_sha256', ''), sha256: text(row[key]) })),
       outputs: text(row.image) ? [{ name: 'image', path: text(row.image)!, sha256: text(row.image_sha256) }] : [] };
   });
@@ -55,7 +60,7 @@ function runEntry(base: string, id: string, board: string): Placed | null {
   const folder = join(base, id), run = readObject<Row>(join(folder, 'run.json'));
   if (run.board !== board) return null;
   const at = text(run.created_at), action = (run.action ?? {}) as Row;
-  const entry: Placed = { at, placed_by: 'time', order: at ? timeOf(at) : -Infinity, source: 'run', id, type: String(run.operation), by: null, summary: '', sealed: false, inputs: [
+  const entry: Placed = { at, placed_by: 'time', order: at ? timeOf(at) : -Infinity, source: 'run', id, type: String(run.operation), by: null, summary: '', sealed: false, stages: runStages(String(run.operation), run.kind), inputs: [
     ...(text(action.source_revision) ? [{ name: 'source_revision', sha256: text(action.source_revision) }] : []),
     ...(text(run.gate_config_sha256) ? [{ name: 'gate_config', sha256: text(run.gate_config_sha256) }] : [])], outputs: [] };
   try {
@@ -79,7 +84,7 @@ function seals(root: string, board: string, known: Placed[], problems: string[])
   return rows.map((row, index) => {
     const run = byId.get(String(row.run_id));
     order = Math.max(order, run?.order ?? -Infinity);
-    return { at: null, placed_by: run ? 'run' : 'log_order', order, source: 'seal', id: `seal-${index + 1}`, type: String(row.tool), by: null, summary: text(row.reason) ?? '',
+    return { at: null, placed_by: run ? 'run' : 'log_order', order, source: 'seal', id: `seal-${index + 1}`, type: String(row.tool), by: null, summary: text(row.reason) ?? '', stages: ['A4', 'B4'],
       inputs: [{ name: 'cad-seal', sha256: text(row.before) }], outputs: [{ name: 'cad-seal', sha256: text(row.after) }] };
   });
 }
@@ -93,12 +98,12 @@ function releases(root: string, board: string, base: string, known: Placed[], pr
   // `base` holds no manifest. The history shows the record, and `pcb state` judges its freshness.
   const { approval, problems: bad } = releaseApprovalStatus(root, board, base);
   problems.push(...bad);
-  const rows: Placed[] = approval ? [{ ...placed(timeIn('release_approval.approved', 'candidate_sha256', approval.candidate_sha256)), id: 'release-approval', type: 'release_approval.approved', by: approval.by, summary: approval.reason,
+  const rows: Placed[] = approval ? [{ ...placed(timeIn('release_approval.approved', 'candidate_sha256', approval.candidate_sha256)), id: 'release-approval', type: 'release_approval.approved', by: approval.by, summary: approval.reason, stages: ['A22'],
     inputs: [{ name: 'candidate', sha256: approval.candidate_sha256 }, { name: 'report', path: approval.report, sha256: approval.report_sha256 }, { name: 'image', path: approval.image, sha256: approval.image_sha256 }],
     outputs: [{ name: 'release-approval', path: join('hardware-design/boards', board, 'release-approval.json') }] }] : [];
   let orders: ReleaseOrder[] = [];
   try { orders = releaseOrders(root, board); } catch (error) { problems.push(messageOf(error)); }
-  return [...rows, ...orders.map((order): Placed => ({ ...placed(timeIn('release_order.recorded', 'reference', order.reference)), id: `order-${order.reference}`, type: 'release_order.recorded', by: order.by, summary: `${order.quantity} x ${order.what}`,
+  return [...rows, ...orders.map((order): Placed => ({ ...placed(timeIn('release_order.recorded', 'reference', order.reference)), id: `order-${order.reference}`, type: 'release_order.recorded', by: order.by, summary: `${order.quantity} x ${order.what}`, stages: ['A24'],
     inputs: [{ name: 'candidate', sha256: order.candidate_sha256 }, { name: 'approval', sha256: order.approval_sha256 }], outputs: [{ name: `order ${order.reference}` }] }))];
 }
 

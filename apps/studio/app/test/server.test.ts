@@ -41,7 +41,7 @@ test('a notification has no reply', async () => {
 test('engine exposes the supported method registry', () => {
   assert.deepEqual(registry.names(), ['board.bom', 'board.geometry', 'board.glb', 'board.inspect', 'board.inventory', 'board.parts', 'board.schematic', 'board.spec', 'board.unwatch', 'board.watch', 'engine.info', 'engine.ping', 'file.resolve',
     'gate.check', 'live.events', 'live.geometry', 'live.runs', 'live.state', 'live.unwatch', 'live.watch', 'loop.cancel', 'loop.decide', 'loop.list', 'loop.start', 'loop.status', 'loop.wait', 'op.build', 'op.route', 'part.get', 'parts.index', 'project.open', 'run.adopt', 'run.cancel', 'run.candidate', 'run.findings',
-    'run.get', 'run.list'])
+    'run.get', 'run.list', 'state.unwatch', 'state.watch'])
 })
 
 interface Engine { proc: ChildProcessWithoutNullStreams, port: number, token: string | undefined }

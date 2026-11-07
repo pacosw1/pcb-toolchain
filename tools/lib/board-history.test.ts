@@ -11,6 +11,7 @@ import { changePath, recordChange } from './change-log.ts';
 import { sha256File } from './json-file.ts';
 import { releaseOrdersPath } from './release-order.mjs';
 import { approveCandidate, orderCandidate, releaseRun } from './release-run-fixture.ts';
+import { loadTransitions } from './transitions.ts';
 
 const CLI = fileURLToPath(new URL('../pcb-state.ts', import.meta.url));
 const at = (text: string) => () => new Date(text);
@@ -187,4 +188,24 @@ test('a damaged release record is a problem and the other sources stay', t => {
   const history = boardHistory(f.root, 'X', f.base);
   assert.equal(history.problems.length, 2);
   assert.deepEqual(history.entries.map(entry => entry.id), ['run-rel']);
+});
+
+test('each entry names the stages it belongs to, and the table has every stage', t => {
+  const f = released(t);
+  f.run('run-a', '2026-11-06T10:00:00+00:00');
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  recordChange(f.root, 'X', { kind: 'baseline', reason: 'start', by: 'Ana', refs: [] });
+  recordChange(f.root, 'X', { kind: 'fab_defect', reason: 'short', by: 'Ana', refs: ['U3'] });
+  writeFileSync(join(f.root, '.gate/layout-plan/X.jsonl'), JSON.stringify({ time: '2026-11-06T14:00:00.000Z', type: 'layout_plan.approved', board: 'X', by: 'Ana', reason: 'ok', rules_sha256: 'r', route_plan_sha256: 'p', schematic_sha256: 'c', image: 'i.png', image_sha256: 'h' }) + '\n');
+  const { entries } = boardHistory(f.root, 'X', f.base), stages = (id: string) => entries.find(entry => entry.id === id)!.stages;
+  assert.deepEqual(stages('run-a'), ['A14']);
+  assert.deepEqual(stages('seal-1'), ['A4', 'B4']);
+  assert.deepEqual(stages('c-0001'), []);
+  assert.deepEqual(stages('c-0002'), ['A4', 'A7', 'A14', 'A21']);
+  assert.deepEqual(stages('layout-1'), ['A8']);
+  assert.deepEqual(stages('release-approval'), ['A22']);
+  assert.deepEqual(stages('order-JLC-1'), ['A24']);
+  assert.deepEqual(stages('run-rel'), ['A21']);
+  const ids = new Set(loadTransitions().states.map(state => state.id));
+  for (const entry of entries) for (const stage of entry.stages) assert.ok(ids.has(stage as never), `${entry.id}: ${stage}`);
 });
