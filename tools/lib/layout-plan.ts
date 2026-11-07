@@ -21,7 +21,7 @@ const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0
 // An SVG may start with a BOM, an XML declaration, comments and a doctype. The first element must be svg.
 const SVG_START = /^﻿?\s*(?:<\?xml[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!DOCTYPE[^>]*>\s*)?<svg[\s/>]/;
 const IMAGE_TYPES = ['png', 'svg'];
-const FEATURES =new Set(Object.keys((readObject<{ features?: object }>(fileURLToPath(new URL('../route-features.json', import.meta.url))).features) ?? {}));
+const FEATURES = new Set(Object.keys((readObject<{ features?: object }>(fileURLToPath(new URL('../route-features.json', import.meta.url))).features) ?? {}));
 
 type Row = Record<string, unknown>;
 export interface Approval { by: string; reason: string; rules_sha256: string; route_plan_sha256: string; image: string; image_sha256: string }
@@ -32,11 +32,11 @@ export interface LayoutStatus {
 export interface LayoutBlock { code: 'layout_plan_missing' | 'layout_plan_stale'; message: string }
 /** The nets of the board of BOARD. A test passes a stand-in: the real one reads the board JSON through the daemon. */
 export type NetSource = (root: string, board: string) => PlanNets;
-export type LayoutEmit =(kind: string, data?: Row) => void;
+export type LayoutEmit = (kind: string, data?: Row) => void;
 
 export const layoutPlanPath = (root: string, board: string): string => join(root, 'hardware-design/boards', board, 'layout-plan.json');
 const imageCopyPath = (root: string, board: string, extension: string): string => join(root, 'hardware-design/boards', board, `layout-plan.${extension}`);
-const logPath =(root: string, board: string): string => join(root, '.gate/layout-plan', `${board}.jsonl`);
+const logPath = (root: string, board: string): string => join(root, '.gate/layout-plan', `${board}.jsonl`);
 const isObject = (value: unknown): value is Row => !!value && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown): value is string => typeof value === 'string' && value.trim() !== '';
 const approveCommand = (board: string): string => `tools/pcb layout ${board} --approve --by NAME --reason TEXT --image FILE`;
