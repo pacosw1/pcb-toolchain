@@ -8,6 +8,7 @@ import type {
 } from '../../../../../job-daemon/src/live-protocol'
 import type { Geometry } from './types'
 import { LiveCanvas } from './LiveCanvas'
+import { runsOfBoard } from './live-runs'
 import type { InspectSelection } from './LiveCanvas'
 import './assets/live.css'
 type Packed = Omit<LiveState, 'tracks' | 'vias'> & { tracks: LiveTrack[]; vias: LiveVia[] }
@@ -19,16 +20,18 @@ const unpack = (s: Packed): LiveState => ({
 interface Run {
   runId: string
   seq: number
-  summary: { run: { label: string }; finished: unknown }
+  summary: { run: { label: string; board?: string }; finished: unknown }
 }
 export function LiveView({
   selection,
   onSelect,
-  preferredLabel
+  preferredLabel,
+  pcb = null
 }: {
   selection: InspectSelection | null
   onSelect: (s: InspectSelection | null) => void
   preferredLabel?: string
+  pcb?: string | null
 }): React.JSX.Element {
   const [runs, setRuns] = useState<Run[]>([]),
     [run, setRun] = useState(''),
@@ -51,8 +54,9 @@ export function LiveView({
       try {
         const r = (await window.api.engine.call('live.runs')) as { runs: Run[] }
         if (!dead) {
-          setRuns(r.runs)
-          setRun((old) => preferredLabel ? (r.runs.some(x => x.runId === old && x.summary.run?.label?.includes(preferredLabel)) ? old : r.runs.find(x => x.summary.run?.label?.includes(preferredLabel))?.runId || '') : old || r.runs[0]?.runId || '')
+          const list = preferredLabel ? r.runs : runsOfBoard(r.runs, pcb)
+          setRuns(list)
+          setRun((old) => preferredLabel ? (r.runs.some(x => x.runId === old && x.summary.run?.label?.includes(preferredLabel)) ? old : r.runs.find(x => x.summary.run?.label?.includes(preferredLabel))?.runId || '') : list.some((x) => x.runId === old) ? old : list[0]?.runId || '')
         }
       } catch (e) {
         if (!dead) setError(String(e))
@@ -64,9 +68,13 @@ export function LiveView({
       dead = true
       clearTimeout(timer)
     }
-  }, [preferredLabel])
+  }, [preferredLabel, pcb])
   useEffect(() => {
-    if (!run) return
+    if (!run) {
+      setState(null)
+      setGeo(null)
+      return
+    }
     let dead = false,
       dirty = false
     let timer: ReturnType<typeof setTimeout>

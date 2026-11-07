@@ -415,7 +415,7 @@ function App(): React.JSX.Element {
                 setTab('board')
               }}
             />
-          ) : tab === 'live' ? (<LiveView selection={linked} onSelect={setLinked} />) : geo && tab === 'runs' ? (
+          ) : tab === 'live' ? (<LiveView selection={linked} onSelect={setLinked} pcb={pcb} />) : geo && tab === 'runs' ? (
             <RunsView gate={gate} current={geo} onAdopted={() => setReload((n) => n + 1)} />
           ) : (
             <section className="panel placeholder" aria-label="Board view">
