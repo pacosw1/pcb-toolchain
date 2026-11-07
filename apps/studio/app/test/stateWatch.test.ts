@@ -10,7 +10,7 @@ import { projectOpen, registry } from '../src/main/api.ts'
 import { subscribe, unsubscribe } from '../src/main/events.ts'
 import type { Sender } from '../src/main/events.ts'
 import { READ_ONLY } from '../src/main/web.ts'
-import { createStateWatcher, readSnapshot } from '../src/main/stateWatch.ts'
+import { createStateWatcher, NOISE, readSnapshot } from '../src/main/stateWatch.ts'
 import type { Deps, Snapshot } from '../src/main/stateWatch.ts'
 
 interface Note {
@@ -150,12 +150,20 @@ test('logs and temp files are no change', async (t) => {
   await watcher.watch(c.send, '/p', 'B')
   f.fire('cli/run-a/worker.log')
   f.fire('cad-seal.json.tmp')
+  f.fire('calls.jsonl') // pcb state writes the call log itself: a change here must not start another read
   n = 2
   const second = c.next('state.changed')
   f.fire('cli/run-a/result.json')
   await second
   assert.equal(f.reads(), 2)
   watcher.unwatchAll()
+})
+
+test('the call log is no change: pcb state writes it, so a read would start the next read for ever', () => {
+  assert.ok(NOISE.test('calls.jsonl'))
+  assert.ok(NOISE.test('.gate/calls.jsonl'))
+  assert.ok(!NOISE.test('cli/run-a/events.jsonl'))
+  assert.ok(!NOISE.test('hardware-design/boards/B/changes.jsonl'))
 })
 
 test('the file watch closes with the last client', async (t) => {

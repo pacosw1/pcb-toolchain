@@ -7,6 +7,8 @@ const PATHS: Record<string, string> = {
   check: 'M9 12l2 2 4-4M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20z',
   // Stages: a vertical trace, one node per stage.
   stages: 'M6 3v18M6 6h.01M6 12h.01M6 18h.01M11 6h9M11 12h9M11 18h9',
+  // Tool calls: lanes with a tick for each call.
+  timeline: 'M3 6h18M3 12h18M3 18h18M7 4v4M13 10v4M17 16v4M10 16v4',
   // Candidate runs: a branch off the main line (the candidate) with its merge point (adopt).
   runs: 'M6 3v12M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9'
 }

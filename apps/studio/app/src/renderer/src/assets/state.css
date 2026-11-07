@@ -568,8 +568,8 @@
   flex: 0 0 auto;
 }
 .trace-peek img {
-  width: 44px;
-  height: 30px;
+  width: 64px;
+  height: 44px;
   object-fit: contain;
   background: #fff;
   border: 1px solid var(--border);

@@ -15,7 +15,7 @@ const LABEL: Record<Status, string> = {
   stale: 'Stale',
   person: 'Waits for a person',
   pending: 'Not reached',
-  unproven: 'No proof to read'
+  unproven: 'Not proven'
 }
 const HINT: Record<Status, string> = {
   done: 'The evidence is current.',
@@ -24,7 +24,7 @@ const HINT: Record<Status, string> = {
   stale: 'The evidence is out of date.',
   person: 'A person must approve before the board goes on.',
   pending: 'The board has not reached this stage.',
-  unproven: 'The board is past this stage, and no evidence exists to prove it.'
+  unproven: 'The board is past this stage, but no saved result shows that the stage passed.'
 }
 
 interface Snapshot {
@@ -321,7 +321,7 @@ function Detail({
           ))}
         </p>
       ) : null}
-      {row.gap ? <p className="trace-gap">Known gap: {row.gap}</p> : null}
+      {row.gap ? <p className="trace-gap">Not covered yet by the tools: {row.gap}</p> : null}
     </div>
   )
 }

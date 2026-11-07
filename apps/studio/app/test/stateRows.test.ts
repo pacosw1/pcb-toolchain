@@ -88,9 +88,17 @@ test('every state of the table is a row, and exactly one row is where the board 
 
 test('current evidence is done, the position runs, and a stage not reached is pending', () => {
   const { rows } = buildRows(stateAt('A9'), noHistory)
-  assert.equal(byId(rows, 'A4').status, 'done')
+  assert.equal(byId(rows, 'A7').status, 'done')
   assert.equal(byId(rows, 'A9').status, 'running')
   assert.equal(byId(rows, 'A12').status, 'pending')
+})
+
+test('current evidence is not done when a result the stage must make has no file to read (A4: the seal is intact, no ERC result)', () => {
+  const rows = buildRows(stateAt('A9'), noHistory).rows
+  const a4 = byId(rows, 'A4')
+  assert.equal(a4.status, 'unproven')
+  assert.match(a4.why!, /ERC result/)
+  assert.match(a4.why!, /schematic_sha256/)
 })
 
 test('a stage before the position that has no proof reads as unproven, not as done', () => {

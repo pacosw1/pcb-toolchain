@@ -41,7 +41,7 @@ const STATE_SCHEMA = 'iot-lab.board-state.v1'
 const HISTORY_SCHEMA = 'iot-lab.board-history.v1'
 const READ_TIMEOUT_MS = 60_000
 /** Logs and temp files change all the time while a run works and are no evidence. */
-const NOISE = /\.(log|tmp|lock)$/
+export const NOISE = /(\.(log|tmp|lock)|(^|\/)calls\.jsonl)$/
 
 /** The `tools/pcb` of the project, else the one of PCB_TOOLCHAIN_ROOT (a project with no tools of its own). */
 export function toolOf(root: string): string {
@@ -61,7 +61,12 @@ function run(
     execFile(
       tool,
       ['--project', root, ...args],
-      { cwd: root, timeout: READ_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, env: process.env },
+      {
+        cwd: root,
+        timeout: READ_TIMEOUT_MS,
+        maxBuffer: 64 * 1024 * 1024,
+        env: { ...process.env, PCB_CALLER: 'studio' }
+      },
       (error, stdout, stderr) => {
         const code = (error as { code?: unknown } | null)?.code
         if (error && typeof code !== 'number')

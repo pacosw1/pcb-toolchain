@@ -145,8 +145,18 @@ function statusOf(
     return { status: 'running', why: active ? 'A run is active.' : stale }
   }
   switch (stage.freshness) {
-    case 'current':
-      return { status: 'done', why: null }
+    case 'current': {
+      // Current evidence can be only a seal (the files are unchanged). A result the stage must make, with no file to read, is no proof.
+      const unread = stage.outputs
+        .filter((item) => !item.path && !item.exists)
+        .map((item) => item.name)
+      return unread.length
+        ? {
+            status: 'unproven',
+            why: `The files are unchanged since they were sealed. No result file exists for: ${unread.join(', ')}. Nothing shows that this stage passed.`
+          }
+        : { status: 'done', why: null }
+    }
     case 'exempt':
       return { status: 'done', why: 'exempt' }
     case 'stale':
