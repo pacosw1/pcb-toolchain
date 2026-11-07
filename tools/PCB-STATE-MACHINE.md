@@ -7,6 +7,7 @@ It also lists the states that no tool enforces. The diagram is in
 [PCB-STATE-MACHINE.dot](PCB-STATE-MACHINE.dot).
 
 This file maps what exists. It adds no new rule and no new state.
+Section J is a proposal only: the code does not have it.
 All paths are under `tools/`. A reference `lib/x.ts:12` means `tools/lib/x.ts`, line 12.
 The code is the branch `codex/setup-batch`. The lab data (`hardware-design/`) is not in this repository.
 
@@ -163,3 +164,212 @@ The other B states are in the tables only.
 
 Colors: green is `enforced`, amber is `recorded`, red is `implicit`.
 A dashed edge is a failure path or a loop. A double border is a gate where a person decides.
+
+## G. Backward transitions
+
+A backward transition is a return to an earlier state, after a change or a failure.
+The code has no such transition as a named thing. It has hashes that go stale.
+A stale hash stops one command. No table says what else must be redone.
+
+### G.1 Marks
+
+| Mark | Meaning |
+|---|---|
+| `stops` | A tool refuses the next affected command. All evidence that the change makes false goes stale. |
+| `partial` | A tool stops some paths. Other evidence, an approval, or a data file stays valid and should not. Or the stop comes late. |
+| `silent` | No tool stops the process and no tool records the change. |
+
+Count: 8 `stops`, 10 `partial`, 2 `silent`, of 20 change kinds.
+
+### G.2 Facts that apply to all rows
+
+| No. | Fact | Proof |
+|---|---|---|
+| X1 | `pcb next` on a board with a design contract shows only the design assessment. It returns before it reads the seal, the layout plan, the runs, the stock or the release. A board with no contract must be exempt, or it stops at `design_contract_missing`. So the board path of section C runs only for exempt boards. A normal board finds a stale approval when a command fails. | `lib/pcb-next.ts:224-228`, `:241`. `lib/pcb-next.test.ts:73-74`. The board path tests use an exempt fixture (`:20`). |
+| X2 | The layout approval binds four hashes: placement rules, route plan, schematic, image. It does not bind `.kicad_pcb` or `.kicad_dru`. A change of stackup, outline or design rule leaves the approval valid. The image then shows an old board. | `lib/layout-plan.ts:186`. |
+| X3 | A sealed tool write has no reason. The seal moves with the write. Only `seal --accept` has a reason, and the reason goes to a local log that is not committed. | `lib/cad-seal.ts:29`, `:81`, `:165`, `:134`. |
+| X4 | No tool puts a schematic change into the board. A candidate cannot change a part, a pad, a net, the outline or a rule. A person does this in KiCad. | `lib/pcb-identity.ts:1`. `lib/pcb-candidate-run.ts:328`. |
+| X5 | The source state of a candidate holds all of `tools/`. Any file change there, also a document, makes each candidate stale. This fails closed. The cost is a repeated run, not a wrong board. | `lib/pcb-sources.ts:60`, `:37`. `lib/pcb-candidate.ts:219`, `:228`. |
+| X6 | A stale code says what stopped. It does not say the reason of the change or the earliest state to re-enter. | Section C. `lib/pcb-next.ts:264`, `:354`. |
+
+### G.3 Table of change kinds
+
+"Today" holds the proof. "Should" holds the change that the process needs.
+The next four columns are the required result: the earliest state, the invalid states, the evidence that survives, and who approves again.
+"Person" means a person who is not the agent that made the change. Today only a hook enforces this (D1).
+
+| No. | Change | Today | Should | Re-enter | Invalid | Survives | Approve again | Mark |
+|---|---|---|---|---|---|---|---|---|
+| T1 | Part swapped, pin compatible, same footprint | The person edits in KiCad (X4). The seal stops all CAD commands (`lib/cad-seal.ts:65-71`). `seal --accept` passes it. The approval goes stale (`lib/layout-plan.ts:132`). The part review fails only if a run binds the manifest or a contract check reads it (`lib/part-review.ts:293`, `lib/pcb-candidate-run.ts:86`). The BOM and the ledger stale shows only at readiness (`lib/board-selections.mjs:58-59`, `lib/release-readiness.mjs:97`). | Name the swap. Ask for part review and BOM before the layout approval. Show the copper as kept. | A3 | A3 report, A5, A8, A18, A21, A23 | A9 to A17 copper and placement, A7 rules, route plan | Person: part review and layout approval | `partial` |
+| T2 | Part swapped, not pin compatible, or other footprint | As T1. The candidate refuses the change (`lib/pcb-candidate-run.ts:328`). A gate parity defect stops an old board (`gate.mjs:173`, `:260`). Placement rules for that reference stay valid: their source hash does not change (`lib/engineering-constraints.ts:107`). The route plan is compared to the nets only at approval (`lib/layout-plan.ts:96`). | Mark each rule, rigid group and route stage that names the reference. Ask for a review of each one. | A3 | A3 to A5, A7 rows for the part, A8 to A23 | Requirements, parts not touched, rules for other parts | Person: part review, layout approval | `partial` |
+| T3 | Part value changed | As T1 for seal and approval. The native identity compares `mpn`, `lcsc`, `footprint` and `dnp`, not the value (`lib/part-native.ts:266-267`). A value change with the same `mpn` and `lcsc` passes the part review. The only remaining check is KiCad parity. This audit did not test if parity reports a value change. | Compare the value with the BOM row and the review. Ask for a new `lcsc` when the value changes. | A3 | A3 row of the part, A5, A8, A18, A21, A23 | All layout | Person: part review. Layout approval only for a re-approval of the hash. | `partial` |
+| T4 | Schematic net change | The seal stops a hand edit (`lib/cad-seal.ts:65-71`). A sealed tool has no seal stop (`add_testpoints.ts:134`), but the approval goes stale (`lib/layout-plan.ts:132`). The gate fails on parity (`gate.mjs:260`). Adopt refuses an old candidate (`lib/pcb-candidate.ts:228`). | Keep the stops. Show the net names that changed and the route stages that use them. | A4 | A4 ERC, A7 route plan for the net, A8 to A23 | A3, A5 if no part changed, placement | Person: layout approval | `stops` |
+| T5 | New datasheet revision or new part-record fact | A changed file at the same path gives `stale_source` (`lib/part-review.ts:185`). A changed profile gives `stale_profile_review` (`:261`). A contract source stops (`lib/design-contract-load.ts:38`). A new file beside the old one changes no hash. No manifest bound: no stop (`lib/pcb-candidate-run.ts:86`). `registry/datasheets` is not in the source state, except for exact gate dependencies (`lib/pcb-sources.ts:14`, `:37`). | Record the new source as an event. Point the manifest at the new file. Show each board that uses the part. | A3 | A3 report of each board that uses the part. A4 to A23 only if the fact changes the use. | All else, if the review says the use holds | Person: part review | `partial` |
+| T6 | Supplier out of stock | `parts stock` stops on a missing or ambiguous code (`lib/part-stock.ts:182`). Readiness blocks (`lib/release-readiness.mjs:118`). This is at the end of the process. No path goes back to A3. The control `substitutions` is only a contract field (`lib/design-contract-load.ts:19`). The stock day code is on the exempt path only (X1). | Name the part and the state to re-enter. Then treat the swap as T1 or T2. | A3 | A23 now. T1 or T2 list after the swap. | All, until a swap is chosen | Person: choice of substitute | `partial` |
+| T7 | Stackup change | `set_stackup.ts:134` writes with a sealed write: no stop and no reason (X3). The approval stays valid (X2). The gate goes stale. A new gate can pass, because `h_mm` and `er` in `rf-lines.json` are hand data and the check does not compare them with the board (`lib/rf-lines.ts:42`, `:70`). | Bind the stackup in the approval (D4). Compare `h_mm` and `er` with the board. | A6 | A7 route plan, A8, A13, A14 for controlled nets, A18 to A23 | A3 to A5, placement if the layer count is the same | Person: layout approval | `partial` |
+| T8 | Board outline change | The candidate refuses it (`lib/pcb-identity.ts:1`). A person edits in KiCad, and the seal stops it. After `seal --accept` the approval stays valid (X2) and the image is old. The gate goes stale. Placement rules run again at the gate. `MECHANICAL.md` is only checked for presence (`lib/board-packets.mjs:9`). | Bind the outline in the approval. | A7 | A8 to A23 | A1 to A5, schematic | Person: layout approval | `partial` |
+| T9 | A rule added, removed or changed | Placement rule: the seal log has the reason and the approval goes stale (`pcb-constraints.ts:33`, `lib/layout-plan.ts:130`). Reviewed rule: `stale_review` (`lib/part-review.ts:474`). `.kicad_dru`: sealed, the approval stays valid (X2). Check data file: the gate goes stale, with no reason and no approval (`lib/gate-inputs.mjs:96`). `gate.json`: the gate goes stale (`lib/pcb-next.ts:303`), but a lower stage passes the next gate (D2). | One path for all rule files: a reason, then a stale approval. Stage goes up only. | A7 | A8 to A23. A9 to A14 only if the board fails the new rule. | A1 to A5 | Person: layout approval | `partial` |
+| T10 | Route plan change | The approval goes stale (`lib/layout-plan.ts:131`). A candidate goes stale if the plan is in the board folder (`lib/pcb-sources.ts:60`). After a new approval, the old copper is not linked to the old plan: the gate judges only the copper. | Keep the stops. Show which stages changed. | A7 | A8, A14 to A23 | A1 to A5, placement | Person: layout approval | `stops` |
+| T11 | Layout approval withdrawn | No command exists. A person sets `approval` to null by hand. Only a Claude Code hook asks (`hooks/claude-cad-guard.mjs:25`). No reason is recorded. Place and route stop (`lib/layout-plan.ts:128`). Release does not read the layout gate (`lib/pcb-candidate-screens.ts:77`, `lib/pcb-candidate-run.ts:360`). The gate stale needs only a new `check`. | Add a withdraw command with a reason. Release reads the layout gate. | A8 | A9 to A23 | A1 to A7 | Person: layout approval | `partial` |
+| T12 | Route stuck | A route with the same inputs stops (`lib/route-repeat.ts:22-39`). `next` gives one move from the fixed list on the exempt path (`lib/pcb-next.ts:306-312`). `swap_pins` is only a proposal for a person (`lib/route-moves.ts:193`). Its path back to A4 has no name. | Keep the stops. Map `swap_pins` to T4, and `ask_user` to a recorded answer. | A15 | A14 run | All | Agent for a move. Person for `swap_pins` and `ask_user`. | `stops` |
+| T13 | Gate failed | Adopt refuses (`lib/pcb-candidate.ts:154`). Release needs a fresh gate. `next` gives `gate_finding` and `explain` on the exempt path (`lib/pcb-next.ts:339`). No map goes from a finding to a state. | Add a map from the check name to the state to re-enter. | The state that made the failed item: A4 for ERC, A9 or A14 for layout | A18 and all after it | All before the failed item | Agent, unless the fix is a rule (T9) | `stops` |
+| T14 | DRC failed | As T13. Open nets give `needs_diagnosis` (`lib/pcb-next.ts:336`). A parity defect has no state of its own: it reaches `ask_user` only from a stuck route (`lib/route-moves.ts:62`). | Parity goes to A4. Clearance goes to A9 or A14. Open nets go to A16. | A4, A9, A14 or A16 | A18 and all after it | All before the failed item | Agent, unless parity needs a person | `stops` |
+| T15 | Fabrication defect | No record exists. `--defect` on adopt is for a frozen board only (`lib/pcb-candidate.ts:269`), and no board can be frozen (D10). No state follows A24. | Record the defect with the release hash and the serial numbers. Decide reorder or new revision. | A21 for a supplier error. A7, A14 or A4 for a design cause. | The released revision for new orders | Measured data of other boards | Person: decision | `silent` |
+| T16 | Bring-up failure | A failed `bench` check blocks the stage `prototype` (`lib/design-contract-verifiers-async.ts:305`), if the contract has that check. Candidates need only stages to `routing` (`lib/pcb-action.ts:29-33`), so nothing stops the next layout. A board with no bench check has no record. | Record the failure with the requirement. Link it to the new revision. Release of that revision needs the cause. | The state of the cause: A1 to A14 | The prototype stage, block level 2 | Requirements not touched, other measured data | Person: cause and decision | `partial` |
+| T17 | Toolchain version change | Version probes stop `next`, adopt and release (`pcb_snapshot_inputs.mjs:27`, `:29`). Gate tools are hashed (`lib/gate-inputs.mjs:165`). Routers and placers are not gate inputs (`lib/gate-inputs.mjs:18`), but all of `tools/` is in the candidate source (X5). A part review has `stale_tool` (`lib/part-review.ts:515`). | Keep the stops. Show which tool changed. | A18 | A18 to A23 | All design and copper, until the new gate reports a finding | Nobody, if the gate passes | `stops` |
+| T18 | A human edit in KiCad | The seal stops all CAD commands (`lib/cad-seal.ts:65-71`, `lib/pcb-check-start.ts:44`). `seal --accept` needs a reason (`lib/cad-seal.ts:132`), but it does not show what changed. A hook is the only person check (D1). | Keep the stops. Sort the diff into schematic, outline, stackup, rule, placement and copper. Then use the row of that kind. | The row of the kind | The row of the kind | The row of the kind | Person: accept | `stops` |
+| T19 | Requirement or spec change | A changed source stops the contract load (`lib/design-contract-load.ts:38`). `next` gives `design_assessment_stale` (`lib/pcb-next.ts:173`, `:218`). A run needs a pass of the earlier stage (`lib/pcb-candidate-screens.ts:63-66`). An exempt board has no such stop. | Keep the stops. | A1 | The stages whose checks name the requirement | Stages with no link to it | Person: review of the assessment | `stops` |
+| T20 | CAD changed after an order | No record of the order exists: `ordered` is always false (`check-release-fab.mjs:23`, `lib/release-readiness.mjs:122`). Adopt can replace the board of an ordered revision (D10). Nothing asks for a new revision. | Record the order. After it, adopt refuses until the revision increases. | A7 of the new revision | Nothing of the old revision: it stays as ordered | The old revision files and evidence | Person: new revision | `silent` |
+
+## H. Input and output audit
+
+A row is here only if it has a gap. States not listed have no gap: A1, A11, A12, A16, A20, A21, B2, B3, B5 to B13.
+`Defined` means a schema or the table `lib/stage-contracts.ts:13-20` names it. That table has only `place`, `edit`, `route`, `build`, `repair` and `layout`.
+`Checked` means a tool stops when it is absent or wrong. `Visible` means a person can open an image or a readable report.
+
+| State | Input defined | Output defined | Checked | Visible | Gap |
+|---|---|---|---|---|---|
+| A2 Architecture | partial | yes | partial | yes | `architecture` may be null, and the check then returns (`lib/design-contract-load.ts:141-142`). |
+| A3 Part selection | yes | yes | partial | partial | A board with no bound manifest passes (`lib/pcb-candidate-run.ts:86`). The report is JSON only. |
+| A4 Schematic | partial | partial | partial | no | No schematic image or PDF is made. No person sees the schematic at a gate. |
+| A5 BOM | partial | partial | partial | partial | The CSV has no stage check. `next` asks only for the file. |
+| A6 Stackup | no | no | no | no | Planned in #1554. |
+| A7 Layout plan written | yes | yes | yes | partial | The tool shows the newest run image (`pcb-layout.ts:13-16`). A new board has no run, so it has no image. |
+| A8 Layout approval | yes | yes | partial | partial | The image can be any PNG or SVG in the project (`lib/layout-plan.ts:162-171`). No check ties it to this plan. `--by` is free text (D1). |
+| A9 Placement seeds | yes | yes | yes | partial | Only a table. Images exist only after a place edit (`lib/pcb-candidate-run.ts:261`). |
+| A10 Seed choice | no | no | no | no | D8. |
+| A13 RF route | partial | no | partial | no | No RF stage in `STAGE_CONTRACTS`. `rf-lines.json` is not sealed. No image shows the RF copper alone. |
+| A14 Staged route, stuck exit | yes | partial | partial | partial | The contract checks a passed run only (`lib/stage-contracts.ts:30`). A stuck run has `stuck.json`, and images are not required. |
+| A15 Route decision | yes | partial | yes | partial | The answer to `ask_user` has no field (`lib/route-moves.ts:192`). |
+| A17 Finishing edits | no | no | partial | no | No stage, no run record, no image. Only the seal line. |
+| A18 Gate | partial | yes | partial | partial | Configuration not sealed (D2). A `check` run has no image (`lib/stage-contracts.ts:25-27`). |
+| A19 Adopt | yes | yes | partial | no | Adopt does not read the stage contract (D6). `next` shows no image. |
+| A22 Release approval | no | no | no | no | D3. |
+| A23 Readiness | yes | yes | partial | yes | No later step reads the report. |
+| A24 Order | no | no | no | no | T20. |
+| A25 Bring-up | yes | partial | partial | partial | Bench data is not needed before a release. Failure has no link back (T16). |
+| B1 Exemption | partial | yes | partial | no | Nothing reads the events. |
+| B4 Seal accept | yes | yes | partial | no | The accept shows no diff. The log is local (X3). |
+| B14 Frozen board | no | yes | no | no | Text heading in a removed file (D10). |
+| B15 Person approval | no | yes | no | no | D1. |
+| B16 Gate configuration | partial | no | no | no | D2. |
+| B17 Route environment | no | no | no | no | D5. |
+| B18 Route fallback | no | no | no | no | D7. |
+
+Count: 26 of 43 states have a gap. 7 of the 26 have no defined input and no defined output: A6, A10, A17, A22, A24, B17, B18.
+
+## I. Missing steps
+
+Each candidate was tested against the code. The list is sorted by possible loss.
+
+| Rank | Step | In the code today | Loss if absent | Real gap? |
+|---|---|---|---|---|
+| 1 | Order record and revision increment | No. `ordered` is always false. Revisions are registry rows that a person edits. No command makes a new revision. The state between A24 and A25, boards received, also has no record. | Files change after an order. Nobody can say what the boards in hand are. Bring-up data goes to the wrong files. A repeat order can send changed files. | Yes. T20. |
+| 2 | Schematic review by a person | Partial. The part review has a reviewer (`lib/part-review.ts:464-475`). A requirement may have an acceptance of kind `review` (`lib/design-contract-load.ts:92`). The layout approval holds the schematic hash, but the person sees a layout image. No schematic image exists (section H, A4). | A wrong circuit passes ERC and all layout gates. The loss is a full board spin. | Yes. |
+| 3 | Change record | Partial. The seal log has a reason for an accepted edit only, and it is local (X3). | Nobody can tell why a state went back. A redo list comes from memory. Work is skipped or repeated. | Yes. Section J. |
+| 4 | Mechanical fit | Partial. Rules `fixed` and `connector_access`, and `assembly_dependencies`, exist (`lib/part-review.ts:26-27`). `MECHANICAL.md` is checked for presence only. No check compares the outline, the holes or the height with an enclosure. | A board does not fit. The loss is a spin. | Yes, for a board with an enclosure. |
+| 5 | Thermal review | Partial. Copper current capacity and thermal spokes are checked (`lib/power-graph.ts:152`). Part ratings are reviewed. No step estimates dissipation or temperature. Thermal in `lib/outcome-thermal.ts` is for the placement study. | A regulator runs hot. This shows at bring-up. | Yes, for a board with power parts. Small for a low power board. |
+| 6 | DFM check | Partial. DRC uses `.kicad_dru`. The default kicad-happy rules have no DFM rule (`kicad_happy_gate.ts:45`). The sample data has a `dfm` field and no gate reads it. | The fabricator rejects a file, or the yield is low. The fabricator also runs its own check. The loss is usually a delay. | Small. |
+| 7 | Firmware pinout check | No. `lib/schematic-contract.ts:3` says that it does not prove firmware state. No pin map file exists. No code names strapping pins. A pin swap stops at a person (`lib/route-moves.ts:193`). | A signal goes to a pin that the firmware cannot use, or a strapping pin stops the boot. | Small now. It grows if `swap_pins` becomes automatic. |
+
+Tested and not a gap:
+
+| Step | Why it is not a gap |
+|---|---|
+| Power budget | `lib/part-review.ts:418`, `lib/schematic-contract.ts:423` and `lib/power-graph.ts` check it. A manifest must declare it (`lib/part-review.ts:559`). |
+| Test plan | The contract has `test_plans` (`lib/design-contract-load.ts:111-122`). Test access has a check before route (`lib/pcb-candidate-screens.ts:100-106`). |
+| Design review before an order | This step is on the map already: A22 and D3. |
+
+## J. Proposal: one explicit transition table
+
+This section is a design. The code does not have it.
+
+### J.1 Rules of the design
+
+1. State still comes from hashes and sealed evidence. The table holds no state.
+2. The table says what a change invalidates. The current hash says if the work is done.
+3. A change event adds the reason. It never makes evidence valid.
+4. With no event, the tool uses the widest row of the changed group. This fails closed.
+
+### J.2 The table
+
+The file is `tools/pcb-transitions.json`, schema `iot-lab.transitions.v1`. It is data, as `route-features.json` is. A new module `lib/transitions.ts` loads and validates it. `pcb next` and a new command `pcb change` read it.
+
+```json
+{
+  "schema": "iot-lab.transitions.v1",
+  "groups": {
+    "schematic": ["*.kicad_sch", "*.kicad_pro"],
+    "board_shape": ["*.kicad_pcb#outline", "*.kicad_pcb#stackup", "*.kicad_dru"],
+    "rules": ["placement-constraints.json", "reference-planes.json", "gate.json"]
+  },
+  "kinds": [
+    {
+      "id": "part_swap_same_footprint",
+      "group": "schematic",
+      "reenter": "A3",
+      "redo": ["part_review", "bom", "layout_approval", "gate", "release", "readiness"],
+      "keep": ["placement", "copper", "route_plan"],
+      "approve": ["part_review", "layout_approval"]
+    }
+  ]
+}
+```
+
+- `groups` sorts files. A group has one hash. `#outline` and `#stackup` read that form of the board.
+- `kinds` holds one row per line of table G.3.
+- The first row of a group is the widest row. `lib/transitions.ts` checks that it redoes all that the other rows of the group redo.
+- `redo` names evidence classes. One reader for each class gives `current`, `stale` or `missing`. The readers wrap code that exists: `verifyManifest`, `layoutPlanStatus`, `engineeringInputsCurrent`, `verifyCurrentInputs`, `verifyFab`, `releaseReadiness`.
+
+### J.3 The change event
+
+`pcb change BOARD --kind KIND --reason TEXT --by NAME` appends one line to `hardware-design/boards/BOARD/changes.jsonl`. The file is committed, unlike the seal log.
+
+```json
+{"id":"c-0007","at":"2026-11-06T10:00:00Z","by":"NAME","kind":"part_swap_same_footprint","reason":"U3 out of stock","refs":["U3"],"groups":{"schematic":{"before":"...","after":"..."}},"prev_sha256":"..."}
+```
+
+- `prev_sha256` is the hash of the line before. A hand edit breaks the chain.
+- A kind with no file change, such as `fab_defect`, `bringup_failure`, `out_of_stock`, `approval_withdrawn` or `ordered`, has an empty `groups`.
+- The file is not a gate input and not a candidate source, as `cad-seal.json` is not (`lib/gate-inputs.mjs:93`, `lib/pcb-sources.ts:41`).
+
+### J.4 What `pcb next` shows
+
+`next` compares the current hash of each group with `after` of the last event. A difference with no event gives `change_unrecorded` and the widest row. Then `next` calls the reader of each class in `redo`, in order, and it adds one block to the decision:
+
+```text
+change: c-0007 part_swap_same_footprint, U3, by NAME: U3 out of stock
+re-enter: A3
+redo: part_review stale; bom stale; layout_approval stale; gate stale; release missing
+keep: placement, copper, route_plan
+next: tools/pcb parts ...
+```
+
+An item leaves the list when its reader says `current`. Nothing writes a state. The first item that is not current sets the next command.
+
+### J.5 The smallest first step
+
+Do these two items in one change, with no event file:
+
+1. Add the table and `lib/transitions.ts`. Add `redo` to `next` for the codes that exist: `cad_changed`, `layout_plan_stale`, `evidence_not_current`, `design_assessment_stale`.
+2. Fix X1: a contract board reaches the seal, layout and run checks of `nextAction`.
+
+Without item 2, a normal board never sees the list.
+
+### J.6 Code changes
+
+| No. | Change | Cost |
+|---|---|---|
+| 1 | `tools/pcb-transitions.json` with the rows of table G.3. | small |
+| 2 | `lib/transitions.ts`: load, validate, pure `redoFor(kind, readers)`. | small |
+| 3 | `lib/pcb-next.ts`: a contract board continues to the board checks (X1). | medium |
+| 4 | `lib/pcb-next.ts`: add the `change` block to `Decision`. | small |
+| 5 | Readers for six evidence classes, each one around an existing function. | medium |
+| 6 | `lib/change-log.ts` and `pcb change`: append, hash chain, group hashes. | medium |
+| 7 | `lib/gate-inputs.mjs` and `lib/pcb-sources.ts`: leave out `changes.jsonl`. | small |
+| 8 | `lib/layout-plan.ts`: add `board_shape_sha256` to the approval (X2). All approvals go stale one time, and a person approves again. | medium |
+| 9 | `lib/rf-lines.ts`: compare `h_mm` and `er` with the board stackup (T7). | small |
+| 10 | `lib/pcb-candidate-screens.ts:77`: release reads the layout gate (T11). | small |
+| 11 | Kind `ordered`. `lib/pcb-candidate.ts` refuses adopt on an ordered revision (T20). | medium |
+
+Not in this proposal: an automatic check of "pin compatible" from a schematic diff. That is a large change. The kind comes from a person, and the gate and the part review test the claim.
