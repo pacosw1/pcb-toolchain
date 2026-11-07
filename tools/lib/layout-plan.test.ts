@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
 import test, { type TestContext } from 'node:test';
 import { reseal } from './cad-seal.ts';
 import { SCHEMA } from './engineering-constraints.ts';
-import { approveLayoutPlan, layoutGate, layoutPlanPath, layoutPlanStatus } from './layout-plan.ts';
-import { PNG } from './layout-plan-fixture.ts';
+import { approveLayoutPlan, layoutGate, layoutPlanPath, layoutPlanStatus, type NetSource } from './layout-plan.ts';
+import { approveFixture, NO_NETS, PNG } from './layout-plan-fixture.ts';
 import { sha256File } from './json-file.ts';
 import { placementRulesPath } from './placement-rules.ts';
 
@@ -36,7 +36,9 @@ const SVG = '<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg" view
 const imageOf = (root: string): string => join(root, 'layout-image.png');
 /** The copy that the approval keeps in the board folder. */
 const COPY_PNG = 'hardware-design/boards/X/layout-plan.png', COPY_SVG = 'hardware-design/boards/X/layout-plan.svg';
-const approve = (root: string) => { writeFileSync(imageOf(root), PNG); return approveLayoutPlan(root, 'X', 'Ana', 'reviewed the edge intents', imageOf(root)); };
+const approve = (root: string, nets: NetSource = NO_NETS) => { writeFileSync(imageOf(root), PNG); return approveLayoutPlan(root, 'X', 'Ana', 'reviewed the edge intents', imageOf(root), nets); };
+/** The nets of the board, as board-json would give them: every net, and those with two pads or more. */
+const boardOf = (nets: string[], routable = nets): NetSource => () => ({ nets: new Set(nets), routable: new Set(routable) });
 const events = (): { log: Row[]; emit: (kind: string, data?: Row) => void } => { const log: Row[] = []; return { log, emit: (kind, data) => { log.push({ kind, ...data }); } }; };
 
 test('a plan without approval is not approved, and approval records the person, the reason and both hashes', async t => {
@@ -116,7 +118,7 @@ test('a changed or missing copy of the approved image makes the approval stale',
 test('an SVG image is accepted and kept as layout-plan.svg; a new approval with another type removes the old copy', async t => {
   const f = fixture(t), svg = join(f.root, 'layout-image.svg');
   writeFileSync(svg, SVG);
-  await approveLayoutPlan(f.root, 'X', 'Ana', 'ok', svg);
+  await approveLayoutPlan(f.root, 'X', 'Ana', 'ok', svg, NO_NETS);
   assert.equal(layoutPlanStatus(f.root, 'X').image, COPY_SVG);
   assert.equal(readFileSync(join(f.root, COPY_SVG), 'utf8'), SVG);
   rmSync(svg);
@@ -126,13 +128,13 @@ test('an SVG image is accepted and kept as layout-plan.svg; a new approval with 
   assert.equal(existsSync(join(f.root, COPY_SVG)), false, 'one copy only');
   assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved');
   // The kept copy can be the given file: the approval of the same copy again works and keeps the file.
-  await approveLayoutPlan(f.root, 'X', 'Bob', 'again', join(f.root, COPY_PNG));
+  await approveLayoutPlan(f.root, 'X', 'Bob', 'again', join(f.root, COPY_PNG), NO_NETS);
   assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved');
   assert.equal(sha256File(join(f.root, COPY_PNG)), sha256File(imageOf(f.root)));
 });
 
 test('the approved image must be a PNG or SVG file inside the project', async t => {
-  const f = fixture(t), by = (image: string) => approveLayoutPlan(f.root, 'X', 'Ana', 'ok', image);
+  const f = fixture(t), by = (image: string) => approveLayoutPlan(f.root, 'X', 'Ana', 'ok', image, NO_NETS);
   await assert.rejects(by(join(f.root, 'none.png')), /image .* is not a file/);
   writeFileSync(join(f.root, 'text.png'), 'not a png');
   await assert.rejects(by(join(f.root, 'text.png')), /is not a PNG or SVG file/);
@@ -144,6 +146,30 @@ test('the approved image must be a PNG or SVG file inside the project', async t 
   writeFileSync(join(outside, 'a.png'), PNG);
   await assert.rejects(by(join(outside, 'a.png')), /image must be inside the project/);
   await assert.rejects(approveLayoutPlan(f.root, 'X', 'Ana', 'ok', ''), /--image FILE/);
+  assert.equal((JSON.parse(readFileSync(f.path, 'utf8')) as Row).approval, null);
+});
+
+test('approval fails when the route plan misses a routable net of the board, or names a net that is not on it', async t => {
+  const staged = (only_nets: string[]) => ({ ...ROUTE, stages: [{ name: 'main', only_nets }] });
+  const f = fixture(t);
+  writeFileSync(f.route, JSON.stringify(staged(['A'])));
+  await assert.rejects(approve(f.root, boardOf(['A', 'B', 'C'], ['A', 'B'])), /no stage routes 1 net of this board: B/);
+  writeFileSync(f.route, JSON.stringify(staged(['A', 'Z'])));
+  await assert.rejects(approve(f.root, boardOf(['A'])), /stages\[0\]\.only_nets: Z is not a net of this board/);
+  assert.equal((JSON.parse(readFileSync(f.path, 'utf8')) as Row).approval, null);
+  assert.equal(existsSync(join(f.root, COPY_PNG)), false, 'a refused approval leaves no copy');
+  writeFileSync(f.route, JSON.stringify(staged(['A', 'B'])));
+  await approve(f.root, boardOf(['A', 'B', 'C'], ['A', 'B']));
+  assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved');
+  // A stage with no only_nets routes every net.
+  const all = fixture(t);
+  await approve(all.root, boardOf(['A', 'B']));
+  assert.equal(layoutPlanStatus(all.root, 'X').state, 'approved');
+});
+
+test('approval fails closed when the nets of the board cannot be read, for example when the board file is missing', async t => {
+  const f = fixture(t), missing: NetSource = () => { throw new Error('ENOENT: no such file or directory, open X.kicad_pcb'); };
+  await assert.rejects(approve(f.root, missing), /route plan nets: ENOENT: no such file/);
   assert.equal((JSON.parse(readFileSync(f.path, 'utf8')) as Row).approval, null);
 });
 
@@ -188,7 +214,7 @@ test('approval needs a person and a reason, and a sealed board', async t => {
   assert.equal((JSON.parse(readFileSync(f.path, 'utf8')) as Row).approval, null);
 });
 
-test('the dispatcher shows the status, exits 1 until the plan is approved, and approves with a person and a reason', t => {
+test('the dispatcher shows the status, exits 1 until the plan is approved, and approves with a person and a reason', async t => {
   const f = fixture(t), command = fileURLToPath(new URL('../pcb', import.meta.url));
   const layout = (...args: string[]) => spawnSync(command, ['--project', f.root, 'layout', 'X', ...args], { encoding: 'utf8' });
   const before = layout('--json');
@@ -214,8 +240,13 @@ test('the dispatcher shows the status, exits 1 until the plan is approved, and a
   assert.equal(layout('--by', 'Ana').status, 2);
   assert.equal(layout('--image', imageOf(f.root)).status, 2);
   writeFileSync(imageOf(f.root), PNG);
-  const done = layout('--approve', '--by', 'Ana', '--reason', 'reviewed', '--image', imageOf(f.root), '--json');
-  assert.equal(done.status, 0, done.stderr);
+  // The command reads the nets of the board (here the fixture has no project file). It fails closed and approves nothing.
+  const refused = layout('--approve', '--by', 'Ana', '--reason', 'reviewed', '--image', imageOf(f.root));
+  assert.equal(refused.status, 1, refused.stdout);
+  assert.match(refused.stderr, /route plan nets: .*No such file or directory/);
+  assert.equal(layoutPlanStatus(f.root, 'X').state, 'unapproved');
+  await approveFixture(f.root, 'X');
+  const done = layout('--json');
   assert.equal(JSON.parse(done.stdout).state, 'approved');
   assert.equal(JSON.parse(done.stdout).image, COPY_PNG);
   assert.match(layout().stdout, /^PASS: X layout plan approved by Ana\nimage: hardware-design\/boards\/X\/layout-plan\.png/);

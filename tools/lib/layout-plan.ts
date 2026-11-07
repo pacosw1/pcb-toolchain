@@ -11,6 +11,7 @@ import { durableAppend } from './pcb-check-durable.ts';
 import { placementRulesPath } from './placement-rules.ts';
 import { isFile, isRelativeTo } from './py-path.ts';
 import { routePlanErrors } from './route-plan-schema.ts';
+import { boardPlanNets, routePlanNetErrors, type PlanNets } from './route-plan-nets.ts';
 
 export const LAYOUT_PLAN_SCHEMA = 'iot-lab.layout-plan.v1';
 const KEYS = ['schema', 'intents', 'route_plan', 'approval'];
@@ -29,7 +30,9 @@ export interface LayoutStatus {
   problems: string[]; stale: string[]; approval: Approval | null; image: string | null; exempt_reason?: string;
 }
 export interface LayoutBlock { code: 'layout_plan_missing' | 'layout_plan_stale'; message: string }
-export type LayoutEmit = (kind: string, data?: Row) => void;
+/** The nets of the board of BOARD. A test passes a stand-in: the real one reads the board JSON through the daemon. */
+export type NetSource = (root: string, board: string) => PlanNets;
+export type LayoutEmit =(kind: string, data?: Row) => void;
 
 export const layoutPlanPath = (root: string, board: string): string => join(root, 'hardware-design/boards', board, 'layout-plan.json');
 const imageCopyPath = (root: string, board: string, extension: string): string => join(root, 'hardware-design/boards', board, `layout-plan.${extension}`);
@@ -46,8 +49,8 @@ function imageHash(root: string, image: string): string | null {
   return isRelativeTo(path, resolve(root)) && path !== resolve(root) && isFile(path) ? sha256File(path) : null;
 }
 
-/** The problems of the plan file, the approval it holds, and the hashes of the two approved inputs as they are now. */
-function inspect(root: string, board: string, plan: Row): Inspection {
+/** The problems of the plan file, the approval it holds, and the hashes of the two approved inputs as they are now. A `boardNets` also checks the route plan against the nets of the board. */
+function inspect(root: string, board: string, plan: Row, boardNets: NetSource | null = null): Inspection {
   const problems: string[] = [];
   const out: Inspection = { problems, approval: null, rulesSha: null, routeSha: null, imageSha: null };
   for (const key of Object.keys(plan)) if (!KEYS.includes(key)) problems.push(`unknown key ${key}`);
@@ -87,8 +90,15 @@ function inspect(root: string, board: string, plan: Row): Inspection {
     else if (!isFile(path)) problems.push(`route_plan ${given} is not a file`);
     else {
       out.routeSha = sha256File(path);
-      try { for (const error of routePlanErrors(JSON.parse(readFileSync(path, 'utf8')), FEATURES)) problems.push(`route plan: ${error}`); }
-      catch (error) { problems.push(`route plan: ${(error as Error).message}`); }
+      try {
+        const route = JSON.parse(readFileSync(path, 'utf8')) as unknown, errors = routePlanErrors(route, FEATURES);
+        for (const error of errors) problems.push(`route plan: ${error}`);
+        // The nets of the board are read only at approval. Later the sealed board and the route plan hash bind the approval.
+        if (!errors.length && boardNets) {
+          try { for (const error of routePlanNetErrors(route, boardNets(root, board))) problems.push(`route plan: ${error}`); }
+          catch (error) { problems.push(`route plan nets: ${(error as Error).message}`); }
+        }
+      } catch (error) { problems.push(`route plan: ${(error as Error).message}`); }
     }
   }
 
@@ -160,7 +170,7 @@ function approvedImage(root: string, board: string, given: string): { image: str
 }
 
 /** `tools/pcb layout BOARD --approve --by NAME --reason TEXT --image FILE`: records the person, the reason, the image that the person saw and the hashes of the inputs. */
-export async function approveLayoutPlan(root: string, board: string, by: string, reason: string, imageFile: string): Promise<LayoutStatus> {
+export async function approveLayoutPlan(root: string, board: string, by: string, reason: string, imageFile: string, boardNets: NetSource = boardPlanNets): Promise<LayoutStatus> {
   if (!by?.trim()) throw new Error('--approve requires --by NAME');
   if (!reason?.trim()) throw new Error('--approve requires --reason TEXT');
   if (!imageFile?.trim()) throw new Error('--approve requires --image FILE');
@@ -169,7 +179,7 @@ export async function approveLayoutPlan(root: string, board: string, by: string,
   withSealLock(root, board, () => {
     verifySeal(root, board);
     if (!isFile(path)) throw new Error(`${board} has no layout plan (${path})`);
-    const plan = readPlan(path), found = inspect(root, board, plan);
+    const plan = readPlan(path), found = inspect(root, board, plan, boardNets);
     if (found.problems.length) throw new Error(`The layout plan of ${board} is not valid:\n  ${found.problems.join('\n  ')}`);
     const seen = approvedImage(root, board, imageFile);
     const approval: Approval = { by: by.trim(), reason: reason.trim(), rules_sha256: found.rulesSha!, route_plan_sha256: found.routeSha!, image: seen.image, image_sha256: seen.sha256 };
