@@ -125,3 +125,6 @@ export function replayLiveEvents(runId: string, events: readonly LiveEvent[], th
   for (const event of events) { if (event.seq > through) break; applyLiveEvent(state, event) }
   return state
 }
+
+/** The journal refuses a second, different event at a sequence it holds. The one wording, so a reader can recognise it. */
+export const SEQUENCE_REUSED = 'Live event sequence reused with different content'

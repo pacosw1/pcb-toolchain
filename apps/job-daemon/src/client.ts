@@ -27,6 +27,8 @@ env: JOBD_URL, JOBD_TOKEN or JOBD_TOKEN_FILE, IOT_LAB (project root), PCB_TOOLCH
 const GIVE_UP_MS = 300_000;
 const RECONNECT_MS = 2_000;
 const EXIT_UNREACHABLE = 3;
+/** The daemon is up but the results stayed "not ready". Not an outage, so not EXIT_UNREACHABLE. */
+const EXIT_RESULTS_PENDING = 4;
 /** The job reached its queue bound and never ran. EX_TEMPFAIL of sysexits.h: nothing is wrong with it, try again later. */
 const EXIT_QUEUE_BOUND = 75;
 
@@ -57,18 +59,39 @@ async function apiJson<T>(p: string, init?: RequestInit): Promise<T> {
   return body;
 }
 
-/** Keeps trying through a dropped connection or a daemon restart. An HTTP error is an answer and is not retried. */
-async function persist<T>(what: string, fn: () => Promise<T>): Promise<T> {
+/** The daemon answered 409: the job has not finished writing its results. The daemon is up. */
+export class ResultsNotReady extends Error {
+  constructor() {
+    super('results are not ready yet');
+  }
+}
+
+export interface PersistIo {
+  now(): number;
+  sleep(ms: number): Promise<void>;
+  die(msg: string, code: number): never;
+}
+
+const realIo: PersistIo = { now: Date.now, sleep, die };
+
+/**
+ * Keeps trying through a dropped connection or a daemon restart. An HTTP error is an answer and is not retried.
+ * "Not ready" is an answer too: it waits as long, but it is not reported as an outage.
+ */
+export async function persist<T>(what: string, fn: () => Promise<T>, io: PersistIo = realIo): Promise<T> {
   let downSince = 0;
   for (;;) {
     try {
       return await fn();
     } catch (e) {
-      downSince ||= Date.now();
-      if (Date.now() - downSince > GIVE_UP_MS) {
-        die(`daemon unreachable for ${GIVE_UP_MS / 1000} s during ${what} (${String(e)}); the job goes on, run: pcb-job watch`, EXIT_UNREACHABLE);
+      downSince ||= io.now();
+      if (io.now() - downSince > GIVE_UP_MS) {
+        if (e instanceof ResultsNotReady) {
+          io.die(`${what} not ready after ${GIVE_UP_MS / 1000} s, the daemon is up; the job goes on, run: pcb-job results <id>`, EXIT_RESULTS_PENDING);
+        }
+        io.die(`daemon unreachable for ${GIVE_UP_MS / 1000} s during ${what} (${String(e)}); the job goes on, run: pcb-job watch`, EXIT_UNREACHABLE);
       }
-      await sleep(RECONNECT_MS);
+      await io.sleep(RECONNECT_MS);
     }
   }
 }
@@ -149,7 +172,7 @@ function exitCodeOf(job: JobRecord): number {
 async function fetchResults(id: string, dir: string): Promise<void> {
   fs.mkdirSync(dir, { recursive: true });
   const res = await api(`/jobs/${id}/results`);
-  if (res.status === 409) throw new Error('results are not ready yet'); // `run` waits this out through persist()
+  if (res.status === 409) throw new ResultsNotReady(); // `run` waits this out through persist()
   const body = res.ok ? res.body : null;
   if (!body) return die(`results: HTTP ${res.status}`);
   const tar = spawn('tar', ['-xzf', '-', '-C', dir], { stdio: ['pipe', 'inherit', 'inherit'] });
@@ -495,16 +518,20 @@ async function observeLocal(args:string[],resume:boolean):Promise<number>{
  const [parent,separator,...command]=args;if(!parent||(!resume&&(separator!=='--'||!command.length)))throw Error('observe SPOOL -- COMMAND or observe-resume SPOOL');
  fs.mkdirSync(parent,{recursive:true});const out=resume?path.resolve(parent):fs.mkdtempSync(path.join(path.resolve(parent),'attempt-'));
  const meta=path.join(out,'observer.json');
- const job:ObservedJob=resume?JSON.parse(fs.readFileSync(meta,'utf8')):{id:'local-'+createHash('sha256').update(out).digest('hex').slice(0,24),name:path.basename(parent),state:'running',host:os.hostname(),attempts:[{n:1,out}]};
+ // exitCode is the command's own exit, kept so that a resume reports it and never a success it did not see.
+ const job:ObservedJob&{exitCode?:number}=resume?JSON.parse(fs.readFileSync(meta,'utf8')):{id:'local-'+createHash('sha256').update(out).digest('hex').slice(0,24),name:path.basename(parent),state:'running',host:os.hostname(),attempts:[{n:1,out}]};
  job.attempts[0].out=out;let code=0,ended=resume;
- if(resume&&!job.attempts[0].endedAt){job.state='failed';job.attempts[0].endedAt=new Date().toISOString()}
+ if(resume&&!job.attempts[0].endedAt){job.state='failed';job.exitCode=1;job.attempts[0].endedAt=new Date().toISOString()}
+ if(resume)code=job.exitCode??(job.state==='passed'?0:1);
  const save=():void=>{fs.writeFileSync(meta+'.tmp',JSON.stringify(job));fs.renameSync(meta+'.tmp',meta)};save();
  const request=async(p:string,init:RequestInit):Promise<void>=>{const r=await api(p,{...init,signal:AbortSignal.timeout(3000)});const body=await r.text();if(!r.ok)throw Error(`live HTTP ${r.status}: ${body.slice(0,200)}`)};
  const observer=new LiveJobs(()=>[job],{importBoard:(bytes,sha)=>request('/live/assets/'+sha,{method:'PUT',body:new Uint8Array(bytes)}),append:events=>request('/live/events',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({events})})});
  if(!resume){
   const child=spawn(command[0]!,command.slice(1),{stdio:'inherit',env:{...process.env,PCB_LIVE_DIR:out}});
-  child.on('error',()=>{code=127;ended=true;job.state='failed';job.attempts[0].endedAt=new Date().toISOString();save()});
-  child.on('close',(status,signal)=>{code=status??128+(os.constants.signals[signal as NodeJS.Signals]??0);ended=true;job.state=code===0?'passed':'failed';job.attempts[0].endedAt=new Date().toISOString();save()});
+  // One end only: a spawn failure emits 'error' and then 'close', and the first word stays.
+  const end=(c:number):void=>{if(ended)return;code=c;ended=true;job.exitCode=c;job.state=c===0?'passed':'failed';job.attempts[0].endedAt=new Date().toISOString();save()};
+  child.on('error',()=>end(127));
+  child.on('close',(status,signal)=>end(status??128+(os.constants.signals[signal as NodeJS.Signals]??0)));
  }
  let finishDeadline=Infinity;
  do{await observer.poll();if(ended){if(observer.settled())break;if(finishDeadline===Infinity)finishDeadline=Date.now()+10000;}await sleep(100)}while(Date.now()<finishDeadline)

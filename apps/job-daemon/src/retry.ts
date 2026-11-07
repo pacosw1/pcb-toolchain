@@ -24,6 +24,8 @@ export interface AttemptEnd {
 }
 
 export function classify(e: AttemptEnd): Classified {
+  // A daemon kill is a reason, a cancel is the user's decision: when both are on record the decision is the verdict.
+  if (e.cancelRequested && e.killedFor) return { outcome: 'cancelled', exitCode: e.containerExit, detail: 'cancelled' };
   if (e.killedFor === 'disk') return { outcome: 'disk', exitCode: e.containerExit, detail: e.killDetail };
   if (e.killedFor === 'deadline') return { outcome: 'timeout', exitCode: e.containerExit, detail: e.killDetail };
   if (e.containerExit === 0) return { outcome: 'passed', exitCode: 0, detail: 'command exit 0' };

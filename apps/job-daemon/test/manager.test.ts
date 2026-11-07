@@ -545,3 +545,47 @@ describe('docker arguments', () => {
     assert.deepEqual(a.slice(-4), ['_', '60', 'python3', 'a b.py'], 'the command stays one argument per word');
   });
 });
+
+describe('attempt sub-states', () => {
+  it('a cancel wins over a daemon kill that came first: the job ends cancelled, not failed', async () => {
+    const job = r.submit(['hang'], { timeoutS: 10 });
+    await r.mgr.tick();
+    r.clock.now += 60_000; // past the deadline of 25 s
+    r.mgr.cancel(job.id);
+    await r.mgr.tick();
+    assert.equal(job.state, 'cancelled');
+    assert.equal(job.result?.outcome, 'cancelled');
+  });
+
+  it('the disk watcher leaves an attempt alone until runtime.start has answered', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const start = r.runtime.start.bind(r.runtime);
+    r.runtime.start = async (req) => { await gate; return start(req); };
+    r.runtime.layerSize = null; // the container does not exist yet, so nothing can be measured
+    const job = r.submit(['hang']);
+    const ticking = r.mgr.tick();
+    await new Promise((resolve) => setImmediate(resolve)); // the tick is now parked inside runtime.start
+    assert.equal(job.state, 'running');
+    for (let i = 0; i < 5; i++) await r.mgr.watchDisk();
+    assert.equal(job.state, 'running');
+    assert.equal(job.attempts[0].killedFor, undefined, 'no kill before the container exists');
+    release();
+    await ticking;
+    assert.equal(r.runtime.killed.length, 0);
+  });
+
+  it('a retrying job with no usable nextAttemptAt is due at once, not stuck', async () => {
+    for (const bad of [undefined, 'not a date']) {
+      const job = r.submit(['killed', 'pass']);
+      await r.mgr.tick();
+      await r.mgr.tick();
+      assert.equal(job.state, 'retrying');
+      job.nextAttemptAt = bad;
+      await r.mgr.tick();
+      assert.equal(job.attempts.length, 2, `second attempt starts for ${String(bad)}`);
+      await settle(job.id);
+      assert.equal(job.state, 'passed');
+    }
+  });
+});
