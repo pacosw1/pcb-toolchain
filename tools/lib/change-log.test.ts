@@ -119,6 +119,22 @@ test('each group of files has its own widest row', t => {
   if (status.state === 'unrecorded') assert.deepEqual(status.groups.map(row => [row.group, row.kind.id]), [['schematic', 'part_swap_new_footprint'], ['rules', 'rule_change']]);
 });
 
+test('a rules file that gate.json names is in the rules group', t => {
+  const f = fixture(t);
+  writeFileSync(join(f.folder, 'erc-rules.json'), '{"a":1}');
+  f.write('gate.json', JSON.stringify({ project: 'X', checks: { erc: 'erc-rules.json' } }));
+  f.record('baseline');
+  f.write('erc-rules.json', '{"a":2}');
+  assert.equal(changeBlock(f.root, 'X')?.code, 'change_unrecorded');
+  assert.match(changeBlock(f.root, 'X')!.message, /rules: /);
+});
+
+test('a JSON file that no check names is no rule', t => {
+  const f = fixture(t); f.record('baseline');
+  f.write('my-custom-rules.json', '{"a":2}');
+  assert.equal(changeBlock(f.root, 'X'), null);
+});
+
 test('placement and copper are not an unrecorded change', t => {
   const f = fixture(t); f.record('baseline');
   f.write('X.kicad_pcb', BOARD.replace('(at 1 1)', '(at 9 9)').replace('(gr_line', '(segment (start 1 1) (end 2 2) (width 0.2) (layer "F.Cu") (net 1)) (gr_line'));

@@ -6,7 +6,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { boardShapeSha256 } from './board-shape.ts';
-import { isCanonicalRoot, schematicSha256, verifySeal, withSealLock } from './cad-seal.ts';
+import { isCanonicalRoot, schematicSha256, sealedJson, verifySeal, withSealLock } from './cad-seal.ts';
 import { sha256Text } from './fingerprint.ts';
 import { sha256File } from './json-file.ts';
 import { durableAppend } from './pcb-check-durable.ts';
@@ -39,7 +39,8 @@ export const changePath = (root: string, board: string): string => join(root, 'h
 
 function rulesSha256(root: string, board: string, files: readonly string[]): string {
   const folder = join(root, 'hardware-design/boards', board);
-  return sha256Text(JSON.stringify(Object.fromEntries(files.map(file => [file, existsSync(join(folder, file)) ? sha256File(join(folder, file)) : null]))));
+  const named = Object.fromEntries(files.map(file => [file, existsSync(join(folder, file)) ? sha256File(join(folder, file)) : null]));
+  return sha256Text(JSON.stringify({ ...named, ...sealedJson(root, board) }));   // a missing file is a value, and each rule file of a check joins the fixed names
 }
 
 /** The hash of each group of the table, in table order. A group with no hash here is an error: the table and the code must agree. */
