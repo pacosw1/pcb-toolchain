@@ -366,6 +366,20 @@ actual Gerber/BOM/CPL checks, atomic publication and separate current stock,
 complete-assembly and supplier-orientation readiness. Producing a fabrication
 candidate does not declare G5 approval or order boards.
 
+### Release approval
+
+`tools/pcb release-approval BOARD --candidate DIR` shows the G5 state of a release candidate and exits 1 unless it is
+`approved`. A person approves with `--approve --by NAME --reason TEXT --report FILE --image FILE`. The report is the
+`ready_for_user_review` report of the same board and the same candidate manifest. The image is a PNG or an SVG (the
+content is checked). The command needs a canonical project and an intact CAD seal. It writes
+`hardware-design/boards/BOARD/release-approval.json` (schema `iot-lab.release-approval.v1`) with `by`, `reason`
+and the sha256 of the candidate manifest, the report and the image. It also keeps a copy of the report and the image
+next to it, and one line in `.gate/release-approval/BOARD.jsonl`. The states are `missing`, `invalid`, `stale` and
+`approved`. A changed candidate, report or image makes the record `stale`. These files are no gate input.
+`check-release-readiness.mjs` reports `g5_release_approved: true` only for `approved`. The manifest keeps
+`g5_ready: false`. `--by` is any text: the tool does not check who the person is. The `claude-cad-guard.mjs` hook
+asks a person before `--approve` and before an edit of a `release-approval*` file.
+
 [Block qualification](BLOCK-QUALIFICATION.md) describes native inventory and
 source/target-bound receipts. Draft, verified applicability and measured bench
 proof remain different states. Missing native bindings/reviews stay draft.

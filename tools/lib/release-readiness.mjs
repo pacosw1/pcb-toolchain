@@ -5,6 +5,7 @@ import {loadBoardSelection} from './board-selections.mjs';
 import {parseCsv} from './csv.mjs';
 import {owningBomRevision} from './bom-ownership.mjs';
 import {fileHashes,sha256,releaseRecipe,verifyFab,verifyReleaseGate,verifyBoardChecks} from './release-evidence.mjs';
+import {g5Decision} from './release-approval.mjs';
 
 const json=path=>JSON.parse(readFileSync(path,'utf8'));
 const need=(condition,message)=>{if(!condition)throw new Error(message);};
@@ -119,6 +120,6 @@ export async function releaseReadiness(root,board,candidate,{stock,orientation,a
  await check('complete_assembly_stock',()=>{need(entry && checks.packet.status==='passed' && checks.cad_fabrication.status==='passed','valid packet and fabrication candidate required');return inspectCompleteAssembly(root,entry,candidate,manifest,stock,{asOf,boards});});
  await check('supplier_orientation',()=>{need(orientation,'attributable supplier package orientation review required (--orientation FILE)');need(checks.cad_fabrication.status==='passed','valid fabrication candidate required');return inspectOrientation(candidate,manifest,orientation);});
  return {schema_version:1,board,revision:manifest?.revision??null,status:findings.length?'blocked':'ready_for_user_review',
-  scope:'order_preparation',order_day_utc:asOf,boards,checks,findings,inputs,g5_release_approved:false,g6_qualified:false,ordered:false,
+  scope:'order_preparation',order_day_utc:asOf,boards,checks,findings,inputs,...g5Decision(root,board,candidate,findings),g6_qualified:false,ordered:false,
   limits:['Readiness is evidence for user review; it does not approve, order, reserve stock, assemble or establish measured qualification.']};
 }

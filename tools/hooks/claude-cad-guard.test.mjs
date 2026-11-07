@@ -43,6 +43,17 @@ test('Edit on gate.json or a check data file of a board asks a person, and an un
   assert.equal(run({tool_name: 'Edit', tool_input: {file_path: '/work/proj/tools/gate.json'}}).stdout, '');
 });
 
+test('an edit of a release approval file and the approve command ask a person', () => {
+  for (const name of ['release-approval.json', 'release-approval.report.json', 'release-approval.png']) {
+    const out = decisionOf(run({tool_name: 'Write', tool_input: {file_path: `/work/proj/hardware-design/boards/B/${name}`, content: '{}'}}));
+    assert.equal(out.permissionDecision, 'ask', name);
+  }
+  for (const command of ['tools/pcb release-approval B --candidate /c --approve --by Ana --reason x --report r.json --image i.png']) {
+    assert.equal(decisionOf(run({tool_name: 'Bash', tool_input: {command}})).permissionDecision, 'ask', command);
+  }
+  for (const command of ['tools/pcb release-approval B --candidate /c']) assert.equal(run({tool_name: 'Bash', tool_input: {command}}).stdout, '', command);
+});
+
 test('Edit on tools/foo.ts passes with no output', () => {
   const result = run({tool_name: 'Edit', tool_input: {file_path: '/work/proj/tools/foo.ts'}});
   assert.equal(result.status, 0);
