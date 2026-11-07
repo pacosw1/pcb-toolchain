@@ -324,6 +324,8 @@ The file is `tools/pcb-transitions.json`, schema `iot-lab.transitions.v1`. It is
 
 - `prev_sha256` is the hash of the line before. A hand edit breaks the chain.
 - A kind with no file change, such as `fab_defect`, `bringup_failure`, `out_of_stock`, `approval_withdrawn` or `ordered`, has an empty `groups`.
+- Open gap: a hand edit of the last line does not break the chain, because no later line hashes it.
+- Open gap: a deleted log reads as `not_started`, so the board has no block until `--kind baseline`.
 - The file is not a gate input and not a candidate source, as `cad-seal.json` is not (`lib/gate-inputs.mjs:93`, `lib/pcb-sources.ts:41`).
 
 ### J.4 What `pcb next` shows

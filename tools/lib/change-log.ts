@@ -1,5 +1,6 @@
 // The change log: hardware-design/boards/BOARD/changes.jsonl is committed and holds why a state went back.
-// Each line has a hash of the line before, so a hand edit breaks the chain. A line never makes evidence valid: it adds the reason.
+// Each line has a hash of the line before. A hand edit of a line breaks the chain, except for the last line: no later line hashes it.
+// A line never makes evidence valid: it adds the reason.
 // The log compares each file group with the last recorded hash. A difference with no event stops the work and uses the widest row of the group.
 // A board with no log has not started: nothing can compare, and `pcb state` shows that. `--kind baseline` starts the log.
 import { existsSync, readFileSync } from 'node:fs';
