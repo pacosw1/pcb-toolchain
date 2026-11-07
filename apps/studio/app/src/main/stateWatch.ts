@@ -16,12 +16,25 @@ import path from 'node:path'
 import { DEBOUNCE_MS, MAX_WAIT_MS } from './boardWatch.ts'
 import { onUnsubscribe, publish } from './events.ts'
 
-export interface Snapshot { state: unknown, history: unknown }
+export interface Snapshot {
+  state: unknown
+  history: unknown
+}
 export type Read = (root: string, board: string) => Promise<Snapshot>
 export type Closer = () => void
 /** Starts a watch on `dir`; calls `onEvent` with the path below `dir` of each change. */
-export type WatchDir = (dir: string, recursive: boolean, onEvent: (name: string | null) => void, onError: (error: Error) => void) => Closer
-export interface Deps { read: Read, watchDir: WatchDir, debounceMs: number, maxWaitMs: number }
+export type WatchDir = (
+  dir: string,
+  recursive: boolean,
+  onEvent: (name: string | null) => void,
+  onError: (error: Error) => void
+) => Closer
+export interface Deps {
+  read: Read
+  watchDir: WatchDir
+  debounceMs: number
+  maxWaitMs: number
+}
 
 const BOARD = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const STATE_SCHEMA = 'iot-lab.board-state.v1'
@@ -39,20 +52,42 @@ export function toolOf(root: string): string {
   throw new Error(`no tools/pcb in ${root} or in PCB_TOOLCHAIN_ROOT`)
 }
 
-function run(tool: string, root: string, args: string[]): Promise<{ code: number, stdout: string, stderr: string }> {
+function run(
+  tool: string,
+  root: string,
+  args: string[]
+): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile(tool, ['--project', root, ...args], { cwd: root, timeout: READ_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, env: process.env }, (error, stdout, stderr) => {
-      const code = (error as { code?: unknown } | null)?.code
-      if (error && typeof code !== 'number') return reject(new Error(`${path.basename(tool)} ${args[0]}: ${error.message}`))
-      resolve({ code: typeof code === 'number' ? code : 0, stdout, stderr })
-    })
+    execFile(
+      tool,
+      ['--project', root, ...args],
+      { cwd: root, timeout: READ_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, env: process.env },
+      (error, stdout, stderr) => {
+        const code = (error as { code?: unknown } | null)?.code
+        if (error && typeof code !== 'number')
+          return reject(new Error(`${path.basename(tool)} ${args[0]}: ${error.message}`))
+        resolve({ code: typeof code === 'number' ? code : 0, stdout, stderr })
+      }
+    )
   })
 }
 
-function parse(label: string, out: { code: number, stdout: string, stderr: string }, schema: string, okCodes: number[]): unknown {
+function parse(
+  label: string,
+  out: { code: number; stdout: string; stderr: string },
+  schema: string,
+  okCodes: number[]
+): unknown {
   let value: { schema?: unknown } | null = null
-  try { value = JSON.parse(out.stdout) as { schema?: unknown } } catch { /* below */ }
-  if (!okCodes.includes(out.code) || value?.schema !== schema) throw new Error(`pcb ${label} failed (exit ${out.code}): ${(out.stderr || out.stdout).trim().slice(0, 400)}`)
+  try {
+    value = JSON.parse(out.stdout) as { schema?: unknown }
+  } catch {
+    /* below */
+  }
+  if (!okCodes.includes(out.code) || value?.schema !== schema)
+    throw new Error(
+      `pcb ${label} failed (exit ${out.code}): ${(out.stderr || out.stdout).trim().slice(0, 400)}`
+    )
   return value
 }
 
@@ -60,8 +95,14 @@ function parse(label: string, out: { code: number, stdout: string, stderr: strin
 export const readSnapshot: Read = async (root, board) => {
   if (!BOARD.test(board)) throw new Error('Invalid board name')
   const tool = toolOf(root)
-  const [state, history] = await Promise.all([run(tool, root, ['state', board, '--json']), run(tool, root, ['history', board, '--json'])])
-  return { state: parse('state', state, STATE_SCHEMA, [0]), history: parse('history', history, HISTORY_SCHEMA, [0, 1]) }
+  const [state, history] = await Promise.all([
+    run(tool, root, ['state', board, '--json']),
+    run(tool, root, ['history', board, '--json'])
+  ])
+  return {
+    state: parse('state', state, STATE_SCHEMA, [0]),
+    history: parse('history', history, HISTORY_SCHEMA, [0, 1])
+  }
 }
 
 const watchFs: WatchDir = (dir, recursive, onEvent, onError) => {
@@ -70,14 +111,20 @@ const watchFs: WatchDir = (dir, recursive, onEvent, onError) => {
   return () => watcher.close()
 }
 
-export const realDeps: Deps = { read: readSnapshot, watchDir: watchFs, debounceMs: DEBOUNCE_MS, maxWaitMs: MAX_WAIT_MS }
+export const realDeps: Deps = {
+  read: readSnapshot,
+  watchDir: watchFs,
+  debounceMs: DEBOUNCE_MS,
+  maxWaitMs: MAX_WAIT_MS
+}
 
-const digest = (snapshot: Snapshot): string => createHash('sha256').update(JSON.stringify(snapshot)).digest('hex')
+const digest = (snapshot: Snapshot): string =>
+  createHash('sha256').update(JSON.stringify(snapshot)).digest('hex')
 
 class StateWatch {
   readonly owners = new Set<unknown>()
   rev = 0
-  private last: { hash: string, snapshot: Snapshot } | null = null
+  private last: { hash: string; snapshot: Snapshot } | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
   private burstStart = 0
   private reading: Promise<void> | null = null
@@ -92,11 +139,27 @@ class StateWatch {
     this.root = root
     this.board = board
     this.deps = deps
-    const onEvent = (name: string | null): void => { if (name === null || !NOISE.test(name)) this.schedule() }
-    const onError = (error: Error): void => { publish('state.error', { board, rev: this.rev, error: `file watch stopped: ${error.message}` }); onStop(this) }
-    const dirs: [string, boolean][] = [[path.join(root, 'hardware-design', 'boards', board), false], [path.join(root, '.gate'), true]]
+    const onEvent = (name: string | null): void => {
+      if (name === null || !NOISE.test(name)) this.schedule()
+    }
+    const onError = (error: Error): void => {
+      publish('state.error', {
+        board,
+        rev: this.rev,
+        error: `file watch stopped: ${error.message}`
+      })
+      onStop(this)
+    }
+    const dirs: [string, boolean][] = [
+      [path.join(root, 'hardware-design', 'boards', board), false],
+      [path.join(root, '.gate'), true]
+    ]
     for (const [dir, recursive] of dirs) {
-      try { this.closers.push(deps.watchDir(dir, recursive, onEvent, onError)) } catch { /* a folder that does not exist yet has nothing to watch */ }
+      try {
+        this.closers.push(deps.watchDir(dir, recursive, onEvent, onError))
+      } catch {
+        /* a folder that does not exist yet has nothing to watch */
+      }
     }
   }
 
@@ -110,7 +173,8 @@ class StateWatch {
     try {
       do {
         this.again = false
-        const snapshot = await this.deps.read(this.root, this.board), hash = digest(snapshot)
+        const snapshot = await this.deps.read(this.root, this.board),
+          hash = digest(snapshot)
         if (hash !== this.last?.hash) {
           this.last = { hash, snapshot }
           this.rev++
@@ -130,13 +194,19 @@ class StateWatch {
     if (this.timer) clearTimeout(this.timer)
     else this.burstStart = now
     const left = this.burstStart + this.deps.maxWaitMs - now
-    this.timer = setTimeout(() => { this.timer = null; this.fire() }, Math.max(0, Math.min(this.deps.debounceMs, left)))
+    this.timer = setTimeout(
+      () => {
+        this.timer = null
+        this.fire()
+      },
+      Math.max(0, Math.min(this.deps.debounceMs, left))
+    )
   }
 
   /** The read after a change. A change during a read asks for one more read. */
   private fire(): void {
     if (this.reading) this.again = true
-    else this.refresh().catch(() => undefined)               // the error is published as state.error
+    else this.refresh().catch(() => undefined) // the error is published as state.error
   }
 
   close(): void {
@@ -148,8 +218,12 @@ class StateWatch {
 }
 
 export interface StateWatcher {
-  watch: (client: unknown, root: string, board: string) => Promise<Snapshot & { board: string, rev: number }>
-  unwatch: (client: unknown, board: string) => { board: string, watching: boolean }
+  watch: (
+    client: unknown,
+    root: string,
+    board: string
+  ) => Promise<Snapshot & { board: string; rev: number }>
+  unwatch: (client: unknown, board: string) => { board: string; watching: boolean }
   unwatchAll: () => void
   /** The boards that have a watch now. */
   boards: () => string[]
@@ -157,7 +231,10 @@ export interface StateWatcher {
 
 export function createStateWatcher(deps: Deps = realDeps): StateWatcher {
   const watches = new Map<string, StateWatch>()
-  const drop = (w: StateWatch): void => { w.close(); watches.delete(w.board) }
+  const drop = (w: StateWatch): void => {
+    w.close()
+    watches.delete(w.board)
+  }
   const unwatch: StateWatcher['unwatch'] = (client, board) => {
     const w = watches.get(board)
     if (w) {
@@ -166,24 +243,34 @@ export function createStateWatcher(deps: Deps = realDeps): StateWatcher {
     }
     return { board, watching: watches.has(board) }
   }
-  onUnsubscribe(client => { for (const w of [...watches.values()]) unwatch(client, w.board) })
+  onUnsubscribe((client) => {
+    for (const w of [...watches.values()]) unwatch(client, w.board)
+  })
   return {
     async watch(client, root, board) {
       if (client === undefined) throw new Error('state.watch needs a connected client')
       if (!BOARD.test(board)) throw new Error('Invalid board name')
       let w = watches.get(board)
-      if (w && w.root !== root) { drop(w); w = undefined }
-      if (!w) { w = new StateWatch(root, board, deps, drop); watches.set(board, w) }
+      if (w && w.root !== root) {
+        drop(w)
+        w = undefined
+      }
+      if (!w) {
+        w = new StateWatch(root, board, deps, drop)
+        watches.set(board, w)
+      }
       w.owners.add(client)
       try {
         return { board, ...(await w.refresh()) }
       } catch (error) {
-        unwatch(client, board)                               // a client whose first read failed holds no watch
+        unwatch(client, board) // a client whose first read failed holds no watch
         throw error
       }
     },
     unwatch,
-    unwatchAll: () => { for (const w of [...watches.values()]) drop(w) },
+    unwatchAll: () => {
+      for (const w of [...watches.values()]) drop(w)
+    },
     boards: () => [...watches.keys()].sort()
   }
 }
