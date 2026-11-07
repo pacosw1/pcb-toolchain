@@ -30,7 +30,13 @@ function client(t: TestContext): { send: Sender; next: (method: string) => Promi
   }
   subscribe(send)
   t.after(() => unsubscribe(send))
-  return { send, next: (method) => new Promise((resolve) => waiting.push({ method, resolve })) }
+  // The watcher is not persistent, so the timer holds the event loop open until the note comes, and bounds the wait.
+  const next = (method: string): Promise<Note> =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`no ${method} in 5 s`)), 5000)
+      waiting.push({ method, resolve: (note) => (clearTimeout(timer), resolve(note)) })
+    })
+  return { send, next }
 }
 
 function fakes(output: () => CallsSnapshot | Error): {

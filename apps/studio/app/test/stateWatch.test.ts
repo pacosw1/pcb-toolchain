@@ -39,7 +39,12 @@ function client(t: TestContext): {
   return {
     send,
     notes,
-    next: (method) => new Promise((resolve) => waiting.push({ method, resolve }))
+    // The watcher is not persistent, so the timer holds the event loop open until the note comes, and bounds the wait.
+    next: (method) =>
+      new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`no ${method} in 5 s`)), 5000)
+        waiting.push({ method, resolve: (note) => (clearTimeout(timer), resolve(note)) })
+      })
   }
 }
 

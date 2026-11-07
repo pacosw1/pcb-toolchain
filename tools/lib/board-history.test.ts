@@ -10,7 +10,7 @@ import { boardHistory, historyText } from './board-history.ts';
 import { reseal } from './cad-seal.ts';
 import { changePath, recordChange } from './change-log.ts';
 import { sha256File } from './json-file.ts';
-import { releaseOrdersPath } from './release-order.mjs';
+import { releaseOrders, releaseOrdersPath } from './release-order.mjs';
 import { approveCandidate, orderCandidate, releaseRun } from './release-run-fixture.ts';
 import { loadTransitions } from './transitions.ts';
 
@@ -201,7 +201,7 @@ test('each entry names the stages it belongs to, and the table has every stage',
   f.run('run-a', '2026-11-06T10:00:00+00:00');
   reseal(f.root, 'X', { tool: 'fixture', run_id: null });
   recordChange(f.root, 'X', { kind: 'baseline', reason: 'start', by: 'Ana', refs: [] });
-  recordChange(f.root, 'X', { kind: 'fab_defect', reason: 'short', by: 'Ana', refs: ['U3'] });
+  recordChange(f.root, 'X', { kind: 'fab_defect', reason: 'short', by: 'Ana', refs: [releaseOrders(f.root, 'X')[0]!.candidate_sha256] });   // a defect names the release of a recorded order
   writeFileSync(join(f.root, '.gate/layout-plan/X.jsonl'), JSON.stringify({ time: '2026-11-06T14:00:00.000Z', type: 'layout_plan.approved', board: 'X', by: 'Ana', reason: 'ok', rules_sha256: 'r', route_plan_sha256: 'p', schematic_sha256: 'c', image: 'i.png', image_sha256: 'h' }) + '\n');
   const { entries } = boardHistory(f.root, 'X', f.base), stages = (id: string) => entries.find(entry => entry.id === id)!.stages;
   assert.deepEqual(stages('run-a'), ['A14']);
