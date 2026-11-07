@@ -30,6 +30,15 @@ one that came out worse: start from the earlier run. Neither is suggested for a 
 ENV-SENSE held to one layer a reuse routed /SDA by ripping GND, and open connections went from 11 to 33 with 2 nets open before and after;
 on both layers it went from 3 to 2, then stayed at 2. So the report counts connections as well as nets.
 
+`tools/pcb route` stops when the latest route of the board in the runs folder ended stuck (it has `operation/stuck.json`), no accepted move
+names that report, and the source revision and parameters of the new route equal those of the stuck run. The error names the run and the
+`move` command that records the decision. A changed input, such as a new plan, a new `--from-run` or an adopted edit, allows the route. A
+routing loop round is a decision of its own and is not stopped (`tools/ROUTING-LOOP.md`).
+
+A `--router route-json` plan is also checked against the nets of its board when the route is admitted (`tools/lib/route-plan-nets.ts`):
+the stages must cover every net with two or more pads, by `only_nets` or by a stage with no `only_nets`, and a net name in `only_nets`,
+`plane_nets` or `unlock_nets` must be on the board. `skip_nets` are patterns and stage order is not checked.
+
 The unified CLI records a routing diagnosis as an unqualified engineering run:
 
 ```sh

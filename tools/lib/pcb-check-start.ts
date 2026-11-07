@@ -15,6 +15,7 @@ import { parentCandidate } from './pcb-candidate.ts';
 import { verify } from './pcb-evidence.ts';
 import { holdLock } from './file-lock.ts';
 import { verifySeal } from './cad-seal.ts';
+import { assertRouteNotRepeated } from './route-repeat.ts';
 
 export interface LoopContext { id: string; round: number; launch_id: string; source_sha256: string; deadline_ms: number }
 export interface CheckOptions extends CandidateRequest { root: string; base: string; board: string; operation?: string; fromRun?: string; arguments?: string[]; timeout: number; heartbeat: number; changed?: boolean; fresh?: boolean; baseline?: string; cycle?: string; loopContext?: LoopContext }
@@ -61,6 +62,8 @@ export async function startCheck(options: CheckOptions): Promise<string> {
       || !Number.isSafeInteger(options.loopContext.round) || options.loopContext.round < 1 || options.loopContext.round > 8
       || !/^[a-f0-9]{24}$/.test(options.loopContext.launch_id) || options.loopContext.source_sha256 !== actionRecord?.source_revision
       || !Number.isFinite(options.loopContext.deadline_ms) || options.loopContext.deadline_ms <= Date.now())) throw new Error('invalid or expired loop context');
+  // A loop round is a decision of its own (tools/ROUTING-LOOP.md): its context is checked above.
+  if (operation === 'route' && !options.loopContext) assertRouteNotRepeated(base, root, options.board, actionRecord);
   const node = which(process.env.NODE ?? 'node');
   if (!node) throw new Error('Node.js is required to run the existing gate');
   mkdirSync(base, { recursive: true });

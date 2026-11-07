@@ -4,6 +4,7 @@ import { validateExplicitSpec } from './explicit-spec.ts';
 import { readObject } from './json-file.ts';
 import { boardConfig, routePolicyArgs, sha } from './pcb-workflow.ts';
 import { isFile, resolvePath } from './py-path.ts';
+import { boardPlanNets, routePlanNetErrors } from './route-plan-nets.ts';
 
 export const CANDIDATE = new Set(['build', 'edit', 'route', 'repair']);
 export const OPERATIONS = new Set([...CANDIDATE, 'release']);
@@ -25,7 +26,7 @@ function specFor(root: string, operation: string, board: string, router: string,
 }
 
 /** The manifest fields of this candidate. A continued run keeps the reviewed inputs of its parent. */
-export function candidateFields(root: string, operation: string, board: string, request: CandidateRequest, parent?: string): Record<string, unknown> {
+export function candidateFields(root: string, operation: string, board: string, request: CandidateRequest, parent?: string, boardNets = boardPlanNets): Record<string, unknown> {
   const previous = parent ? readObject<Previous>(join(parent, 'run.json')) : undefined;
   const reviewed = (folder: string): string | undefined => { const path = join(root, 'hardware-design/registry', folder, `${board}.json`); return isFile(path) ? path : undefined; };
   const candidate = CANDIDATE.has(operation);
@@ -40,6 +41,10 @@ export function candidateFields(root: string, operation: string, board: string, 
     Object.assign(fields, { spec, spec_sha256: sha(resolvePath(specPath)) });
   }
   validateExplicitSpec(operation, request.kind, router, fields.spec);
+  if (operation === 'route' && router === 'route-json') {
+    const errors = routePlanNetErrors(fields.spec, boardNets(root, board, parent));
+    if (errors.length) throw new Error(`route plan does not fit the nets of ${board}: ${errors.join('; ')}`);
+  }
   if (operation === 'route') fields.router = router;
   if (request.kind) fields.kind = request.kind;
   if (request.plan) fields.plan = bind('plan', request.plan);
