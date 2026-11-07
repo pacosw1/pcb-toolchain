@@ -1,6 +1,6 @@
 // Admit an isolated check and start its one-shot owner. Never writes CAD.
 import { spawn } from 'node:child_process';
-import { closeSync, mkdirSync, mkdtempSync, openSync } from 'node:fs';
+import { closeSync, mkdirSync, mkdtempSync, openSync, rmdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicJson, readObject } from './json-file.ts';
@@ -87,6 +87,8 @@ export async function startCheck(options: CheckOptions): Promise<string> {
     : operation === 'outcomes' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/placement_outcomes.ts'), ...(options.arguments ?? []), '--root', root, '--json', '--output', join(folder, 'operation/report.json')]
     : operation === 'ml' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/pcb_ml.ts'), ...(options.arguments ?? []), '--root', root, '--json', '--output', join(folder, 'operation/report.json')]
     : [node, join(root, 'tools/gate.mjs'), board, '--evidence-dir', join(folder, 'gate')];
+  const tool = command.find(part => part.startsWith(join(root, 'tools/')));
+  if (tool && !isFile(tool)) { rmdirSync(folder); throw new Error(`${tool} is missing: the project does not hold its release tools; run pcb toolchain-sync`); }
   if (options.changed) command.push('--changed');
   if (options.fresh) command.push('--fresh');
   if (baseline) command.push('--findings-baseline', baseline);
