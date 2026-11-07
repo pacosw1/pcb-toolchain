@@ -6,7 +6,7 @@ runs on one Mac from sharing cores.
 ## The lock
 
 `bench run` takes a machine-wide lock before the first trial and frees it when the run ends (also on SIGINT/SIGTERM):
-`/private/var/folders/xr/wdn1rhvs5rxcyb8wlqtks0v00000gn/T/opencode/bench.lock` (override with `BENCH_LOCK`), a directory made with `mkdir`
+`<system temp dir>/opencode/bench.lock` (override with `BENCH_LOCK`), a directory made with `mkdir`
 that holds `owner.json` (pid, start time, label `bench SUITE -> OUT`, cwd).
 
 - Held by a live process: `bench run` stops and names the holder. `--wait` queues behind it (polls every 5 s, prints the holder once).
