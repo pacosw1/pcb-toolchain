@@ -30,7 +30,7 @@ tools/pcb bench compare DIR_A/result.json DIR_B/result.json [--arm-a ID] [--arm-
 - Placeholders in `argv`: `{board} {seed} {timeout_s} {cpus} {memory_gb} {input}`. Unknown ones are refused.
 - An arm gives either one `argv` or ordered `steps` (see Chained arms).
 - Both a development and a holdout board are required; a family cannot be in both. Input hashes are checked against the files before anything runs.
-- The same seeds run for both arms, interleaved per pair. Trials run one at a time (they share the machine); a finished trial's record in `DIR/trials/` is kept, so rerunning `run` resumes.
+- The same seeds run for both arms, interleaved per pair. Trials run one at a time (they share the machine); a record in `DIR/trials/` with a verdict (`sealed` or `timeout`) is kept, so rerunning `run` resumes. A `no_run` trial runs again, in a work folder that starts empty. A `timeout` trial has no `run_status`: its cause names what the run sealed.
 - Each arm's argv (or last step) must end in a `--json` pcb run that prints its `run_id`; the sealed result is read from `PCB_RUNS_DIR` (default `.gate/cli`).
 
 ## Chained arms (`steps`)

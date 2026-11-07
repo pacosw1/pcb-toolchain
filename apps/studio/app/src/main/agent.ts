@@ -256,13 +256,21 @@ export class AgentHost {
   }
 
   async send(text: string, ctx: AgentContext): Promise<void> {
-    if (this.abort) throw new Error('the agent is still answering')
+    // The caller does not await this: every failure is an event. Claim the answer before the first await, so a second
+    // send in the same turn finds the host busy. A cancelled answer (this.abort is no longer its own) says nothing.
+    if (this.abort) {
+      this.emit({ kind: 'error', message: 'the agent is still answering' })
+      return
+    }
+    const abort = (this.abort = new AbortController())
+    const say = (e: AgentEvent): void => {
+      if (this.abort === abort) this.emit(e)
+    }
     ctx = { ...ctx, projectRoot: this.projectRoot() } // main's verified root, not the renderer's
     const root = ctx.projectRoot
-    const sdk = await this.load()
-    this.abort = new AbortController()
     const contextLine = `[context] project=${ctx.projectRoot ?? 'none'} board=${ctx.pcb ?? 'none'} gate=${ctx.gate ?? 'none'} selection=${ctx.selection ?? 'none'}`
     try {
+      const sdk = await this.load()
       const q = sdk.query({
         prompt: `${contextLine}\n${text}`,
         options: {
@@ -271,7 +279,7 @@ export class AgentHost {
           executable: 'node',
           env: { ...process.env, PATH: toolPath() },
           stderr: (d: string) => console.error('[agent]', d.trimEnd()),
-          abortController: this.abort,
+          abortController: abort,
           cwd: root ?? undefined,
           resume: this.sessionId ?? undefined,
           mcpServers: { pcb: this.tools(sdk, ctx) },
@@ -307,24 +315,24 @@ export class AgentHost {
         }
       })
       for await (const m of q) {
-        if ('session_id' in m && m.session_id) this.sessionId = m.session_id
+        if ('session_id' in m && m.session_id && this.abort === abort) this.sessionId = m.session_id
         if (m.type === 'assistant') {
           for (const block of m.message.content) {
-            if (block.type === 'text' && block.text.trim()) this.emit({ kind: 'text', text: block.text })
-            else if (block.type === 'tool_use') this.emit({ kind: 'tool', name: block.name, input: block.input })
+            if (block.type === 'text' && block.text.trim()) say({ kind: 'text', text: block.text })
+            else if (block.type === 'tool_use') say({ kind: 'tool', name: block.name, input: block.input })
           }
         } else if (m.type === 'result') {
           if (m.subtype === 'success') {
-            this.emit({ kind: 'done', costUsd: m.total_cost_usd, durationMs: m.duration_ms, turns: m.num_turns })
+            say({ kind: 'done', costUsd: m.total_cost_usd, durationMs: m.duration_ms, turns: m.num_turns })
           } else {
-            this.emit({ kind: 'error', message: `agent stopped: ${m.subtype}` })
+            say({ kind: 'error', message: `agent stopped: ${m.subtype}` })
           }
         }
       }
     } catch (e) {
-      this.emit({ kind: 'error', message: e instanceof Error ? e.message : String(e) })
+      say({ kind: 'error', message: e instanceof Error ? e.message : String(e) })
     } finally {
-      this.abort = null
+      if (this.abort === abort) this.abort = null
     }
   }
 }

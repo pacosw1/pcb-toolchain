@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { buildStudy, runSuite, spawnExecutor, TRIAL_RECORD, type Executor, type TrialRecord } from './bench-run.ts';
-import { SUITE, validateSuite } from './bench-suite.ts';
+import { expandTrials, SUITE, validateSuite } from './bench-suite.ts';
 
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 const suite = (argv: string[] = ['x']) => validateSuite({
@@ -29,6 +29,23 @@ test('runSuite stores one record per trial and resumes without rerunning', async
     assert.equal(readdirSync(join(out, 'trials')).length, 8);
     await runSuite(suite(), { root: out, runsDir: out, out, executor: counting });
     assert.equal(calls, 8);
+  } finally { rmSync(out, { recursive: true, force: true }); }
+});
+
+test('resume reruns a trial that made no run, and keeps sealed and timed-out ones', async () => {
+  const out = mkdtempSync(join(tmpdir(), 'bench-run-'));
+  try {
+    const first = expandTrials(suite())[0]!.id, second = expandTrials(suite())[1]!.id;
+    const answers: Record<string, TrialRecord['status']> = { [first]: 'no_run', [second]: 'timeout' };
+    const calls: string[] = [];
+    const scripted: Executor = async (trial, context) => { calls.push(trial.id); return fake(answers[trial.id] ?? 'sealed')(trial, context); };
+    await runSuite(suite(), { root: out, runsDir: out, out, executor: scripted });
+    assert.equal(calls.length, 8);
+    calls.length = 0;
+    const resumed = await runSuite(suite(), { root: out, runsDir: out, out, executor: scripted });
+    assert.deepEqual(calls, [first]);                 // only the trial that made no run is tried again
+    assert.equal(resumed.length, 8);
+    assert.equal(resumed.find(item => item.id === second)!.status, 'timeout');
   } finally { rmSync(out, { recursive: true, force: true }); }
 });
 
@@ -68,6 +85,37 @@ test('spawnExecutor follows a command to its run folder, and reports a command t
     assert.match(nothing.cause ?? '', /boom/);
     const missing = await spawnExecutor({ ...trial, argv: ['/no/such/binary'] }, context);
     assert.equal(missing.status, 'no_run');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a trial that timed out is a timeout even when its run sealed as passed, and says so', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'bench-timeout-'));
+  try {
+    const runs = join(root, 'runs');
+    mkdirSync(join(runs, 'run-late'), { recursive: true });
+    writeFileSync(join(runs, 'run-late/result.json'), '{"status":"passed"}');
+    const trial = { id: 't', arm: 'base', family: 'A', board: 'ENV', split: 'development', case: 'ENV', replicate: 1, seed: 1,
+      argv: ['/bin/sh', '-c', 'echo \'{"run_id":"run-late"}\'; exec sleep 30'], steps: [], env: {}, input: { path: 'e', sha256: sha('e') } };
+    const record = await spawnExecutor(trial, { root, runsDir: runs, timeoutMs: 300 });
+    assert.equal(record.status, 'timeout');
+    assert.equal(record.run_status, null);            // one verdict: the trial timed out
+    assert.match(record.cause ?? '', /deadline reached.*sealed as passed/);
+    assert.equal(record.run_id, 'run-late');          // the sealed run stays named as evidence
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a trial starts in an empty work folder, never in a killed attempt\'s', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'bench-work-'));
+  try {
+    const runs = join(root, 'runs'), work = join(root, 'work');
+    mkdirSync(join(runs, 'run-w'), { recursive: true });
+    writeFileSync(join(runs, 'run-w/result.json'), '{"status":"passed"}');
+    mkdirSync(join(work, 't'), { recursive: true });
+    writeFileSync(join(work, 't/stale.kicad_pcb'), 'old attempt');
+    const trial = { id: 't', arm: 'base', family: 'A', board: 'ENV', split: 'development', case: 'ENV', replicate: 1, seed: 1, argv: ['x'],
+      steps: [['/bin/sh', '-c', 'test -z "$(ls -A "$1")"', 'sh', '{work}'], ['/bin/sh', '-c', 'echo \'{"run_id":"run-w"}\'']], env: {}, input: { path: 'e', sha256: sha('e') } };
+    const record = await spawnExecutor(trial, { root, runsDir: runs, timeoutMs: 10_000, work });
+    assert.equal(record.status, 'sealed', record.cause ?? '');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

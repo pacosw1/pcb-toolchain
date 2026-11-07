@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import { sealFixtureBoard } from './cad-seal-fixture.ts';
-import { iotrouteMissing } from './iotroute-bin.ts';
+import { iotrouteBin, iotrouteMissing } from './iotroute-bin.ts';
 import { startCheck } from './pcb-check-start.ts';
 import { status } from './pcb-runs.ts';
 import { verify } from './pcb-evidence.ts';
@@ -86,6 +86,20 @@ test('check attaches to an open cycle without Python', needsBinary, async t => {
   assert.equal(record.runs[0].run_id, state.run_id);
   assert.equal(record.runs[0].stage, 'verification');
   assert.equal((await settled(join(base, state.run_id))).status, 'passed');
+});
+
+test('a supervisor that cannot start leaves no run linked to its cycle', needsBinary, async t => {
+  const root = fixture(t, gate(0)), base = join(root, '.gate/cli'), cycle = join(base, 'cycle-test');
+  mkdirSync(cycle, { recursive: true });
+  writeFileSync(join(cycle, 'cycle.json'), JSON.stringify({ root: realpathSync(root), board: 'X', status: 'open', runs: [] }));
+  // While the cycle lock is taken for the attach, the run folder gets a directory where worker.log goes: the start then fails.
+  const shim = join(root, 'iotroute-shim');
+  writeFileSync(shim, `#!/bin/sh\ncase "$*" in *cycle.lock*) mkdir "$(ls -d "${base}"/run-* | head -1)/worker.log" 2>/dev/null;; esac\nexec "${iotrouteBin()}" "$@"\n`, { mode: 0o755 });
+  const saved = process.env.IOTROUTE_BIN;
+  process.env.IOTROUTE_BIN = shim;
+  t.after(() => { if (saved === undefined) delete process.env.IOTROUTE_BIN; else process.env.IOTROUTE_BIN = saved; });
+  await assert.rejects(startCheck({ root, base, board: 'X', cycle: 'cycle-test', timeout: 20, heartbeat: 1 }), /EISDIR/);
+  assert.deepEqual(JSON.parse(readFileSync(join(cycle, 'cycle.json'), 'utf8')).runs, []);
 });
 
 test('conflicting check flags fail before creating a run', () => {

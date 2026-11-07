@@ -9,7 +9,7 @@ import { runDir, utc } from './pcb-runs.ts';
 import { boardConfig, sha } from './pcb-workflow.ts';
 import { isFile, resolvePath, which } from './py-path.ts';
 import { admitAction, type ActionRequest } from './pcb-action.ts';
-import { attach, folderFor, read } from './pcb-cycle.ts';
+import { attach, detach, folderFor, read } from './pcb-cycle.ts';
 import { CANDIDATE, candidateFields, OPERATIONS, type CandidateRequest } from './pcb-candidate-admission.ts';
 import { parentCandidate } from './pcb-candidate.ts';
 import { verify } from './pcb-evidence.ts';
@@ -94,10 +94,15 @@ export async function startCheck(options: CheckOptions): Promise<string> {
     operation, node, gate_config_sha256: config ? sha(config) : null, ...(options.loopContext ? { loop_context: options.loopContext } : {}),
     ...(['readiness', 'blocks', 'outcomes', 'schematic', 'design', 'parts', 'routing', 'placement', 'ml'].includes(operation) ? { arguments: options.arguments ?? [] } : {}), ...(cycleFolder ? { cycle: basename(cycleFolder) } : {}) };
   atomicJson(join(folder, 'run.json'), manifest);
-  if (cycleFolder) await attach(cycleFolder, folder, { withLock: async (path, work) => {
+  const cycleLock = { withLock: async <T>(path: string, work: () => T): Promise<T> => {
     const lock = await holdLock(path, { waitS: 30 });
     try { return work(); } finally { await lock.release(); }
-  } }, operation === 'parts' && action === 'inspect' ? 'datasheets' : operation === 'ml' ? 'verification' : operation === 'edit' && options.kind === 'route' ? 'routing' : undefined);
+  } };
+  if (cycleFolder) await attach(cycleFolder, folder, cycleLock, operation === 'parts' && action === 'inspect' ? 'datasheets' : operation === 'ml' ? 'verification' : operation === 'edit' && options.kind === 'route' ? 'routing' : undefined);
+  // From here the run is linked to its cycle. A start that fails unlinks it: no worker will ever seal a result.json.
+  const unlink = async (): Promise<void> => { if (cycleFolder) await detach(cycleFolder, basename(folder), cycleLock); };
+  let log: number | undefined;
+  try {
   atomicJson(join(folder, 'state.json'), { schema_version: 1, run_id: basename(folder), board,
     status: 'starting', seq: 0, updated_unix: Date.now() / 1000, elapsed_s: 0, active_stages: [] });
   const worker = fileURLToPath(new URL('../pcb-check-worker.ts', import.meta.url));
@@ -105,8 +110,7 @@ export async function startCheck(options: CheckOptions): Promise<string> {
   const finalizerCommand = JSON.stringify([node, '--experimental-strip-types', '--no-warnings', finalizer]);
   const env: NodeJS.ProcessEnv = { ...process.env, IOT_LAB: root };
   for (const key of ['IOT_LEAN_BROKER_SOCKET', 'IOT_LEAN_STAGE_HANDLE', 'IOT_LEAN_STAGE_DEPTH', 'IOT_LEAN_DEADLINE', 'IOT_PCB_WORKER_LOCK', 'IOT_PCB_WORKER_FD']) delete env[key];
-  const log = openSync(join(folder, 'worker.log'), 'w');
-  try {
+  log = openSync(join(folder, 'worker.log'), 'w');
     const child = spawn(iotrouteBin(), ['lock', 'supervise', join(folder, 'worker.lock'), '--result', join(folder, 'worker-owner.json'),
       '--finalizer', finalizerCommand, '--', node, '--experimental-strip-types', '--no-warnings', worker, folder], {
       cwd: root, env, detached: true, stdio: ['ignore', log, log],
@@ -117,7 +121,8 @@ export async function startCheck(options: CheckOptions): Promise<string> {
     atomicJson(join(folder, 'state.json'), { schema_version: 1, run_id: basename(folder), board: options.board,
       status: 'error', seq: 0, updated_unix: Date.now() / 1000, elapsed_s: 0, active_stages: [], exit_code: 2,
       cause: `cannot start supervisor: ${error instanceof Error ? error.message : String(error)}` });
+    await unlink().catch(detachError => { throw new Error(`${error instanceof Error ? error.message : String(error)}; the run stays linked to its cycle: ${detachError instanceof Error ? detachError.message : String(detachError)}`); });
     throw error;
-  } finally { closeSync(log); }
+  } finally { if (log !== undefined) closeSync(log); }
   return folder;
 }

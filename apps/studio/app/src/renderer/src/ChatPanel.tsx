@@ -182,7 +182,11 @@ export function ChatPanel({
             }}
           />
           {busy ? (
-            <button type="button" className="ghost" onClick={() => window.api.agent.cancel()}>
+            <button type="button" className="ghost" onClick={() => {
+                // A cancelled answer sends no event, so the panel is idle as soon as the user stops it.
+                void window.api.agent.cancel()
+                setBusy(false)
+              }}>
               Stop
             </button>
           ) : (
