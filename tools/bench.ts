@@ -90,21 +90,36 @@ async function run(path: string, values: { out?: string; 'runs-dir'?: string; ro
   verifyInputs(suite, root);
   const suiteCopy = join(out, 'suite.json');
   if (existsSync(suiteCopy) && sha256File(suiteCopy) !== sha256File(path)) throw new Error(`${out} already holds a different suite; use a new --out`);
-  const release = values['no-lock'] ? () => {} : await acquire({ label: `bench ${suite.suite_id} -> ${out}`, wait: values.wait,
+  const release = values['no-lock'] ? async () => {} : await acquire({ label: `bench ${suite.suite_id} -> ${out}`, wait: values.wait,
     onWait: owner => console.error(`bench lock held by ${describeOwner(owner)}; waiting`) });
   if (!values['no-lock'] && !values.json) console.error(`bench lock acquired (pid ${process.pid})`);
-  for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => { release(); process.exit(130); });
-  try { return await runLocked(path, values, { root, out, suite }); } finally { release(); }
+  // A signal stops the running trial first. The lock is released only after that child is gone, so the next
+  // bench cannot overlap it.
+  const abort = new AbortController();
+  const onSignal = (signal: NodeJS.Signals): void => {
+    if (abort.signal.aborted) return;
+    console.error(`bench interrupted by ${signal}; stopping the running trial`);
+    abort.abort();
+  };
+  const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM'];
+  for (const signal of signals) process.on(signal, onSignal);
+  try {
+    const code = await runLocked(path, values, { root, out, suite, signal: abort.signal });
+    return abort.signal.aborted ? 130 : code;
+  } finally {
+    for (const signal of signals) process.off(signal, onSignal);
+    await release();
+  }
 }
 
-async function runLocked(path: string, values: { 'runs-dir'?: string; 'no-analyze'?: boolean; json?: boolean }, context: { root: string; out: string; suite: Suite }): Promise<number> {
+async function runLocked(path: string, values: { 'runs-dir'?: string; 'no-analyze'?: boolean; json?: boolean }, context: { root: string; out: string; suite: Suite; signal?: AbortSignal }): Promise<number> {
   const { root, out, suite } = context;
   // Pin the suite before the first trial: a run that dies midway must not resume under another suite.
   mkdirSync(out, { recursive: true });
   const suiteCopy = join(out, 'suite.json');
   if (!existsSync(suiteCopy)) copyFileSync(path, suiteCopy);
   const records = await runSuite(suite, {
-    root, runsDir: resolve(values['runs-dir'] ?? join(root, '.gate/cli')), out, executor: spawnExecutor,
+    root, runsDir: resolve(values['runs-dir'] ?? join(root, '.gate/cli')), out, executor: spawnExecutor, signal: context.signal,
     onTrial: (trial, item, index, total) => { if (!values.json) console.error(`[${index + 1}/${total}] ${trial.id}: ${item.status}${item.cause ? ` (${item.cause})` : ''} ${item.wall_s.toFixed(0)}s`); },
   });
   if (values['no-analyze']) { console.log(`ran ${records.length} trials; analyze with: bench.ts analyze ${out}`); return 0; }
