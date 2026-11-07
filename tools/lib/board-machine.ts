@@ -102,7 +102,10 @@ function refusal(board: string, command: Command, at: Position, stop: Refused, b
 
 /** Asks the machine for a command, from the position that the evidence gives now. It stops with the state, the event and the allowed events. */
 export function assertCommand(root: string, board: string, command: Command, judged: Evidenced = {}, table: TransitionTable = TABLE): void {
-  const block = changeBlock(root, board), at = position(table, { ...judged, ...commandEvidence(root, board) });
-  const result = transition(table, at.state, { type: 'command', command }, { change_recorded: block === null });
-  if (!result.ok) throw new Error(refusal(board, command, at, result, block, at.evidence === 'route_plan' || at.evidence === 'layout_approval' ? layoutGate(root, board, () => {}) : null, table));
+  const block = changeBlock(root, board), evidence = { ...judged, ...commandEvidence(root, board) };
+  // An open order keeps its CAD closed. A later change that makes older evidence stale must not move the board back to a state with CAD moves.
+  for (const at of [position(table, evidence), ...(evidence.order ? [position(table, { order: evidence.order })] : [])]) {
+    const result = transition(table, at.state, { type: 'command', command }, { change_recorded: block === null });
+    if (!result.ok) throw new Error(refusal(board, command, at, result, block, at.evidence === 'route_plan' || at.evidence === 'layout_approval' ? layoutGate(root, board, () => {}) : null, table));
+  }
 }

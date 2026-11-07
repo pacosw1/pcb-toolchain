@@ -7,6 +7,7 @@
 // The record also holds the sha256 of the change log (lib/change-log.ts). Only `pcb change` moves that hash: no seal write hides a deleted or edited log.
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { assertCommand } from './board-machine.ts';
 import { assertWritable } from './board-freeze.ts';
 import { sha256Text } from './fingerprint.ts';
 import { gateInputs } from './gate-inputs.mjs';
@@ -182,6 +183,19 @@ function targetsOf(path: string): { root: string; boards: string[] } | null {
   return names.length ? { root, boards: names } : null;
 }
 
+const admitted = new Set<string>();
+const editKey = (root: string, board: string): string => `${root}\0${board}`;
+
+/** Asks the machine once, then runs `work` as one edit: a tool with two files or a rollback does not stop at its own first write. A board is canonical CAD only inside this call. */
+export function oneEdit<T>(path: string, work: () => T): T {
+  const targets = targetsOf(path);
+  if (!targets) return work();
+  for (const board of targets.boards) assertCommand(targets.root, board, 'edit');
+  const keys = targets.boards.map(board => editKey(targets.root, board)).filter(key => !admitted.has(key));
+  for (const key of keys) admitted.add(key);
+  try { return work(); } finally { for (const key of keys) admitted.delete(key); }
+}
+
 /** Runs `write`. When PATH is canonical CAD it checks the seal first and records the new state after, so a tool cannot break the seal. */
 export function sealedWrite<T>(path: string, writer: Writer, write: () => T, deps?: SealLockDeps): T {
   const targets = targetsOf(path);
@@ -189,7 +203,10 @@ export function sealedWrite<T>(path: string, writer: Writer, write: () => T, dep
   // The seal lock of every covering board is held from the check to the new seal: no second writer is absorbed into this seal.
   const locked = (boards: string[]): T => {
     if (boards.length) return withSealLock(targets.root, boards[0]!, () => locked(boards.slice(1)), deps);
-    for (const board of targets.boards) { assertWritable(targets.root, board); verifySeal(targets.root, board); }
+    for (const board of targets.boards) {
+      assertWritable(targets.root, board); verifySeal(targets.root, board);
+      if (!admitted.has(editKey(targets.root, board))) assertCommand(targets.root, board, 'edit');
+    }
     const result = write();   // a write that throws leaves the old seal: a partial write is then caught, not hidden
     for (const board of targets.boards) reseal(targets.root, board, writer);
     return result;

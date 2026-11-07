@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { after, test } from 'node:test';
 import { sealFixtureBoard } from './cad-seal-fixture.ts';
+import { releaseOrdersPath } from './release-order.mjs';
 import { fakeRenderer } from './fake-renderer-fixture.ts';
 import { iotrouteMissing } from './iotroute-bin.ts';
 import { exemptBoard } from './design-exempt-fixture.ts';
@@ -433,6 +434,16 @@ test('a source edit after the candidate blocks adoption, and the board stays fre
   assert.equal(readFileSync(canonicalOf(root), 'utf8'), BOARD + '\n');
   assert.equal(existsSync(journalOf(root)), false);
   assert.equal(existsSync(join(folder, 'adoption.json')), false);
+});
+
+test('adoption asks the machine: an order refuses it, and the board stays free', needsBinary, async t => {
+  const root = project(t), { folder } = await edit(root), id = folder.split('/').at(-1)!;
+  writeFileSync(releaseOrdersPath(root, 'X'), JSON.stringify({ schema: 'iot-lab.release-order.v1', board: 'X', by: 'Ana', candidate_sha256: 'a'.repeat(64), approval_sha256: 'b'.repeat(64), what: 'boards', quantity: 5, reference: 'PO-1' }) + '\n');
+  const call = pcb(root, 'adopt', id, '--json');
+  assert.equal(call.status, 2);
+  assert.match(call.stdout, /place is refused at A24/);
+  assert.equal(readFileSync(canonicalOf(root), 'utf8'), BOARD);
+  assert.equal(existsSync(journalOf(root)), false);
 });
 
 test('a failed run, or one that is not a candidate, cannot be adopted', needsBinary, async t => {

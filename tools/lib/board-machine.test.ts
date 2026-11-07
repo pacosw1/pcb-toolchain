@@ -1,16 +1,19 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { allowedEvents, assertCommand, BOARD_STATES, CHANGE_KINDS, commandEvidence, commandOf, machineTable, position, transition, type BoardEvent, type BoardState, type Evidenced, type Guards } from './board-machine.ts';
 import { judgedEvidence, type Decide } from './board-view.ts';
-import { reseal } from './cad-seal.ts';
-import { recordChange } from './change-log.ts';
+import { acceptSeal, oneEdit, reseal, sealedWrite } from './cad-seal.ts';
+import { changeBlock, changePath, recordChange } from './change-log.ts';
 import { startCheck } from './pcb-check-start.ts';
 import { layoutPlanPath } from './layout-plan.ts';
-import { releaseOrdersPath } from './release-order.mjs';
-import { approveFixture } from './layout-plan-fixture.ts';
+import { recordOrder, releaseOrdersPath } from './release-order.mjs';
+import { approveFixture, PNG } from './layout-plan-fixture.ts';
+import { approveRelease, releaseApprovalPath } from './release-approval.mjs';
+import { admitPlace } from '../pcb-place.ts';
 import { COMMANDS, loadTransitions, parseTransitions } from './transitions.ts';
 
 const TABLE = loadTransitions(), OPEN: Guards = { change_recorded: true }, CLOSED: Guards = { change_recorded: false };
@@ -79,7 +82,7 @@ test('a row with a guard is refused when the guard fails, and the row stays in t
   const pass = transition(TABLE, 'A9', command('route'), OPEN), stop = transition(TABLE, 'A9', command('route'), CLOSED);
   assert.deepEqual([pass.ok, pass.ok && pass.to], [true, 'A14']);
   assert.equal(stop.ok, false);
-  if (!stop.ok) { assert.equal(stop.code, 'guard_failed'); assert.equal(stop.guard, 'change_recorded'); assert.deepEqual(stop.allowed, ['check', 'edit']); }
+  if (!stop.ok) { assert.equal(stop.code, 'guard_failed'); assert.equal(stop.guard, 'change_recorded'); assert.deepEqual(stop.allowed, ['check']); }
 });
 
 test('a command with no target stays in its state', () => {
@@ -183,6 +186,98 @@ test('startCheck reads the judged evidence for a release, and a decision that fa
   await approveFixture(f.root, 'X');
   await assert.rejects(start(async () => ({ blocker: { code: 'route_stuck' } })), /release is refused at A13/);
   await assert.rejects(start(async () => { throw new Error('no decision'); }), /no decision/);
+});
+
+const WRITER = { tool: 'set_stackup', run_id: null };
+
+test('a sealed writer stops at the machine: an unrecorded change, a stale board and an order refuse it', async t => {
+  const f = fixture(t), pcb = join(f.folder, 'X.kicad_pcb'), write = () => sealedWrite(pcb, WRITER, () => writeFileSync(pcb, BOARD.replace('(end 50 0)', '(end 99 0)')));
+  f.plan();
+  await approveFixture(f.root, 'X');
+  writeFileSync(join(f.folder, 'gate.json'), JSON.stringify({ project: 'X', checks: { erc: true } }));
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  assert.throws(write, /edit is refused at .*change_recorded/s);
+  assert.equal(readFileSync(pcb, 'utf8'), BOARD);
+  recordChange(f.root, 'X', { kind: 'rule_change', reason: 'erc on', by: 'Ana', refs: [] });
+  write();
+  recordChange(f.root, 'X', { kind: 'outline_change', reason: 'wider', by: 'Ana', refs: [] });
+  writeFileSync(releaseOrdersPath(f.root, 'X'), JSON.stringify(ORDER) + '\n');
+  assert.throws(() => sealedWrite(pcb, WRITER, () => writeFileSync(pcb, BOARD)), /edit is refused at A24/);
+  assert.match(readFileSync(pcb, 'utf8'), /end 99 0/);
+});
+
+test('a sealed board with no log refuses a writer and gives the command', t => {
+  const f = fixture(t), pcb = join(f.folder, 'X.kicad_pcb');
+  rmSync(changePath(f.root, 'X'));
+  rmSync(join(f.folder, 'cad-seal.json'));
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  assert.throws(() => sealedWrite(pcb, WRITER, () => writeFileSync(pcb, 'x')), /tools\/pcb change X --kind baseline/);
+});
+
+test('one edit may write twice, and a second edit stops at what the first one changed', t => {
+  const f = fixture(t), sheet = join(f.folder, 'X.kicad_sch'), pcb = join(f.folder, 'X.kicad_pcb');
+  const both = () => { sealedWrite(sheet, WRITER, () => writeFileSync(sheet, '(kicad_sch (a))')); sealedWrite(pcb, WRITER, () => writeFileSync(pcb, BOARD + ' ')); };
+  oneEdit(sheet, both);
+  assert.equal(changeBlock(f.root, 'X')?.code, 'change_unrecorded');
+  assert.throws(() => sealedWrite(pcb, WRITER, () => writeFileSync(pcb, BOARD)), /edit is refused/);
+  assert.throws(() => oneEdit(sheet, () => assert.fail('no check ran')), /edit is refused/);
+});
+
+test('a run workspace copy stays free of the machine', t => {
+  const f = fixture(t), copy = join(f.root, '.gate/work/hardware-design/boards/X'), pcb = join(copy, 'X.kicad_pcb');
+  mkdirSync(copy, { recursive: true });
+  writeFileSync(pcb, BOARD);
+  writeFileSync(join(f.folder, 'gate.json'), JSON.stringify({ project: 'X', checks: { erc: true } }));
+  sealedWrite(pcb, WRITER, () => writeFileSync(pcb, BOARD + ' '));
+  assert.equal(readFileSync(pcb, 'utf8'), BOARD + ' ');
+});
+
+test('pcb change, seal and layout approval stay open on a board that the machine stops', async t => {
+  const f = fixture(t), rules = join(f.folder, 'gate.json');
+  f.plan();
+  writeFileSync(rules, JSON.stringify({ project: 'X', checks: { erc: true } }));
+  await acceptSeal(f.root, 'X', 'more checks');
+  assert.throws(() => assertCommand(f.root, 'X', 'edit'), /change_recorded/);
+  recordChange(f.root, 'X', { kind: 'rule_change', reason: 'erc on', by: 'Ana', refs: [] });
+  await approveFixture(f.root, 'X');
+  assert.doesNotThrow(() => assertCommand(f.root, 'X', 'route'));
+});
+
+test('place asks the machine: an unrecorded change or an order refuses it', async t => {
+  const f = fixture(t); f.plan();
+  await approveFixture(f.root, 'X');
+  assert.doesNotThrow(() => admitPlace(f.root, 'X'));
+  writeFileSync(releaseOrdersPath(f.root, 'X'), JSON.stringify(ORDER) + '\n');
+  assert.throws(() => admitPlace(f.root, 'X'), /place is refused at A24/);
+  rmSync(releaseOrdersPath(f.root, 'X'));
+  writeFileSync(join(f.folder, 'gate.json'), JSON.stringify({ project: 'X', checks: { erc: true } }));
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  assert.throws(() => admitPlace(f.root, 'X'), /change_recorded/);
+});
+
+function releaseInputs(root: string) {
+  const candidate = join(root, 'cand'), manifest = join(candidate, 'release-manifest.json'), report = join(root, 'report.json'), image = join(root, 'img.png');
+  mkdirSync(candidate);
+  writeFileSync(manifest, '{"board":"X"}');
+  writeFileSync(report, JSON.stringify({ board: 'X', status: 'ready_for_user_review', checks: { cad_fabrication: { candidate_sha256: createHash('sha256').update(readFileSync(manifest)).digest('hex') } } }));
+  writeFileSync(image, PNG);
+  return { candidate, report, image };
+}
+
+test('a release approval and an order stop where the machine stops a release, and write nothing', async t => {
+  const f = fixture(t), { candidate, report, image } = releaseInputs(f.root); f.plan();
+  await approveFixture(f.root, 'X');
+  writeFileSync(join(f.folder, 'X.kicad_sch'), '(kicad_sch (changed after the gate))');
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  assert.throws(() => approveRelease(f.root, 'X', candidate, { by: 'Ana', reason: 'ok', report, image }), /release is refused at .*change_unrecorded/s);
+  assert.throws(() => recordOrder(f.root, 'X', candidate, { by: 'Ana', what: 'boards', quantity: 5, reference: 'PO-1' }), /release is refused at .*change_unrecorded/s);
+  assert.equal(existsSync(releaseApprovalPath(f.root, 'X')), false);
+  assert.equal(existsSync(releaseOrdersPath(f.root, 'X')), false);
+  recordChange(f.root, 'X', { kind: 'net_change', reason: 'one more net', by: 'Ana', refs: [] });
+  assert.throws(() => approveRelease(f.root, 'X', candidate, { by: 'Ana', reason: 'ok', report, image }), /release is refused at A8.*layout_approval is stale/s);
+  await approveFixture(f.root, 'X');
+  assert.equal(approveRelease(f.root, 'X', candidate, { by: 'Ana', reason: 'ok', report, image }).state, 'approved');
+  assert.equal(recordOrder(f.root, 'X', candidate, { by: 'Ana', what: 'boards', quantity: 5, reference: 'PO-1' }).reference, 'PO-1');
 });
 
 test('startCheck asks the machine before a run starts', async t => {

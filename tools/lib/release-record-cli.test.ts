@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { sealFixtureBoard } from './cad-seal-fixture.ts';
+import { releaseFixtureBoard, sealFixtureBoard } from './cad-seal-fixture.ts';
 
 const cli = fileURLToPath(new URL('../pcb-release-record.ts', import.meta.url));
 const sha = (data: string | Buffer) => createHash('sha256').update(data).digest('hex');
@@ -25,7 +25,7 @@ function fixture(t: { after(fn: () => void): void }, where = '') {
   writeFileSync(join(root, 'candidate/release-manifest.json'), MANIFEST);
   writeFileSync(join(root, 'report.json'), JSON.stringify({ board: 'X', status: 'ready_for_user_review', checks: { cad_fabrication: { candidate_sha256: sha(MANIFEST) } } }));
   writeFileSync(join(root, 'top.png'), PNG);
-  sealFixtureBoard(root, 'X');
+  releaseFixtureBoard(root, 'X');
   const call = (...args: string[]) => spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', cli, '--project', root, ...args], { encoding: 'utf8' });
   const approve = (...more: string[]) => call('release-approval', 'X', '--candidate', join(root, 'candidate'), '--approve', '--by', 'Ana', '--reason', 'checked', '--report', join(root, 'report.json'), '--image', join(root, 'top.png'), ...more);
   const order = (...more: string[]) => call('release-order', 'X', '--record', '--candidate', join(root, 'candidate'), '--by', 'Ana', '--what', '5 boards', '--quantity', '5', '--reference', 'JLC-1', ...more);

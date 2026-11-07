@@ -7,6 +7,7 @@ import {tmpdir} from 'node:os';
 import {dirname,join} from 'node:path';
 import {test} from 'node:test';
 import {approveRelease} from './release-approval.mjs';
+import {releaseFixtureBoard} from './cad-seal-fixture.ts';
 import {releaseReadiness} from './release-readiness.mjs';
 
 const sha=data=>createHash('sha256').update(data).digest('hex');
@@ -17,7 +18,7 @@ function fixture(t) {
  t.after(()=>rmSync(root,{recursive:true,force:true}));
  const put=(path,content)=>{const full=join(root,path);mkdirSync(dirname(full),{recursive:true});writeFileSync(full,content);return full;};
  put('hardware-design/boards/X/gate.json',JSON.stringify({project:'cad/X',checks:{},release:{maker:'tools/make-x-fab.sh',fab:'fab'}}));
- put('hardware-design/registry/boards.json',JSON.stringify({schema_version:1,boards:[]}));
+ releaseFixtureBoard(root,'X');
  put('candidate/release-manifest.json',MANIFEST);
  const report=put('report.json',JSON.stringify({board:'X',status:'ready_for_user_review',checks:{cad_fabrication:{candidate_sha256:sha(MANIFEST)}}}));
  const image=put('top.svg','<svg xmlns="http://www.w3.org/2000/svg"/>');

@@ -12,6 +12,13 @@ function parsedBoard(root: string, board: string): void {
   try { boardShape(text); } catch { mkdirSync(dirname(pcb), { recursive: true }); writeFileSync(pcb, `(kicad_pcb (fixture ${JSON.stringify(text)}))\n`); }
 }
 
+/** A sealed board that the machine lets release: its layout plan is exempt, so a test of a release record needs no plan. */
+export function releaseFixtureBoard(root: string, board: string): void {
+  mkdirSync(join(root, 'hardware-design/registry'), { recursive: true });
+  writeFileSync(join(root, 'hardware-design/registry/boards.json'), JSON.stringify({ schema_version: 1, boards: [{ id: board, layout_plan_exempt: { reason: 'fixture' } }] }));
+  sealFixtureBoard(root, board);
+}
+
 /** A second call starts the log again: the fixture edit that came before it needs no event. */
 export const sealFixtureBoard = (root: string, board: string): void => {
   if (!isCanonicalRoot(root)) return reseal(root, board, { tool: 'fixture', run_id: null }, 'fixture');

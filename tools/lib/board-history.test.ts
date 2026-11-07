@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { releaseFixtureBoard } from './cad-seal-fixture.ts';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -137,10 +138,13 @@ test('pcb history prints JSON and text', t => {
 });
 
 function released(t: TestContext) {
-  const f = fixture(t), candidate = releaseRun(f.root, f.base, 'run-rel', '2026-11-06T10:00:00+00:00');
+  const f = fixture(t);
+  releaseFixtureBoard(f.root, 'X');
+  const candidate = releaseRun(f.root, f.base, 'run-rel', '2026-11-06T10:00:00+00:00');
   approveCandidate(f.root, candidate);
   orderCandidate(f.root, candidate, 'JLC-1');
   orderCandidate(f.root, candidate, 'JLC-2');
+  for (const path of [changePath(f.root, 'X'), join(f.folder, 'cad-seal.json'), join(f.root, '.gate/cad-seal')]) rmSync(path, { recursive: true });   // the machine let the records in; the tests read only the records
   return f;
 }
 const releaseRows = (f: { root: string; base: string }) => boardHistory(f.root, 'X', f.base).entries.filter(entry => entry.source === 'release');

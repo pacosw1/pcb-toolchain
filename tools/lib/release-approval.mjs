@@ -7,6 +7,7 @@
 import {createHash,randomBytes} from 'node:crypto';
 import {existsSync,mkdirSync,readFileSync,renameSync,rmSync,writeFileSync} from 'node:fs';
 import {join,relative,resolve,sep} from 'node:path';
+import {assertCommand} from './board-machine.ts';
 
 export const RELEASE_APPROVAL_SCHEMA='iot-lab.release-approval.v1';
 const KEYS=['schema','board','by','reason','candidate_sha256','report','report_sha256','image','image_sha256'];
@@ -85,6 +86,7 @@ export function approveRelease(root,board,candidate,{by,reason,report,image}={})
  need(text(reason),'release approval requires --reason TEXT');
  need(text(report),'release approval requires --report FILE (the output of tools/pcb readiness --json)');
  need(text(image),'release approval requires --image FILE (the image that the person saw)');
+ assertCommand(root,board,'release');
  const current=candidateSha256(candidate);
  need(current!==null,`the candidate has no release-manifest.json (${join(candidate,'release-manifest.json')})`);
  let reportBytes,parsed;

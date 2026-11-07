@@ -211,7 +211,7 @@ test('sealedWrite holds the seal lock while it verifies, writes and reseals, and
   const p = project(t);
   sealFixtureBoard(p.root, 'X');
   let heldDuring = false;
-  sealedWrite(p.pcb, writer, () => { heldDuring = existsSync(lockFolder(p)); writeFileSync(p.pcb, 'new stackup'); });
+  sealedWrite(p.pcb, writer, () => { heldDuring = existsSync(lockFolder(p)); writeFileSync(p.pcb, '(kicad_pcb (new stackup))'); });
   assert.equal(heldDuring, true);
   assert.equal(existsSync(lockFolder(p)), false);
   assert.throws(() => sealedWrite(p.pcb, writer, () => { throw new Error('boom'); }), /boom/);
