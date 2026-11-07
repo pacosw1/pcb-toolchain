@@ -320,14 +320,15 @@ tools/pcb layout BOARD --approve --by NAME --reason TEXT --image FILE
 
 The first form is read-only. It exits 1 when the plan is missing, not valid, not approved or stale. It prints
 `image: PATH`: the approved image, or else the top image of the newest run of the board. The second form
-records `by`, `reason`, the sha256 of `placement-constraints.json` and of the route plan, and the `image`
+records `by`, `reason`, the sha256 of `placement-constraints.json` and of the route plan, `schematic_sha256` (one hash of
+the sealed `.kicad_sch` and `.kicad_pro` files, from the same file list as the CAD seal), and the `image`
 with its `image_sha256`: the image that the person saw. The given file must be a PNG or SVG file inside the project
 (the content is checked, not the name). The command copies it to `hardware-design/boards/BOARD/layout-plan.png` or
 `layout-plan.svg` and records that copy, because a run folder is not committed. The copy of the other type is removed.
 It needs a valid plan and an intact CAD seal. It also checks the route plan against the nets of the board, as
 `route --router route-json` does: a routable net that no stage routes, or a stage net that is not on the board, stops
-the approval. If the board cannot be read, the approval stops. A change to the rules, to the route plan or to the copy of the image
-after the approval makes the approval stale. A deleted original image does not.
+the approval. If the board cannot be read, the approval stops. A change to the rules, to the route plan, to the schematic files (sealed with `seal --accept`) or to the copy of the image
+after the approval makes the approval stale. A change of the board layout alone does not. A deleted original image does not.
 A stale or missing plan stops the command with the code `layout_plan_stale` or `layout_plan_missing`. The message names
 the board and the next command. `tools/pcb next BOARD` returns the state `blocked` with the same code and command.
 

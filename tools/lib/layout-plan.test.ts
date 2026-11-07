@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test, { type TestContext } from 'node:test';
-import { reseal } from './cad-seal.ts';
+import { reseal, schematicSha256 } from './cad-seal.ts';
 import { SCHEMA } from './engineering-constraints.ts';
 import { approveLayoutPlan, layoutGate, layoutPlanPath, layoutPlanStatus, type NetSource } from './layout-plan.ts';
 import { approveFixture, NO_NETS, PNG } from './layout-plan-fixture.ts';
@@ -50,7 +50,7 @@ test('a plan without approval is not approved, and approval records the person, 
   assert.equal(layoutGate(f.root, 'X', () => {}), null);
   const saved = JSON.parse(readFileSync(f.path, 'utf8')) as { approval: Row; intents: unknown };
   assert.deepEqual(saved.approval, { by: 'Ana', reason: 'reviewed the edge intents', rules_sha256: sha256File(f.rules), route_plan_sha256: sha256File(f.route),
-    image: COPY_PNG, image_sha256: sha256File(imageOf(f.root)) });
+    schematic_sha256: schematicSha256(f.root, 'X'), image: COPY_PNG, image_sha256: sha256File(imageOf(f.root)) });
   assert.equal(layoutPlanStatus(f.root, 'X').image, COPY_PNG);
   assert.equal(sha256File(join(f.root, COPY_PNG)), sha256File(imageOf(f.root)), 'the board folder holds a copy of the image');
   assert.deepEqual(saved.intents, INTENTS);
@@ -87,6 +87,34 @@ test('a changed route plan makes the approval stale', async t => {
   assert.equal(status.state, 'stale');
   assert.deepEqual(status.stale, ['the route plan changed since the approval']);
   assert.equal(layoutGate(f.root, 'X', () => {})!.code, 'layout_plan_stale');
+});
+
+test('a sealed change of the schematic or the project file makes the approval stale', async t => {
+  const f = fixture(t);
+  writeFileSync(join(f.folder, 'X.kicad_sch'), '(kicad_sch one)');
+  writeFileSync(join(f.folder, 'X.kicad_pro'), '{}');
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  await approve(f.root);
+  assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved');
+  writeFileSync(join(f.folder, 'X.kicad_sch'), '(kicad_sch two)');
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  const status = layoutPlanStatus(f.root, 'X');
+  assert.equal(status.state, 'stale');
+  assert.deepEqual(status.stale, ['the schematic changed since the approval']);
+  assert.equal(layoutGate(f.root, 'X', () => {})!.code, 'layout_plan_stale');
+  await approve(f.root);
+  assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved', 'a new approval binds the new schematic');
+  writeFileSync(join(f.folder, 'X.kicad_pro'), '{"changed": true}');
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  assert.deepEqual(layoutPlanStatus(f.root, 'X').stale, ['the schematic changed since the approval']);
+});
+
+test('a change of the board layout alone keeps the approval', async t => {
+  const f = fixture(t);
+  await approve(f.root);
+  writeFileSync(join(f.folder, 'X.kicad_pcb'), '(kicad_pcb moved)');
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved');
 });
 
 test('the approval stays approved after the original image is deleted, because the board folder keeps a copy', async t => {
@@ -202,7 +230,7 @@ test('the route plan is checked with the route plan schema and stays inside the 
 
 test('a malformed approval is invalid, not approved', t => {
   const f = fixture(t, { approval: { by: 'Ana', reason: 'ok', rules_sha256: 'x' } });
-  assert.deepEqual(layoutPlanStatus(f.root, 'X').problems, ['approval needs by, reason, rules_sha256, route_plan_sha256, image and image_sha256']);
+  assert.deepEqual(layoutPlanStatus(f.root, 'X').problems, ['approval needs by, reason, rules_sha256, route_plan_sha256, schematic_sha256, image and image_sha256']);
 });
 
 test('approval needs a person and a reason, and a sealed board', async t => {

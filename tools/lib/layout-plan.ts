@@ -1,10 +1,10 @@
 // The layout plan: a person approves the placement intents and the route plan of a board before `place` or `route` runs.
 // hardware-design/boards/BOARD/layout-plan.json (schema iot-lab.layout-plan.v1) holds the intents, the route plan path, and the
-// approval with the sha256 of the placement rules and of the route plan at approval time. Rules are data, this file is the check.
+// approval with the sha256 of the placement rules, of the route plan and of the sealed schematic files at approval time. Rules are data, this file is the check.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isCanonicalRoot, verifySeal, withSealLock } from './cad-seal.ts';
+import { isCanonicalRoot, schematicSha256, verifySeal, withSealLock } from './cad-seal.ts';
 import { registryExemption } from './design-exemption.ts';
 import { atomicJson, readObject, sha256File } from './json-file.ts';
 import { durableAppend } from './pcb-check-durable.ts';
@@ -16,7 +16,7 @@ import { boardPlanNets, routePlanNetErrors, type PlanNets } from './route-plan-n
 export const LAYOUT_PLAN_SCHEMA = 'iot-lab.layout-plan.v1';
 const KEYS = ['schema', 'intents', 'route_plan', 'approval'];
 const INTENT_KEYS = ['id', 'statement', 'rule_ids'];
-const APPROVAL_KEYS = ['by', 'reason', 'rules_sha256', 'route_plan_sha256', 'image', 'image_sha256'];
+const APPROVAL_KEYS = ['by', 'reason', 'rules_sha256', 'route_plan_sha256', 'schematic_sha256', 'image', 'image_sha256'];
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 // An SVG may start with a BOM, an XML declaration, comments and a doctype. The first element must be svg.
 const SVG_START = /^﻿?\s*(?:<\?xml[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!DOCTYPE[^>]*>\s*)?<svg[\s/>]/;
@@ -24,7 +24,7 @@ const IMAGE_TYPES = ['png', 'svg'];
 const FEATURES =new Set(Object.keys((readObject<{ features?: object }>(fileURLToPath(new URL('../route-features.json', import.meta.url))).features) ?? {}));
 
 type Row = Record<string, unknown>;
-export interface Approval { by: string; reason: string; rules_sha256: string; route_plan_sha256: string; image: string; image_sha256: string }
+export interface Approval { by: string; reason: string; rules_sha256: string; route_plan_sha256: string; schematic_sha256: string; image: string; image_sha256: string }
 export interface LayoutStatus {
   board: string; state: 'approved' | 'exempt' | 'missing' | 'invalid' | 'unapproved' | 'stale'; path: string;
   problems: string[]; stale: string[]; approval: Approval | null; image: string | null; exempt_reason?: string;
@@ -93,7 +93,7 @@ function inspect(root: string, board: string, plan: Row, boardNets: NetSource | 
       try {
         const route = JSON.parse(readFileSync(path, 'utf8')) as unknown, errors = routePlanErrors(route, FEATURES);
         for (const error of errors) problems.push(`route plan: ${error}`);
-        // The nets of the board are read only at approval. Later the sealed board and the route plan hash bind the approval.
+        // The nets of the board are read only at approval. Later the schematic hash and the route plan hash bind the approval.
         if (!errors.length && boardNets) {
           try { for (const error of routePlanNetErrors(route, boardNets(root, board))) problems.push(`route plan: ${error}`); }
           catch (error) { problems.push(`route plan nets: ${(error as Error).message}`); }
@@ -104,7 +104,7 @@ function inspect(root: string, board: string, plan: Row, boardNets: NetSource | 
 
   const approval = plan.approval;
   if (approval !== null && approval !== undefined) {
-    if (!isObject(approval) || Object.keys(approval).length !== APPROVAL_KEYS.length || APPROVAL_KEYS.some(key => !text(approval[key]))) problems.push('approval needs by, reason, rules_sha256, route_plan_sha256, image and image_sha256');
+    if (!isObject(approval) || Object.keys(approval).length !== APPROVAL_KEYS.length || APPROVAL_KEYS.some(key => !text(approval[key]))) problems.push('approval needs by, reason, rules_sha256, route_plan_sha256, schematic_sha256, image and image_sha256');
     else { out.approval = approval as unknown as Approval; out.imageSha = imageHash(root, out.approval.image); }
   }
   return out;
@@ -129,6 +129,7 @@ export function layoutPlanStatus(root: string, board: string): LayoutStatus {
   const stale = [
     ...(found.approval.rules_sha256 === found.rulesSha ? [] : ['placement-constraints.json changed since the approval']),
     ...(found.approval.route_plan_sha256 === found.routeSha ? [] : ['the route plan changed since the approval']),
+    ...(found.approval.schematic_sha256 === schematicSha256(root, board) ? [] : ['the schematic changed since the approval']),
     ...(found.imageSha === null ? ['the approved image is missing'] : found.approval.image_sha256 === found.imageSha ? [] : ['the approved image changed since the approval']),
   ];
   return status(stale.length ? 'stale' : 'approved', { stale, approval: found.approval });
@@ -182,7 +183,7 @@ export async function approveLayoutPlan(root: string, board: string, by: string,
     const plan = readPlan(path), found = inspect(root, board, plan, boardNets);
     if (found.problems.length) throw new Error(`The layout plan of ${board} is not valid:\n  ${found.problems.join('\n  ')}`);
     const seen = approvedImage(root, board, imageFile);
-    const approval: Approval = { by: by.trim(), reason: reason.trim(), rules_sha256: found.rulesSha!, route_plan_sha256: found.routeSha!, image: seen.image, image_sha256: seen.sha256 };
+    const approval: Approval = { by: by.trim(), reason: reason.trim(), rules_sha256: found.rulesSha!, route_plan_sha256: found.routeSha!, schematic_sha256: schematicSha256(root, board), image: seen.image, image_sha256: seen.sha256 };
     atomicJson(path, { ...plan, approval });
     // One copy only: the copy of the other type belonged to an earlier approval.
     for (const extension of IMAGE_TYPES) if (join(root, seen.image) !== imageCopyPath(root, board, extension)) rmSync(imageCopyPath(root, board, extension), { force: true });
