@@ -14,6 +14,7 @@ import { CANDIDATE, candidateFields, OPERATIONS, type CandidateRequest } from '.
 import { parentCandidate } from './pcb-candidate.ts';
 import { verify } from './pcb-evidence.ts';
 import { holdLock } from './file-lock.ts';
+import { assertCommand, commandOf } from './board-machine.ts';
 import { verifySeal } from './cad-seal.ts';
 import { assertRouteNotRepeated } from './route-repeat.ts';
 
@@ -42,6 +43,8 @@ export async function startCheck(options: CheckOptions): Promise<string> {
   const configInfo = (operation === 'check' || OPERATIONS.has(operation) || operation === 'schematic' || operation === 'routing' || operation === 'placement' || (operation === 'parts' && action !== 'selection' && action !== 'inspect')) ? boardConfig(root, options.board) : undefined;
   const config = configInfo ? join(configInfo.folder, 'gate.json') : undefined;
   if (configInfo) verifySeal(root, options.board);
+  const event = configInfo ? commandOf(operation, options.kind) : null;
+  if (event) assertCommand(root, options.board, event);
   let baseline: string | undefined;
   if (options.baseline) {
     baseline = join(runDir(base, options.baseline), 'gate/findings.json');

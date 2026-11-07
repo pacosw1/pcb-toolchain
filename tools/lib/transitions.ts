@@ -9,12 +9,16 @@ export const STATUSES = ['enforced', 'recorded', 'implicit'] as const;
 export const EVIDENCE = ['design_assessment', 'part_review', 'schematic', 'bom', 'stackup', 'rules', 'route_plan', 'layout_approval', 'placement', 'copper', 'gate', 'release', 'release_approval', 'readiness', 'order', 'bringup'] as const;
 export const APPROVALS = ['part_review', 'layout_approval', 'seal_accept', 'substitute_choice', 'route_move', 'defect_decision', 'assessment_review', 'new_revision'] as const;
 export const ROLES = ['change', 'delegate', 'baseline'] as const;
+export const COMMANDS = ['check', 'edit', 'build', 'place', 'route', 'repair', 'release'] as const;
+export const GUARDS = ['change_recorded'] as const;
 
 export type StateId = `${'A' | 'B'}${number}`;
 export type Status = typeof STATUSES[number];
 export type Evidence = typeof EVIDENCE[number];
 export type Approver = typeof APPROVALS[number];
 export type Role = typeof ROLES[number];
+export type Command = typeof COMMANDS[number];
+export type Guard = typeof GUARDS[number];
 /** `unknown` is what a class with no proof gives. It never counts as current. */
 export type Freshness = 'current' | 'stale' | 'missing' | 'exempt' | 'unknown';
 
@@ -29,15 +33,17 @@ export interface Kind {
   readonly id: string; readonly doc: string; readonly role: Role; readonly group: string | null; readonly reenter: readonly StateId[];
   readonly redo: readonly Evidence[]; readonly keep: readonly Evidence[]; readonly approve: readonly Approver[];
 }
+/** A command that may run from each state of `from`. `to` is null when the command stays in its state. */
+export interface Move { readonly event: Command; readonly from: readonly StateId[]; readonly to: StateId | null; readonly guard?: Guard }
 export interface TransitionTable {
   readonly schema: typeof TRANSITIONS_SCHEMA; readonly groups: Readonly<Record<string, readonly string[]>>;
-  readonly states: readonly State[]; readonly kinds: readonly Kind[];
+  readonly states: readonly State[]; readonly kinds: readonly Kind[]; readonly moves: readonly Move[];
 }
 export interface RedoRow { evidence: Evidence; status: Freshness; cause?: string }
 export type Readers = Partial<Record<Evidence, () => Freshness>>;
 
 type Row = Record<string, unknown>;
-const TOP_KEYS = ['schema', 'groups', 'states', 'kinds'];
+const TOP_KEYS = ['schema', 'groups', 'states', 'kinds', 'moves'];
 const STATE_KEYS = ['id', 'name', 'status', 'evidence', 'next', 'back', 'inputs', 'outputs', 'gap'];
 const KIND_KEYS = ['id', 'doc', 'role', 'group', 'reenter', 'redo', 'keep', 'approve'];
 const PLACEHOLDERS = ['board', 'project', 'run'];
@@ -135,6 +141,24 @@ function checkWidest(kinds: Row[], groups: string[], problems: string[]): void {
   }
 }
 
+/** Each command has a row, and one state has at most one row for each command. */
+function checkMoves(moves: unknown[], ids: Set<string>, problems: string[]): void {
+  const seen = new Set<string>();
+  for (const move of moves) {
+    if (!isObject(move) || !Array.isArray(move.from) || !('to' in move)) { problems.push('a move needs event, from and to'); continue; }
+    const event = String(move.event);
+    if (!member(COMMANDS, move.event)) problems.push(`move: event ${event} is not a command`);
+    if (move.to !== null && !ids.has(String(move.to))) problems.push(`${event}: to ${String(move.to)} is not a state`);
+    if (move.guard !== undefined && !member(GUARDS, move.guard)) problems.push(`${event}: guard ${String(move.guard)} is not a guard`);
+    for (const from of move.from) {
+      if (!ids.has(String(from)) || !inProcess(String(from))) problems.push(`${event}: from ${String(from)} is not a process state`);
+      if (seen.has(`${String(from)} ${event}`)) problems.push(`${event}: from ${String(from)} is in the table twice`);
+      seen.add(`${String(from)} ${event}`);
+    }
+  }
+  for (const command of COMMANDS) if (!moves.some(move => isObject(move) && move.event === command)) problems.push(`${command} has no move`);
+}
+
 /** The table, or an error that lists all problems. */
 export function parseTransitions(raw: unknown): TransitionTable {
   if (!isObject(raw)) throw new Error('the transition table must be an object');
@@ -164,6 +188,7 @@ export function parseTransitions(raw: unknown): TransitionTable {
   for (const kind of kinds) checkKind(kind, ids, groups, problems);
   checkFlow(states, problems);
   checkWidest(kinds, groups, problems);
+  checkMoves(list(raw.moves), ids, problems);
   if (problems.length) throw new Error(`The transition table is not valid:\n  ${problems.join('\n  ')}`);
   return deepFreeze(raw) as unknown as TransitionTable;
 }

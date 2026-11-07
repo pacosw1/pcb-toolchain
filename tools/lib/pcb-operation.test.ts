@@ -540,7 +540,7 @@ test('incomplete design prerequisites stop before the snapshot, with their repor
 
 test('a board with no design contract and no exemption stops before the snapshot', needsBinary, async t => {
   const root = project(t);
-  rmSync(join(root, 'hardware-design/registry/boards.json'));
+  writeFileSync(join(root, 'hardware-design/registry/boards.json'), JSON.stringify({ schema_version: 1, boards: [{ id: 'X', directory: 'X', layout_plan_exempt: { reason: 'the machine passes this board' } }] }));
   const { folder, result } = await edit(root);
   assert.equal(result.status, 'failed', String(result.cause));
   assert.equal(result.scope, 'design_preflight');
@@ -648,14 +648,14 @@ test('layout admission: an exempt board continues with one layout_plan.exempt ev
   assert.equal(stale.result?.blocker, 'layout_plan_stale');
 });
 
-test('a place run for a board with no approved layout plan fails before the snapshot', needsBinary, async t => {
+test('a place run for a board with no approved layout plan is refused before a run exists', needsBinary, t => {
   const root = project(t);
   exemptBoard(root, 'X', undefined, {}, false);
-  const { folder, result } = await edit(root);
-  assert.equal(result.status, 'failed', String(result.cause));
-  assert.equal(result.scope, 'layout_plan');
-  assert.match(String(result.cause), /tools\/pcb layout X --approve/);
-  assert.equal(existsSync(join(folder, 'workspace')), false);
+  const call = pcb(root, 'edit', 'X', '--kind', 'place', '--spec', join(root, 'spec.json'), '--detach', '--json');
+  assert.notEqual(call.status, 0);
+  assert.match(call.stdout + call.stderr, /place is refused at A7/);
+  assert.match(call.stdout + call.stderr, /layout_plan_missing/);
+  assert.equal(existsSync(join(root, '.gate/cli')) && readdirSync(join(root, '.gate/cli')).some(name => name.startsWith('run-')), false);
 });
 
 test('the candidate layout screen writes a blocked report for a contract it cannot judge', t => {

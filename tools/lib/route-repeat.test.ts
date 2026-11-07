@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { sealFixtureBoard } from './cad-seal-fixture.ts';
+import { exemptBoard } from './design-exempt-fixture.ts';
 import { admitAction } from './pcb-action.ts';
 import { candidateFields } from './pcb-candidate-admission.ts';
 import { startCheck } from './pcb-check-start.ts';
@@ -87,6 +88,7 @@ test('route admission stops a repeat of a stuck route before a run folder or a w
   symlinkSync(fileURLToPath(new URL('..', import.meta.url)), join(root, 'tools'));
   writeFileSync(join(board, 'gate.json'), '{"project":"cad/X","checks":{}}');
   writeFileSync(join(board, 'cad/X.kicad_pcb'), '(kicad_pcb (version 20240108))');
+  exemptBoard(root, 'X');
   sealFixtureBoard(root, 'X');
   const spec = join(root, 'spec.json');
   writeFileSync(spec, JSON.stringify({ routes: [] }));
