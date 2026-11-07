@@ -5,6 +5,7 @@ import { basename, join, relative, resolve } from 'node:path';
 import { STAGES } from './design-contract-load.ts';
 import { designExemption } from './design-exemption.ts';
 import { sealStatus } from './cad-seal.ts';
+import { checkPlacementRules } from './placement-rules.ts';
 import { layoutGate, layoutPlanStatus } from './layout-plan.ts';
 import { readObject as readSharedObject, sha256File } from './json-file.ts';
 import { verify } from './pcb-evidence.ts';
@@ -263,6 +264,9 @@ export async function nextAction(rootPath: string, board: string, options: NextO
     return finish('blocked', layout.state === 'stale' ? 'layout_plan_stale' : 'layout_plan_missing', layoutGate(root, board, () => {})!.message, approval ? 'approve_layout_plan' : 'write_layout_plan',
       approval ? ['layout', board, '--approve', '--by', 'NAME', '--reason', 'TEXT', '--image', 'FILE'] : ['layout', board], { evidence: { path: layout.path }, problems: layout.problems, stale: layout.stale, requires_person: approval });
   }
+  // A candidate run waits for adoption: the canonical board is unplaced until then. Without one, a board that fails its rules is not placed (null: no rules file).
+  const placed = selected && CANDIDATE.has(selected.manifest.operation ?? 'check') ? null : checkPlacementRules(root, board);
+  if (placed && placed.status !== 'passed') return finish('needs_place', 'board_unplaced', `${board} is not placed: its placement rules fail`, 'place', ['place', board, '--json'], { placement_rules: placed.blockers });
   if (!selected) { output.evidence = { freshness: context.previous_gate ? 'unverified_legacy' : 'missing', ...(context.previous_gate ? { legacy_observation: context.previous_gate } : {}) }; return check('current_check_missing', 'No current unified run evidence for this board revision'); }
   const { folder, manifest } = selected, operation = manifest.operation ?? 'check';
   const explain = ['explain', basename(folder), '--json'];

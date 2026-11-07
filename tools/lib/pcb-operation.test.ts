@@ -717,6 +717,25 @@ test('post_verify hooks fill their placeholders and require a stage and argv', (
   assert.deepEqual(postVerifyCommands(null, '/r', '/c', 'n', {}), []);
 });
 
+test('a route run on an unplaced board stops before the router, with no contract and no engineering manifest', needsBinary, async t => {
+  const unplaced = BOARD.replace('(net 0 "")', '(net 0 "") (footprint "X" (layer "F.Cu") (at 5 5) (property "Reference" "U1"))');
+  const root = project(t), boardFolder = join(root, 'hardware-design/boards/X');
+  writeFileSync(join(boardFolder, 'cad/X.kicad_pcb'), unplaced);
+  writeFileSync(join(boardFolder, 'SPEC.md'), 'limit');
+  writeFileSync(join(boardFolder, 'placement-constraints.json'), JSON.stringify({ schema: 'iot-lab.engineering-constraints.v1', rules: [{ id: 'island', kind: 'region', refs: ['U1'], box_mm: [0, 0, 2, 4], metric: 'origin_in_box', placement: 'inside', source: { path: 'hardware-design/boards/X/SPEC.md', sha256: sha(join(boardFolder, 'SPEC.md')), page: 1 } }] }));
+  sealFixtureBoard(root, 'X');
+  iotroute(root, "writeFileSync(record + '/ran', 'x');");
+  const { folder, result } = await run(root, 'route', 'X', '--router', 'iotroute');
+  assert.equal(result.status, 'failed', String(result.cause));
+  assert.equal(result.scope, 'placement_rules');
+  assert.equal(result.blocker, 'board_unplaced');
+  assert.equal(result.candidate_verified, false);
+  assert.match(String(result.cause), /X is not placed/);
+  assert.match(String(result.cause), /tools\/pcb place X/);
+  assert.ok(result.evidence_sha256['operation/placement-rules-preflight.json']);
+  assert.equal(eventRows(folder).some(row => row.type === 'tool.start'), false, 'the router did not start');
+});
+
 test('built-in rules reject a place edit after hooks without a checker hook', needsBinary, async t => {
   const before = BOARD.replace('(net 0 "")', '(net 0 "") (footprint "X" (layer "F.Cu") (at 1 2) (property "Reference" "U1"))');
   const after = before.replace('(at 1 2)', '(at 3 2)');

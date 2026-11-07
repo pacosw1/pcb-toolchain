@@ -339,6 +339,12 @@ The `claude-cad-guard.mjs` hook asks a person before `pcb layout ... --approve` 
 `layout_plan_exempt` or `design_contract_exempt`. An error message does not tell an agent to add an exemption: a person
 decides it.
 
+Place comes before route. A board is unplaced when `placement-constraints.json` exists and the board fails it
+(`checkPlacementRules`). A route run on an unplaced board stops before the router starts. The result has the scope
+`placement_rules` and the blocker `board_unplaced`, with or without a design contract. `tools/pcb next BOARD` returns the
+state `needs_place` with the command `tools/pcb place BOARD --json`. A candidate run that waits for adoption comes
+first: `next` names the adoption.
+
 ## Stage contracts
 
 `tools/lib/stage-contracts.ts` is the one table of what the stages `place` (an `edit --kind place`), `edit`,

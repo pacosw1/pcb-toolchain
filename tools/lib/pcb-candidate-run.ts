@@ -120,6 +120,12 @@ async function routingPreflight(run: Candidate): Promise<number | null> {
         cause: 'candidate placement or test access blocks routing', source_sha256: run.sources.sha256, report: output });
     }
   }
+  // Every board with placement rules: a route on a board that fails them would run for minutes, and the final gate would fail it.
+  const rulesOutput = join(folder, 'operation/placement-rules-preflight.json'), rules = checkPlacementRules(root, board, run.native, rulesOutput);
+  if (rules && rules.status !== 'passed') {
+    return finish(folder, { status: 'failed', exit_code: 1, scope: 'placement_rules', blocker: 'board_unplaced', operation, candidate_verified: false, qualified: false,
+      cause: `${board} is not placed: its placement rules fail (see operation/placement-rules-preflight.log); run tools/pcb place ${board} first`, source_sha256: run.sources.sha256, report: rulesOutput });
+  }
   return null;
 }
 
