@@ -7,7 +7,7 @@
 // an AbortSignal, and always releases the ticket on the way out.
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { cpus, homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { holdLock, type HeldLock, LockBusyError, lockHeld } from './file-lock.ts';
@@ -97,8 +97,9 @@ export function liveClaims(root: string): Dict[] {
   const claims: Dict[] = [];
   for (const name of ticketNames(root)) {
     const path = join(root, name);
-    if (lockHeld(path)) claims.push(jsonLoads(readText(path)) as Dict);
-    else rmSync(path);
+    if (!lockHeld(path)) { rmSync(path); continue; }
+    // A holder takes the flock before writing its claim: a live ticket with no complete text is not a claim yet.
+    try { claims.push(jsonLoads(readText(path)) as Dict); } catch { /* holder is mid-claim */ }
   }
   return claims;
 }
@@ -106,9 +107,11 @@ export function liveClaims(root: string): Dict[] {
 export function inherited(cpu: number, memoryGib: number, env: Environment = process.env): boolean {
   const path = env.IOT_RESOURCE_TICKET;
   if (!path) return false;
-  const text = readText(path);
+  // A missing ticket is a missing file; a dead or still-being-written ticket is not a live reservation.
+  if (!existsSync(path)) throw new PyError('FileNotFoundError', `[Errno 2] No such file or directory: '${path}'`);
   if (!lockHeld(path)) throw new PyError('ValueError', 'inherited resource reservation is no longer live');
-  const claim = jsonLoads(text);
+  let claim: unknown;
+  try { claim = jsonLoads(readText(path)); } catch { throw new PyError('ValueError', 'inherited resource reservation is not readable'); }
   if (item(claim, 'status') !== 'admitted' || cpu > number(item(claim, 'cpu')) || memoryGib > number(item(claim, 'memory_gib'))) {
     throw new PyError('ValueError', 'child request exceeds inherited reservation');
   }

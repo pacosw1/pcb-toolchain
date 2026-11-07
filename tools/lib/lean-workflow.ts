@@ -103,7 +103,7 @@ function onAcceptedOutline(step: unknown): boolean {
 
 function verifiedOutcome(board: string): boolean {
   const outcome = joinPath(dirname(board), 'outcome.json');
-  if (!pathExists(outcome)) return true;
+  if (!pathExists(outcome)) return false;   // no outcome is not evidence of a verified run
   const evidence = jsonOf(outcome);
   return get(evidence, 'status') === 'complete' && get(evidence, 'board_sha256') === sha256File(board);
 }

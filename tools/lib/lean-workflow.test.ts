@@ -24,7 +24,9 @@ function board(step: number, outcome?: object): string {
   mkdirSync(directory, { recursive: true });
   const path = join(directory, 'routed.kicad_pcb');
   writeFileSync(path, `board ${step}`);
-  if (outcome) writeFileSync(join(directory, 'outcome.json'), JSON.stringify(outcome));
+  // A real routed step writes outcome.json; model that by default so a missing outcome is genuinely missing.
+  const evidence = outcome ?? { status: 'complete' };
+  writeFileSync(join(directory, 'outcome.json'), JSON.stringify('board_sha256' in evidence ? evidence : { ...evidence, board_sha256: sha256File(path) }));
   return path;
 }
 
@@ -149,6 +151,13 @@ test('virtual, timed-out and off-outline steps cannot be selected, and stored pa
   ];
   for (const step of steps) assert.throws(() => selectReal(load({ steps: [step] }), folder), /no verified candidate/, JSON.stringify(step));
   assert.throws(() => selectReal(load({ steps: [{}, { k: 1.0, board: stored, runs: [1.5] }] }), folder), /no verified candidate/);
+});
+
+test('a step with no outcome is not a verified candidate', () => {
+  const directory = join(folder, 'step-0/route-0');
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, 'routed.kicad_pcb'), 'board 0');
+  assert.throws(() => selectReal(load({ steps: [{ k: 1.0, board: 'b', runs: [1.5] }] }), folder), /no verified candidate/);
 });
 
 test('a modified candidate is rejected through its outcome hash', () => {

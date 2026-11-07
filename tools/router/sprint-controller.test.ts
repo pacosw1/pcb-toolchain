@@ -108,6 +108,53 @@ test('a proxy score or non-advancing checkpoint never produces a passing result'
   assert.equal(verifies, 0); assert.equal(result.winner, null); assert.equal(result.variants[0]!.state, 'failed');
 });
 
+test('a real slice failure drops an earlier checkpoint from verification', async () => {
+  const calls = new Map<string, number>(); const verified: string[] = [];
+  const backend: Backend = {
+    async prepare() {},
+    async slice(v) {
+      calls.set(v.id, (calls.get(v.id) ?? 0) + 1);
+      if (v.seed === 0 && (calls.get(v.id) ?? 0) === 1) return { kind: 'yielded', pass: 1, cpu_s: 0.1, checkpoint: `${v.id}.state` };
+      if (v.seed === 0) throw Error('bad receipt');
+      return { kind: 'complete', pass: 1, cpu_s: 0.1, route: `${v.id}.route` };
+    },
+    async verify(v) { verified.push(v.id); return candidate(v); },
+    async settle() {},
+  };
+  const result = await runPortfolio(sprintPolicy({ seeds: [0, 1], parallelism: 1 }), 5, backend);
+  assert.ok(!verified.includes('v00'), 'a failed variant with an old checkpoint is not verified');
+  assert.equal(result.variants[0]!.state, 'failed');
+  assert.ok(verified.includes('v01'));
+  assert.equal(result.status, 'PASS');
+});
+
+test('queued variants are marked stopped when the search deadline hits', async () => {
+  const backend: Backend = {
+    async prepare() {},
+    async slice(v, signal) {
+      await new Promise<void>(resolve => { if (signal.aborted) resolve(); else signal.addEventListener('abort', () => resolve(), { once: true }); });
+      return { kind: 'yielded', pass: 1, cpu_s: 0.01, checkpoint: `${v.id}.state` };
+    },
+    async verify() { return null; },
+    async settle() {},
+  };
+  const policy = { ...sprintPolicy({ seeds: [0, 1, 2, 3], parallelism: 1 }), deadline_s: 8.2, verify_reserve_s: 8.15 };
+  const result = await runPortfolio(policy, 80, backend);
+  assert.ok(result.variants.every(v => v.state !== 'pending'), 'no variant stays pending');
+  assert.equal(result.variants.filter(v => v.state === 'stopped').length, 3);
+});
+
+test('a spent budget with no verified candidate is FAIL, not ERROR', async () => {
+  const backend: Backend = {
+    async prepare() {}, async slice(v) { return { kind: 'yielded', pass: 1, cpu_s: 0.01, checkpoint: `${v.id}.state` }; },
+    async verify() { return null; }, async settle() {},
+  };
+  const policy = { ...sprintPolicy({ seeds: [0], parallelism: 1 }), deadline_s: 8.2, verify_reserve_s: 8.15 };
+  const result = await runPortfolio(policy, 1, backend);
+  assert.equal(result.winner, null);
+  assert.equal(result.status, 'FAIL');
+});
+
 test('user cancellation stops scheduling and never returns a winner', async () => {
   const abort = new AbortController(); let settled = false;
   const backend: Backend = {

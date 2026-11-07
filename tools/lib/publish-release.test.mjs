@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn, spawnSync} from 'node:child_process';
-import {existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, rmdirSync, statSync, symlinkSync, writeFileSync} from 'node:fs';
+import {existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, rmdirSync, statSync, symlinkSync, utimesSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {setTimeout as wait} from 'node:timers/promises';
@@ -40,6 +40,16 @@ syncBuiltinESMExports();
   return ['--import', file];
 }
 const until = async ready => { for (let i = 0; i < 2000 && !ready(); i++) await wait(5); assert.ok(ready(), 'timed out'); };
+
+test('a stale empty destination left by a crash is reclaimed', t => {
+  const f = fixture(t), stage = f.stage('one');
+  mkdirSync(f.destination);
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(f.destination, old, old);
+  const r = publish(stage, f.destination);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(join(f.destination, 'release-manifest.json'), 'utf8'), 'one');
+});
 
 test('publishing moves the whole stage and keeps its mode', t => {
   const f = fixture(t), stage = f.stage('one'), mode = statSync(stage).mode;
