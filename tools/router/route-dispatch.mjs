@@ -237,17 +237,20 @@ function stageInputs(plan,stage){
  * deadline while the job waits.
  */
 function queueClock(file){
-  let since=0,timer=null;
+  let since=null,timer=null;
   const write=()=>{
     fs.mkdirSync(path.dirname(file),{recursive:true});
     fs.writeFileSync(file+'.tmp',JSON.stringify({seconds:(Date.now()-since)/1000}));
     fs.renameSync(file+'.tmp',file);
   };
   return{
-    start(){if(!file||since)return;since=Date.now();write();timer=setInterval(write,QUEUE_CLOCK_MS);},
+    start(){if(!file||since!==null)return;since=Date.now();write();timer=setInterval(write,QUEUE_CLOCK_MS);},
     stop(){if(!timer)return;clearInterval(timer);timer=null;write();},
   };
 }
+
+// The client prints `[time] STATE: detail` for each job state. Every state but queued ends the queue wait.
+const PAST_QUEUE=/^\[\S+\] (running|retrying|passed|failed|cancelled): /m;
 
 /** `client run`: streams the job to stderr, fills `results`. -> {code, id, refused500, stdout}. */
 function submitAndWatch(plan,inputs,timeoutS,results){
@@ -268,7 +271,7 @@ function submitAndWatch(plan,inputs,timeoutS,results){
       seen.stderr+=d;process.stderr.write(d);
       seen.id??=seen.stderr.match(/^pcb-job: job (\S+)$/m)?.[1]??null;
       if(seen.id)clock.start();
-      if(/^\[\S+\] (running|passed|failed|cancelled): /m.test(seen.stderr))clock.stop();
+      if(PAST_QUEUE.test(seen.stderr))clock.stop();
     });
     // A stopped `pcb route` must not leave its job holding the budget until the job's own time limit.
     for(const [signal,number] of [['SIGTERM',15],['SIGINT',2]])process.on(signal,()=>{
@@ -345,6 +348,8 @@ async function runOnDaemon(plan,timeoutS){
     say(`job goes to the daemon ${plan.url}`);
     const {code,id,stdout,stderr}=await submitAndWatch(plan,stageInputs(plan,stage),timeoutS,results);
     if(!id){
+      // A job line that this parser cannot read is not proof that no job exists. Never rerun on it.
+      if(/^pcb-job: job\b/m.test(stderr))return noVerdict(plan,`submit printed a job line whose job id cannot be read: the job may exist, not rerun`,null,null);
       if(code===2&&!/^pcb-job: 500:/m.test(stderr)){say('the daemon took no job');return null;}
       return noVerdict(plan,`submit ended with exit ${code} and no job id: the job may exist, not rerun`,null,null);
     }
