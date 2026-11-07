@@ -334,7 +334,9 @@ the board and the next command. `tools/pcb next BOARD` returns the state `blocke
 A board can carry `layout_plan_exempt: {reason}` in its row of `hardware-design/registry/boards.json`. An exempt board
 continues, and each run writes one `layout_plan.exempt` event. A row with an empty reason stops the command.
 The `claude-cad-guard.mjs` hook asks a person before `pcb layout ... --approve` and before a direct edit of a
-`layout-plan.json`.
+`layout-plan.json`. It also asks a person before an edit of `hardware-design/registry/boards.json` that writes
+`layout_plan_exempt` or `design_contract_exempt`. An error message does not tell an agent to add an exemption: a person
+decides it.
 
 ## Stage contracts
 

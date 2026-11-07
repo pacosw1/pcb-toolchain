@@ -237,7 +237,7 @@ export async function nextAction(rootPath: string, board: string, options: NextO
   };
   const check = (code: string, message: string, details: Fields = {}) => finish('needs_check', code, message, 'check', ['check', board, checkMode, '--follow', '--json'], details);
   if (pending) return finish('blocked', 'pending_gate', 'Board has only a pending gate' + (missing ? '; required board input is missing: ' + missing.path : ''), 'inspect_required_source', ['context', board, '--json']);
-  if (designExemption(root, board) === null) return finish('blocked', 'design_contract_missing', 'Board has no design contract and no design_contract_exempt reason in the registry', 'inspect_required_source', ['context', board, '--json']);
+  if (designExemption(root, board) === null) return finish('blocked', 'design_contract_missing', 'Board has no design contract. A person must decide how this board continues', 'inspect_required_source', ['context', board, '--json']);
   let selectedState: RunState | null = null;
   if (selected) {
     const { folder, manifest } = selected;

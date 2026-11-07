@@ -43,7 +43,7 @@ function unbound(root: string, folder: string, manifest: OperationManifest, emit
   if (reason !== null) { emit('design.exempt', { board: manifest.board, reason }); return null; }
   const file = `hardware-design/registry/design-contracts/${manifest.board}.json`;
   const cause = isFile(join(root, file)) ? `design contract ${file} exists but this run does not bind it; start the command again with --design-contract ${file}`
-    : 'board has no design contract; bind one with --design-contract FILE, or record design_contract_exempt with a reason in hardware-design/registry/boards.json';
+    : 'board has no design contract; bind one with --design-contract FILE. Without a contract, a person must decide how this board continues';
   const output = join(folder, 'operation/design-preflight.json'), through = prerequisiteStage(manifest);
   const report = { status: 'failed', blockers: [{ code: 'design_contract_missing', detail: cause }], inputs: {}, tool_inputs: {}, absent_inputs: [], schematic_contracts: [] } as Report;
   atomicJson(output, report);

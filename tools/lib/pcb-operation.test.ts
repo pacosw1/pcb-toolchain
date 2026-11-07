@@ -546,7 +546,7 @@ test('a board with no design contract and no exemption stops before the snapshot
   assert.equal(result.scope, 'design_preflight');
   assert.equal(result.candidate_verified, false);
   assert.match(String(result.cause), /board has no design contract/);
-  assert.match(String(result.cause), /design_contract_exempt/);
+  assert.match(String(result.cause), /a person must decide/);
   assert.ok(result.evidence_sha256['operation/design-preflight.json']);
   assert.equal(existsSync(join(folder, 'workspace')), false);
 });
@@ -578,6 +578,8 @@ test('design admission without a binding: exempt continues, a registered contrac
   assert.deepEqual([none.result?.status, none.result?.scope, none.result?.candidate_verified, none.result?.qualified, none.result?.release_approved], ['failed', 'design_preflight', false, false, false]);
   assert.match(String(none.result?.cause), /board has no design contract/);
   assert.match(String(none.result?.cause), /--design-contract/);
+  assert.match(String(none.result?.cause), /a person must decide/, 'an exemption is a decision of a person');
+  assert.doesNotMatch(String(none.result?.cause), /exempt/, 'the cause gives an agent no way to add an exemption');
   assert.deepEqual(none.events, []);
   const file = 'hardware-design/registry/design-contracts/X.json';
   mkdirSync(join(root, dirname(file)), { recursive: true });
