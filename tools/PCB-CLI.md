@@ -380,6 +380,18 @@ next to it, and one line in `.gate/release-approval/BOARD.jsonl`. The states are
 `g5_ready: false`. `--by` is any text: the tool does not check who the person is. The `claude-cad-guard.mjs` hook
 asks a person before `--approve` and before an edit of a `release-approval*` file.
 
+### Frozen board
+
+A row of `hardware-design/registry/boards.json` can carry `frozen: {reason}`. The reason must be non-empty: `pcb project-check --layout`
+reports a bad field as `registry_schema`, and a write command stops on it. A frozen board refuses each write of its
+canonical CAD: a sealed write, `pcb adopt`, `pcb seal --accept` and `pcb constraints --add/--remove`. The message names the
+reason and the command to unfreeze. `tools/pcb unfreeze BOARD` shows the state and exits 1 while the board is frozen.
+A person records an unfreeze with `--record --by NAME --reason TEXT`. The record is
+`hardware-design/boards/BOARD/unfreeze.json` (schema `iot-lab.unfreeze.v1`). It stays until a person removes it.
+It is no gate input. `--by` is any text. The `FOCUS.md` `## Frozen` list is a different rule: it only asks for
+`--baseline` and `--defect` at adopt. The hook asks a person before an edit that adds or removes a `frozen` field in the
+registry, before `--record` and before an edit of `unfreeze.json`. No lab board has the field.
+
 ### Order record
 
 `tools/pcb release-order BOARD` lists the recorded orders of a board. A person records an order after they place it,

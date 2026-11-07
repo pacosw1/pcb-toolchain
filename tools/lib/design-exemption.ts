@@ -6,9 +6,9 @@ import { isFile } from './py-path.ts';
 type Row = Record<string, unknown>;
 const REGISTRY = 'hardware-design/registry/boards.json';
 
-/** The reason a board has the exemption FIELD; null when it has none.
+/** The reason a board has the exemption FIELD (or the `frozen` field, lib/board-freeze.ts); null when it has none.
  *  An unreadable registry or a malformed exemption is an error: it must never read as an exemption or as no exemption. */
-export function registryExemption(root: string, board: string, field: 'design_contract_exempt' | 'layout_plan_exempt'): string | null {
+export function registryExemption(root: string, board: string, field: 'design_contract_exempt' | 'layout_plan_exempt' | 'frozen'): string | null {
   const path = join(root, REGISTRY);
   if (!isFile(path)) return null;
   const boards = readObject(path, `${REGISTRY} must be a JSON object`).boards;

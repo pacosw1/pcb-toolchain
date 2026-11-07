@@ -107,6 +107,20 @@ test('pcb layout --approve asks a person, and so does a direct edit of a layout 
   assert.equal(run({tool_name: 'Edit', tool_input: {file_path: '/p/scratch/layout-plan.json'}}).stdout, '');
 });
 
+test('an edit of the frozen field, an unfreeze record or the unfreeze command asks a person', () => {
+  const REGISTRY = '/p/hardware-design/registry/boards.json';
+  for (const input of [
+    {tool_name: 'Edit', tool_input: {file_path: REGISTRY, old_string: '"frozen": {"reason": "x"},', new_string: ''}},
+    {tool_name: 'Edit', tool_input: {file_path: REGISTRY, old_string: '"id": "X"', new_string: '"id": "X", "frozen": {"reason": "x"}'}},
+    {tool_name: 'Write', tool_input: {file_path: '/p/hardware-design/boards/B/unfreeze.json', content: '{}'}},
+    {tool_name: 'Bash', tool_input: {command: 'tools/pcb unfreeze B --record --by Ana --reason x'}},
+  ]) assert.equal(decisionOf(run(input)).permissionDecision, 'ask', JSON.stringify(input));
+  for (const input of [
+    {tool_name: 'Edit', tool_input: {file_path: REGISTRY, old_string: '"id": "X"', new_string: '"id": "Y"'}},
+    {tool_name: 'Bash', tool_input: {command: 'tools/pcb unfreeze B'}},
+  ]) assert.equal(run(input).stdout, '', JSON.stringify(input));
+});
+
 test('an edit of boards.json that writes an exemption asks a person; other edits pass', () => {
   const REGISTRY = '/p/hardware-design/registry/boards.json';
   const exempt = '"design_contract_exempt": {"reason": "x"}';

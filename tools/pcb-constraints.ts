@@ -2,6 +2,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
+import { assertWritable } from './lib/board-freeze.ts';
 import { reseal, verifySeal } from './lib/cad-seal.ts';
 import { runMain, UsageError } from './lib/cli.ts';
 import { evaluate, nativeGeometry, normalizedRules, reviewedContract, RULE_FIELDS, SCHEMA, type Rule } from './lib/engineering-constraints.ts';
@@ -30,6 +31,7 @@ export async function changeRules(root: string, board: string, options: { add?: 
   if (!options.reason?.trim() || Boolean(options.add) === Boolean(options.remove)) throw new Error('choose --add or --remove and give --reason TEXT');
   const lock = await holdLock(join(root, '.gate/cad-seal', `${board}.lock`), { waitS: 5 });
   try {
+    assertWritable(root, board);
     verifySeal(root, board);
     const path = placementRulesPath(root, board);
     let rules = existsSync(path) ? loadPlacementRules(root, board).rules : [];

@@ -6,6 +6,7 @@
 // in the root path) are not canonical and are never sealed.
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { assertWritable } from './board-freeze.ts';
 import { sha256Text } from './fingerprint.ts';
 import { gateInputs } from './gate-inputs.mjs';
 import { readObject, sha256File } from './json-file.ts';
@@ -139,6 +140,7 @@ export async function resealLocked(root: string, board: string, writer: Writer, 
 export async function acceptSeal(root: string, board: string, reason: string): Promise<void> {
   if (!reason?.trim()) throw new Error('--accept requires --reason TEXT');
   if (!isCanonicalRoot(root)) throw new Error(`${root} is a run workspace or candidate copy, not canonical; it is never sealed`);
+  assertWritable(root, board);
   await resealLocked(root, board, { tool: 'seal-accept', run_id: null }, reason.trim());
 }
 
@@ -168,7 +170,7 @@ export function sealedWrite<T>(path: string, writer: Writer, write: () => T, dep
   // The seal lock of every covering board is held from the check to the new seal: no second writer is absorbed into this seal.
   const locked = (boards: string[]): T => {
     if (boards.length) return withSealLock(targets.root, boards[0]!, () => locked(boards.slice(1)), deps);
-    for (const board of targets.boards) verifySeal(targets.root, board);
+    for (const board of targets.boards) { assertWritable(targets.root, board); verifySeal(targets.root, board); }
     const result = write();   // a write that throws leaves the old seal: a partial write is then caught, not hidden
     for (const board of targets.boards) reseal(targets.root, board, writer);
     return result;

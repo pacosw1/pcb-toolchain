@@ -71,7 +71,7 @@ Build (A20) is another path to a candidate: a pipeline script can make the whole
 | B11 Engineering cycle (`open`, `recorded`) | An open cycle that belongs to this checkout. | `pcb cycle start`, activities, attached runs. | Cycle record with timings. It grants no qualification. | `recorded`. [a closed cycle stops new work] | `lib/pcb-cycle.ts:12-13`, `:42`, `:89`, `:98`. `lib/pcb-check-start.ts:53`. | `recorded` |
 | B12 Production evidence (contract stage) | A contract that reaches the stage `production`. | Sourced applicability of assembly, test coverage, yield. | A `blocked` stage: the controls are unsupported. | None. [always `blocked`] | `lib/design-contract.ts:122`. `lib/design-contract-load.ts:13`. | `recorded` |
 | B13 Agent trial (`run.pending.json` then `run.json`) | One trial runs once. | A trial case. | `run.json` or a settled crash record. | `collect`. [a crashed runner gives a failed verdict] | `lib/agent-trial-run.ts:42-60`. | `enforced` |
-| B14 Frozen board | The line `- BOARD` under `## Frozen` in `FOCUS.md`. | `FOCUS.md` text. | `frozen: true` in `context`. Adopt then needs `--baseline` and `--defect`. | A19. [a missing file or heading reads as not frozen] | `lib/pcb-workflow.ts:138-139`, `:187-188`, `:202`. `lib/pcb-candidate.ts:268-269`. | `implicit` |
+| B14 Frozen board | Registry field `frozen: {reason}`, and the line `- BOARD` under `## Frozen` in `FOCUS.md`. With the registry field: `frozen`, `unfrozen` (a valid `unfreeze.json`) or `invalid`. | The registry row. `unfreeze BOARD --record --by --reason`. `FOCUS.md` text. | The registry field refuses every CAD write (sealed write, adopt, `seal --accept`, `constraints --add/--remove`) until a person records an unfreeze. `FOCUS.md` gives `frozen: true` in `context`: adopt then needs `--baseline` and `--defect`. | A19. [a damaged `frozen` field or unfreeze record stops the command; a missing `FOCUS.md` file or heading reads as not frozen] | `lib/board-freeze.ts:20`, `:37`. `lib/cad-seal.ts` `sealedWrite` and `acceptSeal`. `lib/pcb-candidate.ts` `adopt`. `lib/project-layout.ts` `registryEntries`. `lib/pcb-workflow.ts:138-139`, `:187-188`, `:202`. `lib/pcb-candidate.ts:268-269`. | `enforced` |
 | B15 Person approval (who approves) | None. | `--by NAME` is any text. | The name in the approval. | A8, B4, B5. [none] | A regex in a Claude Code hook only: `hooks/claude-cad-guard.mjs:33-36`. `lib/layout-plan.ts:175`. | `implicit` |
 | B16 Gate configuration and check data files | None. | `gate.json` (`stage`, `checks`), `reference-planes.json`, `diff-pairs.json`, `current-paths.json`, `rf-lines.json`. | None. | A18. [a changed, added or removed file stops the next command] | `lib/cad-seal.ts:17-19` (`SEALED`) and `sealedFiles` seal `gate.json`, the data files by name, and each JSON rule file that `gate.json` names. `hooks/claude-cad-guard.mjs:12` asks a person before an edit. A seal made by an older toolchain lacks these files: it fails closed as `added`, with a message, until `seal --accept`. The stage can still go down: no up-only rule (D2). | `enforced` |
 | B17 Route environment settings | None. | `ROUTE_FEATURES`, `ROUTE_FEATURES_FILE`, `ROUTE_BOARD` in the environment. | None. | A14. [none] | `lib/pcb-candidate-run.ts:278` copies `process.env`. `lib/pcb-action.ts:34` does not record them. | `implicit` |
@@ -134,7 +134,7 @@ Findings 3, 4, 6, 7 and 11 are fixed in the code and are not listed.
 | D7 | B18 Route dispatch fallback | An error after the daemon took the job matches the rule. A local route runs while the daemon job also runs. Two results exist. (#1555 finding 9) | The client uses a distinct exit code only when it proved that nothing was sent. The dispatch matches only that code. |
 | D8 | A10 Placement seed choice | The reason for the chosen seed and the rejected seeds is lost. A new call replaces the specs. (#1555 finding 12) | Write `.gate/place/BOARD-candidates.json` with the table and the spec hashes. The place edit records whether its spec hash is in the table. |
 | D9 | A13 RF route order | RF nets route after other nets and lose their clear paths. The gate finds the loss late. | A check in the layout plan approval: the first route stage holds all nets of `rf-lines.json`. |
-| D10 | B14 Frozen board (skipped on purpose) | `pcb adopt` overwrites a frozen board with no baseline run. No board can be frozen now. (#1555 finding 1) | A `frozen` field in the registry with a reason. Fail closed when `FOCUS.md` has a Frozen heading that the registry does not list. |
+| D10 | B14 Frozen board (skipped on purpose) | `pcb adopt` overwrites a frozen board with no baseline run. No board can be frozen now. (#1555 finding 1) | A `frozen` field in the registry with a reason. Fail closed when `FOCUS.md` has a Frozen heading that the registry does not list. Done for the registry field and the unfreeze record. Open: the `FOCUS.md` list is not compared with the registry. |
 
 Top five by possible loss: D1, D2, D3, D4, D6.
 
@@ -144,9 +144,9 @@ The counts are for the rows of sections A and B.
 
 | Status | Section A | Section B | Total |
 |---|---|---|---|
-| `enforced` | 15 | 10 | 25 |
+| `enforced` | 15 | 11 | 26 |
 | `recorded` | 8 | 4 | 12 |
-| `implicit` | 2 | 4 | 6 |
+| `implicit` | 2 | 3 | 5 |
 | Total | 25 | 18 | 43 |
 
 ## F. How the diagram is made
