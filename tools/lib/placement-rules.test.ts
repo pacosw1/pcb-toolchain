@@ -11,7 +11,10 @@ import { reseal, verifySeal } from './cad-seal.ts';
 import { SCHEMA, type Rule } from './engineering-constraints.ts';
 import { gateInputs, fingerprint } from './gate-inputs.mjs';
 import { sha256File } from './json-file.ts';
+import { iotrouteMissing } from './iotroute-bin.ts';
 import { checkPlacementRules, loadPlacementRules, placementRulesPath, verifyManifest } from './placement-rules.ts';
+
+const needsBinary = { skip: iotrouteMissing() };   // runs for real in CI job tools-iotroute
 
 function fixture(t: TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'placement-rules-'));
@@ -38,7 +41,7 @@ test('a board file needs no part review and logs each missed rule', t => {
   assert.notEqual(verifyManifest(f.root, 'X', f.path).status, 'passed');
 });
 
-test('canonical additions reseal, log one reason, and invalidate gate evidence', async t => {
+test('canonical additions reseal, log one reason, and invalidate gate evidence', needsBinary, async t => {
   const f = fixture(t), spec = join(f.root, 'rule.json');
   writeFileSync(spec, JSON.stringify(f.rule));
   const before = fingerprint(f.root, gateInputs(f.root, 'X').files).input_sha256;
@@ -80,7 +83,7 @@ test('the placer reads board rules through its normal review service', t => {
   assert.equal(checkProblem(problem, [[2, 3, 0], [4, 6, 0]]).status, 'passed');
 });
 
-test('the dispatcher reads and adds board rules with a reason', t => {
+test('the dispatcher reads and adds board rules with a reason', needsBinary, t => {
   const f = fixture(t), spec = join(f.root, 'new.json'); writeFileSync(spec, JSON.stringify(f.rule));
   const command = fileURLToPath(new URL('../pcb', import.meta.url));
   const invoke = (args: string[]) => JSON.parse(execFileSync(command, ['--project', f.root, 'constraints', 'X', ...args, '--json'], { encoding: 'utf8' }));
