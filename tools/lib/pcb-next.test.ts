@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { exemptBoard } from './design-exempt-fixture.ts';
+import { reseal } from './cad-seal.ts';
 import { sealFixtureBoard } from './cad-seal-fixture.ts';
+import { recordChange } from './change-log.ts';
 import { atomicJson, readObject, sha256File } from './json-file.ts';
 import { approveFixture } from './layout-plan-fixture.ts';
 import { evidenceFiles } from './pcb-evidence.ts';
@@ -155,6 +157,19 @@ test('CAD changed outside our tools is state cad_unsealed with the seal command,
   assert.equal(report.next_action?.command, 'tools/pcb seal X'); assert.equal(f.probes(), 1);
   unlinkSync(join(f.board, 'cad-seal.json'));
   const missing = await f.next(); assert.equal(missing.state, 'cad_unsealed'); assert.equal(missing.blocker?.code, 'cad_seal_missing');
+});
+
+test('a change with no event stops next with the code and the command', async t => {
+  const f = fixture(t); f.run();
+  writeFileSync(f.project + '.kicad_pcb', '(kicad_pcb (general (thickness 1.6)))');
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  recordChange(f.root, 'X', { kind: 'baseline', reason: 'start', by: 'Ana', refs: [] });
+  assert.notEqual((await f.next()).blocker?.code, 'change_unrecorded');
+  writeFileSync(f.project + '.kicad_pcb', '(kicad_pcb (general (thickness 0.8)))');
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  const report = await f.next();
+  assert.equal(report.state, 'blocked'); assert.equal(report.blocker?.code, 'change_unrecorded');
+  assert.match(report.next_action?.command ?? '', /tools\/pcb change X --kind KIND/);
 });
 
 test('legacy receipts cannot become current and G5 requests a fresh check', async t => {

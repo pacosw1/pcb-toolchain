@@ -5,6 +5,7 @@ import { basename, join, relative, resolve } from 'node:path';
 import { STAGES } from './design-contract-load.ts';
 import { designExemption } from './design-exemption.ts';
 import { sealStatus } from './cad-seal.ts';
+import { changeBlock, changePath } from './change-log.ts';
 import { checkPlacementRules } from './placement-rules.ts';
 import { layoutGate, layoutPlanStatus } from './layout-plan.ts';
 import { readObject as readSharedObject, sha256File } from './json-file.ts';
@@ -271,6 +272,8 @@ async function boardNext(root: string, board: string, base: string, options: Nex
   const seal = sealStatus(root, board);   // never throws on a broken seal: the answer is a state and the command to settle it
   if (seal.state === 'missing') return finish('cad_unsealed', 'cad_seal_missing', 'Board CAD has no seal; create the first seal after you check the files are the intended ones', 'seal', ['seal', board], { evidence: { path: seal.seal, exists: false } });
   if (seal.state === 'changed') return finish('cad_unsealed', 'cad_changed', 'Board CAD changed outside our tools; undo the change, or accept it with --accept --reason TEXT', 'seal', ['seal', board], { evidence: { path: seal.seal }, changed: seal.changed, added: seal.added, removed: seal.removed });
+  const change = changeBlock(root, board);
+  if (change) return finish('blocked', change.code, change.message, 'record_change', ['change', board, '--kind', 'KIND', '--reason', 'TEXT', '--by', 'NAME'], { evidence: { path: changePath(root, board) } });
   const layout = layoutPlanStatus(root, board);   // place and route stop without an approved plan or an exemption
   if (layout.state !== 'approved' && layout.state !== 'exempt') {
     const approval = layout.state === 'unapproved' || layout.state === 'stale';

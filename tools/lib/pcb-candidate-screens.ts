@@ -1,6 +1,7 @@
 // The engineering screens around a candidate: the previous design stage before any spending, and reviewed placement, block
 // and test access rules on the candidate itself. Each writes its report next to the operation's other evidence.
 import { dirname, join } from 'node:path';
+import { changeBlock } from './change-log.ts';
 import { evaluateCandidateLayout, evaluateContract } from './design-contract-async.ts';
 import type { Report } from './design-contract-verifiers-async.ts';
 import { designServices } from './design-services.ts';
@@ -72,10 +73,11 @@ export async function designAdmission(root: string, folder: string, manifest: Op
   return report;
 }
 
-/** A run that builds, places or routes needs an approved layout plan, or an exemption that writes one event. True when this stopped the run. */
+/** A run that builds, places or routes needs an approved layout plan, or an exemption that writes one event. A release needs each change to have an event. True when this stopped the run. */
 export function layoutAdmission(root: string, folder: string, manifest: OperationManifest, emit: Emit): boolean {
-  if (!routesCopper(manifest) && manifest.operation !== 'build' && !(manifest.operation === 'edit' && manifest.kind === 'place')) return false;
-  const block = layoutGate(root, manifest.board, emit);
+  const layout = routesCopper(manifest) || manifest.operation === 'build' || (manifest.operation === 'edit' && manifest.kind === 'place');
+  if (!layout && manifest.operation !== 'release') return false;
+  const block = layout ? layoutGate(root, manifest.board, emit) : changeBlock(root, manifest.board);
   if (!block) return false;
   atomicJson(join(folder, 'operation/result.json'), { status: 'failed', exit_code: 1, scope: 'layout_plan', operation: manifest.operation, blocker: block.code,
     cause: block.message, candidate_verified: false, qualified: false, release_approved: false });

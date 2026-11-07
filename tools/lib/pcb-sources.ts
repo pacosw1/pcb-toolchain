@@ -5,7 +5,7 @@ import { chmodSync, copyFileSync, lstatSync, mkdirSync, readdirSync, statSync } 
 import { dirname, extname } from 'node:path';
 import { sha256Text } from './fingerprint.ts';
 import { boardConfig, sha } from './pcb-workflow.ts';
-import { SEAL_FILE, SNAPSHOT_IGNORED, SNAPSHOT_NOT_SOURCE } from './pcb-source-policy.ts';
+import { CHANGE_FILE, SEAL_FILE, SNAPSHOT_IGNORED, SNAPSHOT_NOT_SOURCE } from './pcb-source-policy.ts';
 import { compare, jsonDumps, PyError } from './py-compat.mjs';
 import { isFile, isRelativeTo, joinPath, pathExists, relativeTo, resolvePath, withSuffix } from './py-path.ts';
 import { sameValue } from './py-values.ts';
@@ -30,7 +30,7 @@ const byParts = (left: string, right: string): number => {
   return a.length - b.length;
 };
 
-function walkSources(folder: string, root: string, board: string | null | undefined, found: string[]): void {
+export function walkSources(folder: string, root: string, board: string | null | undefined, found: string[]): void {
   const names = readdirSync(folder).sort(compare);
   const folders = names.filter(name => isDirectoryEntry(joinPath(folder, name)));
   const registry = board && folder === joinPath(root, 'hardware-design/registry');
@@ -38,7 +38,7 @@ function walkSources(folder: string, root: string, board: string | null | undefi
   if (kept.some(name => isSymlink(joinPath(folder, name)))) throw new PyError('ValueError', `directory symlinks need an explicit snapshot dependency: ${folder}`);
   for (const name of names) {
     const path = joinPath(folder, name);
-    if (folders.includes(name) || name === SEAL_FILE || name.startsWith('.pcb-adopt-') || SNAPSHOT_NOT_SOURCE.has(extname(name)) || !isFile(path)) continue;
+    if (folders.includes(name) || name === SEAL_FILE || name === CHANGE_FILE || name.startsWith('.pcb-adopt-') || SNAPSHOT_NOT_SOURCE.has(extname(name)) || !isFile(path)) continue;
     found.push(path);
   }
   for (const name of kept) walkSources(joinPath(folder, name), root, board, found);

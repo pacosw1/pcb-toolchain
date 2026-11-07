@@ -6,6 +6,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { boardShapeSha256 } from './board-shape.ts';
 import { isCanonicalRoot, schematicSha256, verifySeal, withSealLock } from './cad-seal.ts';
+import { changeBlock, type ChangeBlock } from './change-log.ts';
 import { registryExemption } from './design-exemption.ts';
 import { atomicJson, readObject, sha256File } from './json-file.ts';
 import { durableAppend } from './pcb-check-durable.ts';
@@ -32,7 +33,7 @@ export interface LayoutStatus {
   board: string; state: 'approved' | 'exempt' | 'missing' | 'invalid' | 'unapproved' | 'stale'; path: string;
   problems: string[]; stale: string[]; approval: Approval | null; image: string | null; exempt_reason?: string;
 }
-export interface LayoutBlock { code: 'layout_plan_missing' | 'layout_plan_stale'; message: string }
+export interface LayoutBlock { code: 'layout_plan_missing' | 'layout_plan_stale' | ChangeBlock['code']; message: string }
 /** The nets of the board of BOARD. A test passes a stand-in: the real one reads the board JSON through the daemon. */
 export type NetSource = (root: string, board: string) => PlanNets;
 export type LayoutEmit = (kind: string, data?: Row) => void;
@@ -147,6 +148,8 @@ export function layoutPlanStatus(root: string, board: string): LayoutStatus {
 
 /** null when the plan is approved or the board is exempt (an exempt board writes one event). Else the stop and the way to continue. */
 export function layoutGate(root: string, board: string, emit: LayoutEmit): LayoutBlock | null {
+  const change = changeBlock(root, board);
+  if (change) return change;
   const status = layoutPlanStatus(root, board), file = relative(root, status.path).split(sep).join('/');
   if (status.state === 'exempt') { emit('layout_plan.exempt', { board, reason: status.exempt_reason }); return null; }
   if (status.state === 'approved') return null;
@@ -189,6 +192,8 @@ export async function approveLayoutPlan(root: string, board: string, by: string,
   const path = layoutPlanPath(root, board);
   withSealLock(root, board, () => {
     verifySeal(root, board);
+    const change = changeBlock(root, board);
+    if (change) throw new Error(change.message);
     if (!isFile(path)) throw new Error(`${board} has no layout plan (${path})`);
     const plan = readPlan(path), found = inspect(root, board, plan, boardNets);
     if (found.problems.length) throw new Error(`The layout plan of ${board} is not valid:\n  ${found.problems.join('\n  ')}`);
