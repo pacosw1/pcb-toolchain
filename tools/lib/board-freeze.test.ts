@@ -7,8 +7,10 @@ import { assertWritable, freezeStatus, recordUnfreeze } from './board-freeze.ts'
 import { acceptSeal, sealedWrite } from './cad-seal.ts';
 import { sealFixtureBoard } from './cad-seal-fixture.ts';
 import { gateInputs } from './gate-inputs.mjs';
+import { iotrouteMissing } from './iotroute-bin.ts';
 import { changeRules } from '../pcb-constraints.ts';
 
+const needsBinary = { skip: iotrouteMissing() };   // the rule command holds a lock through the binary
 const writer = { tool: 'unit', run_id: null };
 const NONE = Symbol('no frozen field');
 
@@ -65,7 +67,7 @@ test('a record of the unfreeze is refused for a board that is not frozen and wit
   assert.equal(existsSync(p.record), false);
 });
 
-test('a rule change on a frozen board is refused before it reads anything', async t => {
+test('a rule change on a frozen board is refused before it reads anything', needsBinary, async t => {
   const p = project(t);
   await assert.rejects(changeRules(p.root, 'X', { remove: 'any-rule', reason: 'fix' }), /X is frozen/);
   recordUnfreeze(p.root, 'X', { by: 'Ana', reason: 'fix' });
