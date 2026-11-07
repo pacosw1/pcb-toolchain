@@ -73,15 +73,18 @@ test('an upgrade removes old files and replaces the exclude block, keeping other
   assert.equal(exclude().match(/pcb-toolchain begin/g).length, 1)
 })
 
-test('an identical project file is adopted: the next upgrade replaces it instead of failing', t => {
+test('an identical project file is kept but not listed: no later version deletes or replaces it', t => {
   const { project, bundle } = setup(t)
   write(path.join(project, 'tools/b.py'), 'same')
   const first = bundle('b1', '1.0.0 aaa', { 'a.py': 'a', 'b.py': 'same' })([project])
   assert.match(first.stderr, /1 copied, 1 identical/)
-  assert.equal(fs.readFileSync(path.join(project, 'tools/.toolchain-files'), 'utf8'), 'a.py\nb.py\n')
-  const second = bundle('b2', '2.0.0 bbb', { 'a.py': 'a', 'b.py': 'changed' })([project])
-  assert.equal(second.status, 0, second.stderr)
-  assert.equal(fs.readFileSync(path.join(project, 'tools/b.py'), 'utf8'), 'changed')
+  assert.equal(fs.readFileSync(path.join(project, 'tools/.toolchain-files'), 'utf8'), 'a.py\n')
+  const dropped = bundle('b2', '2.0.0 bbb', { 'a.py': 'a' })([project])
+  assert.equal(dropped.status, 0, dropped.stderr)
+  assert.equal(fs.readFileSync(path.join(project, 'tools/b.py'), 'utf8'), 'same', 'the upgrade does not delete the project file')
+  const changed = bundle('b3', '3.0.0 ccc', { 'a.py': 'a', 'b.py': 'changed' })([project])
+  assert.equal(changed.status, 1, 'a release that now differs from the project file is a collision')
+  assert.equal(fs.readFileSync(path.join(project, 'tools/b.py'), 'utf8'), 'same', 'the upgrade does not replace the project file')
 })
 
 test('a sync that stopped half way does not turn the next upgrade into a collision', t => {

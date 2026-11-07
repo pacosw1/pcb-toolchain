@@ -9,8 +9,8 @@
 //
 // - PROJECT/tools/.toolchain-version holds "<version> <sha>"; same stamp and all files present = nothing to do.
 // - PROJECT/tools/.toolchain-files lists the copied files; a new version first removes the old list.
-// - A project file at a toolchain path is an error, unless its content is identical (then it is kept and listed, so
-//   the next version replaces it like any other copy).
+// - A project file at a toolchain path is an error, unless its content is identical (then it is kept, not listed, and
+//   stays the project's: no later version deletes or replaces it).
 // - The listing is written before the copy and the stamp after it, so a sync that stopped half way is recoverable.
 // - Copies are read-only: change a tool in the pcb-toolchain repo and release it, not here.
 // - Unless --no-exclude, the copied paths go into the git common dir info/exclude (one marked block).
@@ -109,7 +109,7 @@ function main(argv) {
     fs.chmodSync(dst, st.mode & 0o100 ? 0o555 : 0o444)
     copied.push(r)
   }
-  put(listing, rels.join('\n') + '\n')              // identical files too: they are the release's now, and the next version replaces them
+  put(listing, copied.join('\n') + '\n')            // only what this script put there: an identical project file stays the project's
   put(stamp, stampText + '\n')                      // last: the stamp says the whole copy finished
   const how = argv.includes('--no-exclude') ? 'not excluded' : exclude(project, copied)
   console.error(`PASS: toolchain_sync: pcb-toolchain ${stampText} -> ${tools} (${copied.length} copied, ${kept} identical, ${how})`)
