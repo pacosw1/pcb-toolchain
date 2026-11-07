@@ -28,13 +28,15 @@ const placer: Placer = args => {
 };
 
 interface Placement { board: string; spec: string; moved: number; edit: string }
-interface Candidate extends Placement { seed: number; margins: { smallest_mm: number | null; rules: { id: string; margin_mm: number | null }[] }; wirelength: number | null }
+interface Miss { id: string; miss_mm: number | null }
+interface Candidate extends Placement { seed: number; margins: { smallest_mm: number | null; rules: { id: string; margin_mm: number | null }[] }; wirelength: number | null; legal: boolean; misses: Miss[] }
 class RuleMiss extends Error {
   readonly ids: string[];
   constructor(ids: string[]) { super('placement rule misses: ' + ids.join(', ')); this.ids = ids; }
 }
 
-function placeCandidate(root: string, board: string, options: PlaceOptions, run: Placer, allowUnmoved = false): Candidate {
+/** `compare`: a candidate with rule misses, or with no moved part, is kept and reports them. Else it is an error. */
+function placeCandidate(root: string, board: string, options: PlaceOptions, run: Placer, compare = false): Candidate {
   const native = withSuffix(boardConfig(root, board).project, '.kicad_pcb');
   const folder = mkdtempSync(join(tmpdir(), 'pcb-place-'));
   try {
@@ -45,22 +47,24 @@ function placeCandidate(root: string, board: string, options: PlaceOptions, run:
     try { run(['run', problem, '-o', result, '--top', '1', '--workers', '1', '--seed', String(options.seed), '--epochs', String(options.epochs), '--steps', String(options.steps)]); }
     catch (error) { failure = error; }
     const found = existsSync(result) ? (JSON.parse(readFileSync(result, 'utf8')) as { candidates: { components?: { hpwl?: number }; engineering?: { blockers: Dict[] } }[] }).candidates[0] : undefined;
-    const misses = found?.engineering?.blockers ?? [];
-    if (misses.length) throw new RuleMiss(misses.map(row => String(row.id ?? row.code)));
-    if (failure) throw failure;
-    run(['write', native, problem, result, '--outdir', output]);
+    const reported = found?.engineering?.blockers ?? [];
+    if (reported.length && !compare) throw new RuleMiss(reported.map(row => String(row.id ?? row.code)));
+    if (failure && !reported.length) throw failure;
+    run(['write', native, problem, result, '--outdir', output, ...(compare ? ['--keep-misses'] : [])]);
     const candidate = join(output, 'cand0', basename(native));
     const checked = checkPlacementRules(root, board, candidate);
-    if (checked && checked.status !== 'passed') throw new RuleMiss((checked.blockers as Dict[]).map(row => String(row.id ?? row.code)));
+    const blockers = checked && checked.status !== 'passed' ? checked.blockers as Dict[] : reported;
+    if (blockers.length && !compare) throw new RuleMiss(blockers.map(row => String(row.id ?? row.code)));
+    const misses = blockers.map(row => ({ id: String(row.id ?? row.code), miss_mm: typeof row.miss === 'number' ? row.miss : null }));
     const margins = ((checked?.measurements ?? []) as Dict[]).map(row => ({ id: String(row.id), margin_mm: typeof row.margin_mm === 'number' ? row.margin_mm : null }));
     const numericMargins = margins.flatMap(row => row.margin_mm === null ? [] : [row.margin_mm]);
     const spec = placementSpec(footprints(native), footprints(candidate));
     const moved = Object.keys(spec.place).length;
-    if (!moved && !allowUnmoved) throw new Error(`the automatic placer moved no parts on ${board}`);
+    if (!moved && !compare) throw new Error(`the automatic placer moved no parts on ${board}`);
     const path = resolve(options.out ?? join(root, '.gate/place', `${board}.json`));
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, `${jsonDumps(spec)}\n`);
-    return { seed: options.seed, margins: { smallest_mm: numericMargins.length ? Math.min(...numericMargins) : null, rules: margins }, wirelength: found?.components?.hpwl ?? null, board, spec: path, moved, edit: `tools/pcb edit ${board} --kind place --spec ${path} --json` };
+    return { seed: options.seed, margins: { smallest_mm: numericMargins.length ? Math.min(...numericMargins) : null, rules: margins }, wirelength: found?.components?.hpwl ?? null, legal: !misses.length, misses, board, spec: path, moved, edit: `tools/pcb edit ${board} --kind place --spec ${path} --json` };
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }
@@ -74,20 +78,25 @@ export function placeBoard(root: string, board: string, options: PlaceOptions, r
 export function placeCandidates(root: string, board: string, options: PlaceOptions, seeds: number, run: Placer = placer): { board: string; candidates: Candidate[] } {
   if (!Number.isSafeInteger(seeds) || seeds < 1) throw new Error('--seeds must be a positive integer');
   if (options.out) throw new Error('--out cannot be combined with --seeds');
-  const candidates: Candidate[] = [], misses = new Map<string, number>();
+  const candidates: Candidate[] = [];
   for (let i = 0; i < seeds; i++) {
     const seed = options.seed + i;
-    try { candidates.push(placeCandidate(root, board, { ...options, seed, out: join(root, '.gate/place', `${board}-seed${seed}.json`) }, run, true)); }
-    catch (error) {
-      if (!(error instanceof RuleMiss)) throw error;
-      for (const id of new Set(error.ids)) misses.set(id, (misses.get(id) ?? 0) + 1);
-    }
+    candidates.push(placeCandidate(root, board, { ...options, seed, out: join(root, '.gate/place', `${board}-seed${seed}.json`) }, run, true));
   }
-  if (!candidates.length) {
-    const worst = [...misses].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
-    throw new Error(`no placement candidate kept; rule ${worst?.[0] ?? 'unknown'} missed in ${worst?.[1] ?? 0} seeds`);
+  return { board, candidates: candidates.sort((a, b) => Number(b.legal) - Number(a.legal)) };   // The sort is stable: the seed order stays in each group.
+}
+
+/** Prints the report and returns the exit code: a report with no legal candidate is still a failure. */
+export function showCandidates(report: { candidates: Candidate[] }, json: boolean): number {
+  const legal = report.candidates.filter(row => row.legal);
+  if (json) console.log(jsonDumps(report));
+  else {
+    console.log('seed  legal  moved  margin_mm  wirelength  misses  spec');
+    for (const row of report.candidates) console.log([row.seed, row.legal ? 'yes' : 'no', row.moved, row.margins.smallest_mm ?? '-', row.wirelength ?? '-', row.misses.map(miss => `${miss.id}=${miss.miss_mm ?? '?'}`).join(',') || '-', row.spec].join('  '));
+    for (const row of legal) console.log(row.edit);
+    if (!legal.length) console.log('NO LEGAL CANDIDATE');
   }
-  return { board, candidates };
+  return legal.length ? 0 : 3;
 }
 
 function main(given: string[]): number {
@@ -104,13 +113,7 @@ function main(given: string[]): number {
   const options = { out: a.text('--out'), seed: a.int('--seed') ?? 1, epochs: a.int('--epochs') ?? 8, steps: a.int('--steps') ?? 20000 };
   if (!a.has('--seeds')) console.log(jsonDumps(placeBoard(root, board, options)));
   else {
-    const report = placeCandidates(root, board, options, a.int('--seeds')!);
-    if (a.has('--json')) console.log(jsonDumps(report));
-    else {
-      console.log('seed  moved  margin_mm  wirelength  spec');
-      for (const row of report.candidates) console.log([row.seed, row.moved, row.margins.smallest_mm ?? '-', row.wirelength ?? '-', row.spec].join('  '));
-      for (const row of report.candidates) console.log(row.edit);
-    }
+    return showCandidates(placeCandidates(root, board, options, a.int('--seeds')!), a.has('--json'));
   }
   return 0;
 }

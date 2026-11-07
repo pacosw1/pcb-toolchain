@@ -32,18 +32,18 @@ export const withBoardDocument = <T>(board: string, body: (document: string) => 
 export const readProblem = (board: string, output: string, args: readonly string[] = []): string => inTempFolder(folder => execFileSync(
   iotplaceBin(), ['read', board, `--board-json=${saveDocument(board, folder)}`, '-o', output, ...args], { encoding: 'utf8' }));
 
-export interface WriteOptions { outlineScale?: number; retainCopper?: boolean }
+export interface WriteOptions { outlineScale?: number; retainCopper?: boolean; keepMisses?: boolean }
 export interface WriteReport { moved_units: number; removed_tracks: number; removed_collisions: number; moved_block_tracks: number }
 
-/** A copy of `board` with `pose`. A reviewed problem must pass its screen, keeps all copper and has no virtual outline. */
+/** A copy of `board` with `pose`. A reviewed problem must pass its screen (unless keepMisses), keeps all copper and has no virtual outline. */
 export function writeBoard(board: string, problem: ReviewedProblem, pose: Pose, output: string, options: WriteOptions = {}): WriteReport {
-  const { outlineScale = 1 } = options;
+  const { outlineScale = 1, keepMisses = false } = options;
   let { retainCopper = false } = options;
   if (resolve(board) === resolve(output)) throw new Error('a write makes a copy only: the output must differ from the input board');
   if (problem.engineering) {
     if (realpathSync(board) !== realpathSync(problem.board_file)) throw new Error('reviewed placement writer source differs from its native model');
     const checked = checkProblem(problem, pose);
-    if (checked.status !== 'passed' || outlineScale !== 1) throw new Error(`reviewed engineering constraints reject placement: ${jsonDumps(checked.blockers)}`);
+    if ((checked.status !== 'passed' && !keepMisses) || outlineScale !== 1) throw new Error(`reviewed engineering constraints reject placement: ${jsonDumps(checked.blockers)}`);
     retainCopper = true;   // Preserve the reviewed source; reconnect only explicit affected nets later.
   }
   return inTempFolder(folder => {

@@ -179,7 +179,7 @@ impl<'m> Evaluator<'m> {
             hpwl: self.nets.wirelength(self.model),
             cong: self.nets.congestion(self.model),
             overlap: hard + self.areas.total(),
-            oob: compensated(self.forbidden.iter().copied()),
+            oob: compensated(self.forbidden.iter().copied()) + self.model.problem.contract.as_ref().map_or(0.0, |contract| contract.total_miss(&self.pose())),
             spacing: soft,
             via: self.vias.total(),
             crossing: self.crossings.total(),
@@ -302,9 +302,14 @@ impl<'m> Evaluator<'m> {
         self.with_rule_misses(i, overlap + edge + locked + gap) + self.hard_escape(i) + self.engineering_miss(i)
     }
 
-    /// The reviewed contract of the problem counts against legality only: it plays no part in the search cost.
+    /// The reviewed contract of the problem counts against legality, and its misses of a move are part of the forbidden-area term.
     fn engineering_miss(&self, i: usize) -> f64 {
         self.model.problem.contract.as_ref().map_or(0.0, |contract| contract.miss(i, &self.pose()))
+    }
+
+    /// The miss in mm of the contract rules that the units take part in, at the current places.
+    fn contract_miss(&self, units: &[usize]) -> f64 {
+        self.model.problem.contract.as_ref().map_or(0.0, |contract| contract.miss_of(units, &self.pose()))
     }
 
     fn hard_escape(&self, i: usize) -> f64 {
@@ -341,7 +346,7 @@ impl<'m> Evaluator<'m> {
         let places: Vec<_> = moved.iter().map(|&i| (i, self.layout.place(i))).collect();
         self.last_places.clone_from(&places);
         let (overlap_before, spacing_before) = self.moved_pairs(&moved);
-        let forbidden_before = compensated(moved.iter().map(|&i| self.forbidden[i]));
+        let forbidden_before = compensated(moved.iter().map(|&i| self.forbidden[i])) + self.contract_miss(&moved);
         self.vias.before_move(model, &self.layout, &moved);
         self.nets.before_move(model, &self.layout, &moved);
         if let Some(e) = &mut self.escape {
@@ -357,7 +362,7 @@ impl<'m> Evaluator<'m> {
         for &i in &moved {
             self.forbidden[i] = self.forbidden_area(i);
         }
-        let forbidden_after = compensated(moved.iter().map(|&i| self.forbidden[i]));
+        let forbidden_after = compensated(moved.iter().map(|&i| self.forbidden[i])) + self.contract_miss(&moved);
         let nets = self.moved_nets(&moved);
         let (hpwl, cong) = self.nets.after_move(model, &self.layout, &moved, &nets);
         let delta = Terms {

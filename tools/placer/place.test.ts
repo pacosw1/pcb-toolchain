@@ -136,3 +136,10 @@ test('the writer refuses a pose that breaks the contract before it replaces any 
   assert.throws(() => cmdWrite([native, prob, result, '--outdir', outdir], services), /rejected before writing/);
   assert.equal(readFileSync(marker, 'utf8'), 'existing result');
 });
+
+test('--keep-misses lets the writer past the contract screen of a pose with a rule miss', () => {
+  const result = join(root, 'res.json');
+  writeFileSync(result, JSON.stringify({ candidates: [{ ...candidate(), pose: [[11, 10, 0]] }] }));
+  // The test native board is not a real board, so the write itself fails: only the screen must not be what stops it.
+  assert.throws(() => cmdWrite([native, prob, result, '--outdir', join(root, 'output'), '--keep-misses'], services), (error: Error) => !/rejected/.test(error.message));
+});

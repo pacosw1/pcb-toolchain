@@ -368,8 +368,12 @@ measurements, limits and margins. Rules live in
 - `pcb constraints BOARD --add SPEC.json --reason TEXT` adds one rule.
 - `pcb constraints BOARD --remove ID --reason TEXT` removes one rule.
 - `pcb place BOARD --seeds N [--json]` compares consecutive seeds and writes a
-  placement spec for each candidate that meets the rules. The table includes
-  moved parts, smallest rule margin and reported wirelength.
+  placement spec for each candidate. The search optimizes the rule misses, but a
+  candidate can still miss a rule. It is kept, with `legal: false` and
+  `misses: [{id, miss_mm}]`. Legal candidates sort first. The table includes
+  legality, moved parts, smallest rule margin, reported wirelength and misses.
+  It prints an edit command for legal candidates only. With no legal candidate,
+  the command prints the report and `NO LEGAL CANDIDATE`, and exits 3.
 
 Rule writes validate native references and cited source hashes, use canonical
 JSON, and reseal the board with one local log entry containing the reason.
