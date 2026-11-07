@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test, { type TestContext } from 'node:test';
+import { boardShapeSha256 } from './board-shape.ts';
 import { reseal, schematicSha256 } from './cad-seal.ts';
 import { SCHEMA } from './engineering-constraints.ts';
 import { approveLayoutPlan, layoutGate, layoutPlanPath, layoutPlanStatus, type NetSource } from './layout-plan.ts';
@@ -41,6 +42,59 @@ const approve = (root: string, nets: NetSource = NO_NETS) => { writeFileSync(ima
 const boardOf = (nets: string[], routable = nets): NetSource => () => ({ nets: new Set(nets), routable: new Set(routable) });
 const events = (): { log: Row[]; emit: (kind: string, data?: Row) => void } => { const log: Row[] = []; return { log, emit: (kind, data) => { log.push({ kind, ...data }); } }; };
 
+const SHAPED = '(kicad_pcb (general (thickness 1.6)) (layers (0 "F.Cu" signal)) (setup (stackup (layer "core" (thickness 1.5)))) (footprint "R" (layer "F.Cu") (at 1 1) (property "Reference" "R1")) (gr_line (start 0 0) (end 50 0) (layer "Edge.Cuts") (uuid "1")))';
+async function shaped(t: TestContext) {
+  const f = fixture(t), pcb = join(f.folder, 'X.kicad_pcb');
+  writeFileSync(pcb, SHAPED); reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  await approve(f.root);
+  const write = (path: string, text: string) => { writeFileSync(path, text); reseal(f.root, 'X', { tool: 'fixture', run_id: null }); };
+  return { ...f, pcb, write };
+}
+
+test('the approval binds the board shape: a stackup, outline or layer change makes it stale', async t => {
+  for (const [from, to] of [['(thickness 1.5)', '(thickness 1.2)'], ['(end 50 0)', '(end 60 0)'], ['(0 "F.Cu" signal)', '(0 "F.Cu" signal) (1 "In1.Cu" signal)']]) {
+    const f = await shaped(t);
+    assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved');
+    assert.match(String(layoutPlanStatus(f.root, 'X').approval?.board_shape_sha256), /^[0-9a-f]{64}$/);
+    f.write(f.pcb, SHAPED.replace(from!, to!));
+    const status = layoutPlanStatus(f.root, 'X');
+    assert.equal(status.state, 'stale');
+    assert.deepEqual(status.stale, ['the board shape or the design rules changed since the approval']);
+    assert.equal(layoutGate(f.root, 'X', () => {})?.code, 'layout_plan_stale');
+  }
+});
+
+test('the approval binds the design rules file', async t => {
+  const f = await shaped(t);
+  f.write(join(f.folder, 'X.kicad_dru'), '(version 1)');
+  assert.equal(layoutPlanStatus(f.root, 'X').state, 'stale');
+});
+
+test('placement and copper do not make the approval stale', async t => {
+  const f = await shaped(t);
+  f.write(f.pcb, SHAPED.replace('(at 1 1)', '(at 9 9)').replace('(gr_line', '(segment (start 1 1) (end 2 2) (width 0.2) (layer "F.Cu") (net 1)) (via (at 3 3) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1)) (gr_line'));
+  assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved');
+});
+
+test('an approval from before the board shape binding is stale, not invalid', async t => {
+  const f = await shaped(t);
+  const plan = JSON.parse(readFileSync(f.path, 'utf8')) as { approval: Row };
+  delete plan.approval.board_shape_sha256;
+  writeFileSync(f.path, JSON.stringify(plan));
+  const status = layoutPlanStatus(f.root, 'X');
+  assert.equal(status.state, 'stale');
+  assert.deepEqual(status.stale, ['the approval does not bind the board shape and the design rules']);
+});
+
+test('a board shape that cannot be read makes the approval stale and stops a new approval', async t => {
+  const f = await shaped(t);
+  f.write(f.pcb, 'not a board');
+  const status = layoutPlanStatus(f.root, 'X');
+  assert.equal(status.state, 'stale');
+  assert.match(status.stale[0]!, /board shape cannot be read/);
+  await assert.rejects(approve(f.root), /native PCB/);
+});
+
 test('a plan without approval is not approved, and approval records the person, the reason and both hashes', async t => {
   const f = fixture(t);
   assert.equal(layoutPlanStatus(f.root, 'X').state, 'unapproved');
@@ -50,7 +104,7 @@ test('a plan without approval is not approved, and approval records the person, 
   assert.equal(layoutGate(f.root, 'X', () => {}), null);
   const saved = JSON.parse(readFileSync(f.path, 'utf8')) as { approval: Row; intents: unknown };
   assert.deepEqual(saved.approval, { by: 'Ana', reason: 'reviewed the edge intents', rules_sha256: sha256File(f.rules), route_plan_sha256: sha256File(f.route),
-    schematic_sha256: schematicSha256(f.root, 'X'), image: COPY_PNG, image_sha256: sha256File(imageOf(f.root)) });
+    schematic_sha256: schematicSha256(f.root, 'X'), board_shape_sha256: boardShapeSha256(f.root, 'X'), image: COPY_PNG, image_sha256: sha256File(imageOf(f.root)) });
   assert.equal(layoutPlanStatus(f.root, 'X').image, COPY_PNG);
   assert.equal(sha256File(join(f.root, COPY_PNG)), sha256File(imageOf(f.root)), 'the board folder holds a copy of the image');
   assert.deepEqual(saved.intents, INTENTS);
@@ -230,7 +284,7 @@ test('the route plan is checked with the route plan schema and stays inside the 
 
 test('a malformed approval is invalid, not approved', t => {
   const f = fixture(t, { approval: { by: 'Ana', reason: 'ok', rules_sha256: 'x' } });
-  assert.deepEqual(layoutPlanStatus(f.root, 'X').problems, ['approval needs by, reason, rules_sha256, route_plan_sha256, schematic_sha256, image and image_sha256']);
+  assert.deepEqual(layoutPlanStatus(f.root, 'X').problems, ['approval needs by, reason, rules_sha256, route_plan_sha256, schematic_sha256, board_shape_sha256, image and image_sha256']);
 });
 
 test('approval needs a person and a reason, and a sealed board', async t => {

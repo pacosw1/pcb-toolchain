@@ -31,7 +31,7 @@ function normalized(text: string): string {
   }
 }
 
-function clean(value: SExpr): SExpr {
+export function clean(value: SExpr): SExpr {
   if (!Array.isArray(value)) return value;
   if (value.length && GEOMETRY.has(value[0] as string)) {
     return [value[0]!, ...value.slice(1).map(item => (typeof item === 'string' ? normalized(item) : clean(item)))];
