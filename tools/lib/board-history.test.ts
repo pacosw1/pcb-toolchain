@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { ORDERED_HASH, orderFixture, releaseFixtureBoard } from './cad-seal-fixture.ts';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,8 +10,9 @@ import { boardHistory, historyText } from './board-history.ts';
 import { reseal } from './cad-seal.ts';
 import { changePath, recordChange } from './change-log.ts';
 import { sha256File } from './json-file.ts';
-import { releaseOrdersPath } from './release-order.mjs';
+import { releaseOrders, releaseOrdersPath } from './release-order.mjs';
 import { approveCandidate, orderCandidate, releaseRun } from './release-run-fixture.ts';
+import { loadTransitions } from './transitions.ts';
 
 const CLI = fileURLToPath(new URL('../pcb-state.ts', import.meta.url));
 const at = (text: string) => () => new Date(text);
@@ -40,10 +42,11 @@ test('the log joins the change log, the seal log, the layout log and the runs in
   f.run('run-b', '2026-11-06T12:00:00+00:00');
   reseal(f.root, 'X', { tool: 'pcb-adopt', run_id: 'run-b' });
   recordChange(f.root, 'X', { kind: 'baseline', reason: 'start', by: 'Ana', refs: [], now: at('2026-11-06T13:00:00Z') });
-  recordChange(f.root, 'X', { kind: 'fab_defect', reason: 'short on U3', by: 'Ana', refs: ['U3'], now: at('2026-11-06T15:00:00Z') });
+  orderFixture(f.root, 'X');
+  recordChange(f.root, 'X', { kind: 'fab_defect', reason: 'short on U3', by: 'Ana', refs: [ORDERED_HASH], now: at('2026-11-06T15:00:00Z') });
   writeFileSync(join(f.root, '.gate/layout-plan/X.jsonl'), JSON.stringify({ time: '2026-11-06T14:00:00.000Z', type: 'layout_plan.approved', board: 'X', by: 'Ana', reason: 'reviewed', rules_sha256: 'r', route_plan_sha256: 'p', schematic_sha256: 'c', image: 'i.png', image_sha256: 'h' }) + '\n');
   const history = boardHistory(f.root, 'X', f.base);
-  assert.deepEqual(history.entries.map(entry => [entry.source, entry.id]), [['run', 'run-b'], ['seal', 'seal-1'], ['change', 'c-0001'], ['layout', 'layout-1'], ['change', 'c-0002']]);
+  assert.deepEqual(history.entries.filter(entry => entry.source !== 'release').map(entry => [entry.source, entry.id]), [['run', 'run-b'], ['seal', 'seal-1'], ['change', 'c-0001'], ['layout', 'layout-1'], ['change', 'c-0002']]);
   assert.deepEqual(history.problems, []);
 });
 
@@ -52,7 +55,8 @@ test('each entry has its inputs and outputs', t => {
   f.run('run-a', '2026-11-06T10:00:00+00:00');
   reseal(f.root, 'X', { tool: 'fixture', run_id: null });
   recordChange(f.root, 'X', { kind: 'baseline', reason: 'start', by: 'Ana', refs: [] });
-  recordChange(f.root, 'X', { kind: 'fab_defect', reason: 'short', by: 'Ana', refs: ['U3'] });
+  orderFixture(f.root, 'X');
+  recordChange(f.root, 'X', { kind: 'fab_defect', reason: 'short', by: 'Ana', refs: [ORDERED_HASH] });
   const { entries } = boardHistory(f.root, 'X', f.base);
   const run = entries.find(entry => entry.id === 'run-a')!, seal = entries.find(entry => entry.source === 'seal')!, change = entries.find(entry => entry.id === 'c-0002')!, base = entries.find(entry => entry.id === 'c-0001')!;
   assert.equal(run.sealed, true);
@@ -61,7 +65,7 @@ test('each entry has its inputs and outputs', t => {
   assert.deepEqual(run.outputs.map(item => item.path), [join(f.base, 'run-a/run.json'), join(f.base, 'run-a/images/top.svg')]);
   assert.equal(seal.inputs[0]!.sha256, null);
   assert.ok(seal.outputs[0]!.sha256);
-  assert.deepEqual(change.inputs, [{ name: 'U3' }]);
+  assert.deepEqual(change.inputs, [{ name: ORDERED_HASH }]);
   assert.equal(base.outputs.length, 3);
   assert.equal(change.by, 'Ana');
 });
@@ -137,10 +141,13 @@ test('pcb history prints JSON and text', t => {
 });
 
 function released(t: TestContext) {
-  const f = fixture(t), candidate = releaseRun(f.root, f.base, 'run-rel', '2026-11-06T10:00:00+00:00');
+  const f = fixture(t);
+  releaseFixtureBoard(f.root, 'X');
+  const candidate = releaseRun(f.root, f.base, 'run-rel', '2026-11-06T10:00:00+00:00');
   approveCandidate(f.root, candidate);
   orderCandidate(f.root, candidate, 'JLC-1');
   orderCandidate(f.root, candidate, 'JLC-2');
+  for (const path of [changePath(f.root, 'X'), join(f.folder, 'cad-seal.json'), join(f.root, '.gate/cad-seal')]) rmSync(path, { recursive: true });   // the machine let the records in; the tests read only the records
   return f;
 }
 const releaseRows = (f: { root: string; base: string }) => boardHistory(f.root, 'X', f.base).entries.filter(entry => entry.source === 'release');
@@ -187,4 +194,24 @@ test('a damaged release record is a problem and the other sources stay', t => {
   const history = boardHistory(f.root, 'X', f.base);
   assert.equal(history.problems.length, 2);
   assert.deepEqual(history.entries.map(entry => entry.id), ['run-rel']);
+});
+
+test('each entry names the stages it belongs to, and the table has every stage', t => {
+  const f = released(t);
+  f.run('run-a', '2026-11-06T10:00:00+00:00');
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  recordChange(f.root, 'X', { kind: 'baseline', reason: 'start', by: 'Ana', refs: [] });
+  recordChange(f.root, 'X', { kind: 'fab_defect', reason: 'short', by: 'Ana', refs: [releaseOrders(f.root, 'X')[0]!.candidate_sha256] });   // a defect names the release of a recorded order
+  writeFileSync(join(f.root, '.gate/layout-plan/X.jsonl'), JSON.stringify({ time: '2026-11-06T14:00:00.000Z', type: 'layout_plan.approved', board: 'X', by: 'Ana', reason: 'ok', rules_sha256: 'r', route_plan_sha256: 'p', schematic_sha256: 'c', image: 'i.png', image_sha256: 'h' }) + '\n');
+  const { entries } = boardHistory(f.root, 'X', f.base), stages = (id: string) => entries.find(entry => entry.id === id)!.stages;
+  assert.deepEqual(stages('run-a'), ['A14']);
+  assert.deepEqual(stages('seal-1'), ['A4', 'B4']);
+  assert.deepEqual(stages('c-0001'), []);
+  assert.deepEqual(stages('c-0002'), ['A4', 'A7', 'A14', 'A21']);
+  assert.deepEqual(stages('layout-1'), ['A8']);
+  assert.deepEqual(stages('release-approval'), ['A22']);
+  assert.deepEqual(stages('order-JLC-1'), ['A24']);
+  assert.deepEqual(stages('run-rel'), ['A21']);
+  const ids = new Set(loadTransitions().states.map(state => state.id));
+  for (const entry of entries) for (const stage of entry.stages) assert.ok(ids.has(stage as never), `${entry.id}: ${stage}`);
 });

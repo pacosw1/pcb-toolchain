@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { reseal } from './cad-seal.ts';
+import { reseal, sealStatus } from './cad-seal.ts';
+import { ORDERED_HASH, orderFixture } from './cad-seal-fixture.ts';
 import { changeBlock, changePath, changeStatus, groupHashes, readChanges, recordChange } from './change-log.ts';
 import { sha256Text } from './fingerprint.ts';
 import { gateInputs } from './gate-inputs.mjs';
+import { sha256File } from './json-file.ts';
 import { layoutAdmission } from './pcb-candidate-screens.ts';
 import { layoutGate, layoutPlanPath, layoutPlanStatus } from './layout-plan.ts';
 import { approveFixture } from './layout-plan-fixture.ts';
@@ -29,14 +31,57 @@ function fixture(t: TestContext) {
   writeFileSync(join(folder, 'X.kicad_pro'), '{}');
   reseal(root, 'X', { tool: 'fixture', run_id: null });
   const write = (name: string, text: string) => { writeFileSync(join(folder, name), text); reseal(root, 'X', { tool: 'fixture', run_id: null }); };
-  const record = (kind: string, reason = 'a reason', by = 'Ana') => recordChange(root, 'X', { kind, reason, by, refs: [], now: NOW });
+  orderFixture(root, 'X');
+  const record = (kind: string, reason = 'a reason', by = 'Ana') => recordChange(root, 'X', { kind, reason, by, refs: kind === 'fab_defect' ? [ORDERED_HASH] : [], now: NOW });
   return { root, folder, write, record, log: changePath(root, 'X') };
 }
 
-test('a board with no log has not started, and the status says so', t => {
+test('a sealed board with no log has not started, and the refusal gives the command', t => {
   const f = fixture(t), status = changeStatus(f.root, 'X');
   assert.equal(status.state, 'not_started');
+  const block = changeBlock(f.root, 'X');
+  assert.equal(block?.code, 'change_log_missing');
+  assert.match(block!.message, /tools\/pcb change X --kind baseline --reason TEXT --by NAME/);
+  assert.equal(layoutGate(f.root, 'X', () => {})?.code, 'change_log_missing');
+});
+
+test('a board with no seal has no log to ask for, and a run workspace never has', t => {
+  const f = fixture(t);
+  rmSync(join(f.folder, 'cad-seal.json'));
   assert.equal(changeBlock(f.root, 'X'), null);
+  const workspace = join(f.root, '.gate/work'), copy = join(workspace, 'hardware-design/boards/X');
+  mkdirSync(copy, { recursive: true });
+  for (const name of ['gate.json', 'X.kicad_pcb', 'X.kicad_sch', 'X.kicad_pro']) writeFileSync(join(copy, name), readFileSync(join(f.folder, name)));
+  assert.equal(changeBlock(workspace, 'X'), null);
+});
+
+test('the seal binds the log: a deleted or edited log fails closed, the last line too', t => {
+  const f = fixture(t); f.record('baseline');
+  const text = readFileSync(f.log, 'utf8'), line = JSON.parse(text.trim()) as { reason: string };
+  line.reason = 'forged';
+  writeFileSync(f.log, JSON.stringify(line) + '\n');
+  assert.equal(changeStatus(f.root, 'X').state, 'invalid');
+  assert.equal(changeBlock(f.root, 'X')?.code, 'change_log_invalid');
+  rmSync(f.log);
+  assert.equal(changeStatus(f.root, 'X').state, 'invalid');
+  assert.throws(() => f.record('baseline'), /not valid/);
+  writeFileSync(f.log, text);
+  assert.equal(changeStatus(f.root, 'X').state, 'recorded');
+});
+
+test('a seal write keeps the binding, so an accepted edit does not hide a deleted log', t => {
+  const f = fixture(t); f.record('baseline');
+  rmSync(f.log);
+  reseal(f.root, 'X', { tool: 'seal-accept', run_id: null }, 'person');
+  assert.equal(changeStatus(f.root, 'X').state, 'invalid');
+});
+
+test('each event moves the binding to the new log head', t => {
+  const f = fixture(t); f.record('baseline');
+  f.write('X.kicad_pcb', BOARD.replace('(thickness 1.5)', '(thickness 1.2)'));
+  f.record('stackup_change', 'thinner core');
+  assert.equal(changeStatus(f.root, 'X').state, 'recorded');
+  assert.equal(JSON.parse(readFileSync(join(f.folder, 'cad-seal.json'), 'utf8')).change_log_sha256, sha256File(f.log));
 });
 
 test('the table groups and the hashes have the same names', t => {
@@ -49,7 +94,8 @@ test('the baseline records each group, starts the chain and can be first only', 
   assert.equal(event.id, 'c-0001');
   assert.equal(event.prev_sha256, null);
   assert.equal(event.at, '2026-11-06T10:00:00.000Z');
-  assert.deepEqual(event.groups.schematic, { before: null, after: hashes.schematic });
+  assert.deepEqual({ ...event.groups.schematic, facts: null }, { before: null, after: hashes.schematic, facts: null });
+  assert.deepEqual(Object.keys(event.groups.schematic!.facts), ['values', 'footprints', 'wiring']);
   assert.equal(changeStatus(f.root, 'X').state, 'recorded');
   assert.throws(() => f.record('baseline'), /already has a baseline/);
 });
@@ -68,7 +114,7 @@ test('a kind of a group needs a change in that group and records before and afte
   const event = f.record('stackup_change', 'thinner core');
   assert.equal(event.id, 'c-0002');
   assert.deepEqual(Object.keys(event.groups), ['board_shape']);
-  assert.deepEqual(event.groups.board_shape, { before: before.board_shape, after: groupHashes(f.root, 'X').board_shape });
+  assert.deepEqual({ ...event.groups.board_shape, facts: null }, { before: before.board_shape, after: groupHashes(f.root, 'X').board_shape, facts: null });
   const first = readFileSync(f.log, 'utf8').split('\n')[0]!;
   assert.equal(event.prev_sha256, sha256Text(first));
   assert.equal(changeStatus(f.root, 'X').state, 'recorded');
@@ -119,6 +165,107 @@ test('each group of files has its own widest row', t => {
   if (status.state === 'unrecorded') assert.deepEqual(status.groups.map(row => [row.group, row.kind.id]), [['schematic', 'part_swap_new_footprint'], ['rules', 'rule_change']]);
 });
 
+test('a rules file that gate.json names is in the rules group', t => {
+  const f = fixture(t);
+  writeFileSync(join(f.folder, 'erc-rules.json'), '{"a":1}');
+  f.write('gate.json', JSON.stringify({ project: 'X', checks: { erc: 'erc-rules.json' } }));
+  f.record('baseline');
+  f.write('erc-rules.json', '{"a":2}');
+  assert.equal(changeBlock(f.root, 'X')?.code, 'change_unrecorded');
+  assert.match(changeBlock(f.root, 'X')!.message, /rules: /);
+});
+
+test('a JSON file that no check names is no rule', t => {
+  const f = fixture(t); f.record('baseline');
+  f.write('my-custom-rules.json', '{"a":2}');
+  assert.equal(changeBlock(f.root, 'X'), null);
+});
+
+const PARTS = '(kicad_sch (symbol (property "Value" "1k") (property "Footprint" "R_0402") (pin "1")))';
+
+test('a kind that cannot explain the diff is refused, and the message names one that can', t => {
+  const f = fixture(t);
+  f.write('X.kicad_sch', PARTS); f.record('baseline');
+  f.write('X.kicad_sch', PARTS.replace('1k', '2k'));
+  assert.throws(() => f.record('net_change', 'false'), /net_change cannot explain the change of values in group schematic\. Use part_swap_new_footprint or part_swap_same_footprint or part_value_change/);
+  f.record('part_value_change', 'true');
+  f.write('X.kicad_sch', PARTS.replace('1k', '2k').replace('(pin "1")', '(pin "2")'));
+  assert.throws(() => f.record('part_value_change', 'false'), /cannot explain the change of wiring/);
+  f.record('net_change', 'true');
+  f.write('X.kicad_sch', PARTS.replace('1k', '2k').replace('(pin "1")', '(pin "2")').replace('R_0402', 'R_0603'));
+  assert.throws(() => f.record('part_swap_same_footprint', 'false'), /cannot explain the change of footprints/);
+  f.record('part_swap_new_footprint', 'true');
+  assert.equal(changeBlock(f.root, 'X'), null);
+});
+
+test('a board shape kind must fit the shape diff', t => {
+  const f = fixture(t); f.record('baseline');
+  f.write('X.kicad_pcb', BOARD.replace('(thickness 1.5)', '(thickness 1.2)'));
+  assert.throws(() => f.record('outline_change', 'false'), /outline_change cannot explain the change of stackup/);
+  f.record('stackup_change', 'true');
+  f.write('X.kicad_pcb', BOARD.replace('(thickness 1.5)', '(thickness 1.2)').replace('(end 50 0)', '(end 60 0)'));
+  assert.throws(() => f.record('design_rule_change', 'false'), /cannot explain the change of outline/);
+  f.record('outline_change', 'true');
+});
+
+/** A person moves the CAD to cad/ and points gate.json at it. */
+function moveCad(folder: string): void {
+  mkdirSync(join(folder, 'cad'));
+  for (const extension of ['kicad_pcb', 'kicad_sch', 'kicad_pro']) renameSync(join(folder, `X.${extension}`), join(folder, 'cad', `X.${extension}`));
+  writeFileSync(join(folder, 'gate.json'), JSON.stringify({ project: 'cad/X', checks: {} }));
+}
+
+test('cad_moved with the same bytes records each path, reseals and names the person', t => {
+  const f = fixture(t);
+  f.record('baseline');
+  const before = groupHashes(f.root, 'X');
+  moveCad(f.folder);
+  assert.equal(changeStatus(f.root, 'X').state, 'unrecorded');
+  const event = f.record('cad_moved');
+  const paths = (extension: string) => `hardware-design/boards/X/X.${extension} -> hardware-design/boards/X/cad/X.${extension}`;
+  assert.deepEqual([...event.refs].sort(), ['kicad_pcb', 'kicad_pro', 'kicad_sch'].map(paths));
+  assert.equal(event.by, 'Ana');
+  assert.deepEqual(Object.keys(event.groups).sort(), ['rules', 'schematic']);
+  assert.equal(event.groups.schematic!.before, before.schematic);
+  assert.equal(changeStatus(f.root, 'X').state, 'recorded');
+  assert.equal(sealStatus(f.root, 'X').state, 'sealed');
+  assert.equal(groupHashes(f.root, 'X').board_shape, before.board_shape);
+});
+
+test('cad_moved refuses one changed byte and writes nothing', t => {
+  const f = fixture(t);
+  f.record('baseline');
+  moveCad(f.folder);
+  writeFileSync(join(f.folder, 'cad/X.kicad_sch'), '(kicad_sch )');
+  const log = readFileSync(f.log, 'utf8'), seal = readFileSync(join(f.folder, 'cad-seal.json'), 'utf8');
+  assert.throws(() => f.record('cad_moved'), /cad_moved.*X\.kicad_sch/s);
+  assert.equal(readFileSync(f.log, 'utf8'), log);
+  assert.equal(readFileSync(join(f.folder, 'cad-seal.json'), 'utf8'), seal);
+});
+
+test('cad_moved refuses a gate.json that changed more than the project path', t => {
+  const f = fixture(t);
+  f.record('baseline');
+  moveCad(f.folder);
+  writeFileSync(join(f.folder, 'gate.json'), JSON.stringify({ project: 'cad/X', checks: {}, extra: 1 }));
+  assert.throws(() => f.record('cad_moved'), /cad_moved.*gate\.json/s);
+});
+
+test('cad_moved needs a move, takes no refs, and hides no unrecorded change', t => {
+  const f = fixture(t);
+  f.record('baseline');
+  assert.throws(() => f.record('cad_moved'), /no file moved/);
+  moveCad(f.folder);
+  assert.throws(() => recordChange(f.root, 'X', { kind: 'cad_moved', reason: 'a move', by: 'Ana', refs: ['a'], now: NOW }), /cad_moved takes no --refs/);
+  f.record('cad_moved');
+  writeFileSync(join(f.folder, 'cad/X.kicad_sch'), '(kicad_sch (edit))');
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  mkdirSync(join(f.folder, 'next'));
+  for (const extension of ['kicad_pcb', 'kicad_sch', 'kicad_pro']) renameSync(join(f.folder, `cad/X.${extension}`), join(f.folder, `next/X.${extension}`));
+  writeFileSync(join(f.folder, 'gate.json'), JSON.stringify({ project: 'next/X', checks: {} }));
+  assert.throws(() => f.record('cad_moved'), /no event in schematic/);
+});
+
 test('placement and copper are not an unrecorded change', t => {
   const f = fixture(t); f.record('baseline');
   f.write('X.kicad_pcb', BOARD.replace('(at 1 1)', '(at 9 9)').replace('(gr_line', '(segment (start 1 1) (end 2 2) (width 0.2) (layer "F.Cu") (net 1)) (gr_line'));
@@ -135,7 +282,7 @@ test('a hand edit of the log breaks the chain and fails closed', t => {
     ['unknown kind', text => text.replace('fab_defect', 'nothing')],
   ];
   for (const [name, edit] of edits) {
-    const f = fixture(t); f.record('baseline'); f.record('fab_defect'); f.record('out_of_stock');
+    const f = fixture(t); f.record('baseline'); f.record('fab_defect'); f.record('fab_defect');
     writeFileSync(f.log, edit(readFileSync(f.log, 'utf8')));
     const status = changeStatus(f.root, 'X');
     assert.equal(status.state, 'invalid', name);
@@ -156,8 +303,8 @@ test('an event never makes evidence valid', async t => {
   writeFileSync(join(f.folder, 'SPEC.md'), 'source');
   f.write('placement-constraints.json', JSON.stringify({ schema: 'iot-lab.placement-constraints.v1', rules: [{ id: 'd', kind: 'part_distance', source: { path: 'hardware-design/boards/X/SPEC.md', sha256: 'x', page: 1 } }] }));
   writeFileSync(layoutPlanPath(f.root, 'X'), JSON.stringify({ schema: 'iot-lab.layout-plan.v1', intents: [{ id: 'a', statement: 'b', rule_ids: ['d'] }], route_plan: 'hardware-design/boards/X/route.json', approval: null }));
-  await approveFixture(f.root, 'X');
   f.record('baseline');
+  await approveFixture(f.root, 'X');
   f.write('X.kicad_pcb', BOARD.replace('(end 50 0)', '(end 60 0)'));
   assert.equal(layoutPlanStatus(f.root, 'X').state, 'stale');
   f.record('outline_change', 'wider board');
@@ -205,9 +352,9 @@ test('pcb change appends one line and a refused request exits with the cause', t
   const refused = run('--kind', 'nothing', '--reason', 'r', '--by', 'Ana');
   assert.notEqual(refused.status, 0);
   assert.match(refused.stderr, /unknown change kind/);
-  const text = run('--kind', 'fab_defect', '--reason', 'short on U3', '--by', 'Ana', '--refs', 'U3,U4');
+  const text = run('--kind', 'fab_defect', '--reason', 'short on U3', '--by', 'Ana', '--refs', ORDERED_HASH);
   assert.equal(text.status, 0, text.stderr);
   assert.match(text.stdout, /c-0002 fab_defect/);
-  assert.deepEqual(readChanges(f.root, 'X')[1]!.refs, ['U3', 'U4']);
+  assert.deepEqual(readChanges(f.root, 'X')[1]!.refs, [ORDERED_HASH]);
   assert.equal(run('--reason', 'r', '--by', 'Ana').status === 0, false);
 });

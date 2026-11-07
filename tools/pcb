@@ -2,22 +2,24 @@
 # Repository-local dispatcher: tools/pcb [--project DIR] COMMAND ...
 set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+# Each call runs through pcb-call.ts, which records it in .gate/calls.jsonl and passes the exit code through.
+call() { script=$1; shift; exec node --experimental-strip-types --no-warnings "$here/pcb-call.ts" "$script" "$@"; }
 case "${1:-}" in
   --project) command=${3:-} ;;
   --project=*) command=${2:-} ;;
   *) command=${1:-} ;;
 esac
 case "$command" in
-  loop) exec node --experimental-strip-types --no-warnings "$here/pcb-loop.ts" "$@" ;;
-  list|context|next|status|events|explain|cancel|note|benchmark|cycle|adopt|seal) exec node --experimental-strip-types --no-warnings "$here/pcb-observe.ts" "$@" ;;
-  bench) exec node --experimental-strip-types --no-warnings "$here/bench.ts" "$@" ;;
-  constraints) exec node --experimental-strip-types --no-warnings "$here/pcb-constraints.ts" "$@" ;;
-  unfreeze) exec node --experimental-strip-types --no-warnings "$here/pcb-unfreeze.ts" "$@" ;;
-  release-approval|release-order) exec node --experimental-strip-types --no-warnings "$here/pcb-release-record.ts" "$@" ;;
-  layout) exec node --experimental-strip-types --no-warnings "$here/pcb-layout.ts" "$@" ;;
-  place) exec node --experimental-strip-types --no-warnings "$here/pcb-place.ts" "$@" ;;
-  change|state|history) exec node --experimental-strip-types --no-warnings "$here/pcb-state.ts" "$@" ;;
-  trial) exec node --experimental-strip-types --no-warnings "$here/agent-trial.ts" "$@" ;;
-  project-check) exec node --experimental-strip-types --no-warnings "$here/pcb-project-check.ts" "$@" ;;
+  loop) call pcb-loop.ts "$@" ;;
+  list|context|next|status|events|explain|cancel|note|benchmark|cycle|adopt|seal) call pcb-observe.ts "$@" ;;
+  bench) call bench.ts "$@" ;;
+  constraints) call pcb-constraints.ts "$@" ;;
+  unfreeze) call pcb-unfreeze.ts "$@" ;;
+  release-approval|release-order) call pcb-release-record.ts "$@" ;;
+  layout) call pcb-layout.ts "$@" ;;
+  place) call pcb-place.ts "$@" ;;
+  change|state|history) call pcb-state.ts "$@" ;;
+  trial) call agent-trial.ts "$@" ;;
+  project-check) call pcb-project-check.ts "$@" ;;
 esac
-exec node --experimental-strip-types --no-warnings "$here/pcb-check.ts" "$@"
+call pcb-check.ts "$@"

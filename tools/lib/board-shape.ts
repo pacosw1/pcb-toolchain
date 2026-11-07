@@ -17,7 +17,7 @@ const shapeOf = (form: SList): SExpr => clean(form.filter(item => !(Array.isArra
 const onEdge = (form: SList): boolean => { const layer = field(form, 'layer'); return layer?.[0] === 'Edge.Cuts'; };
 
 /** The shape forms of a board text. A text that is not one kicad_pcb form is an error. */
-export function boardShape(text: string): unknown {
+export function boardShape(text: string): Record<'layers' | 'stackup' | 'thickness' | 'outline', unknown> {
   const roots = forms(text), top = roots[0];
   if (roots.length !== 1 || !Array.isArray(top) || top[0] !== 'kicad_pcb') throw new PyError('ValueError', 'invalid native PCB root');
   const rows = top.slice(1).filter((form): form is SList => Array.isArray(form));
@@ -25,6 +25,12 @@ export function boardShape(text: string): unknown {
   const setup = one('setup'), general = one('general');
   const outline = rows.filter(form => OUTLINE.has(form[0] as string) && onEdge(form)).map(shapeOf).sort((a, b) => compare(jsonCanonical(a), jsonCanonical(b)));
   return { layers: one('layers'), stackup: setup ? field(setup, 'stackup') ?? null : null, thickness: general ? field(general, 'thickness') ?? null : null, outline };
+}
+
+/** One hash for each fact of the board_shape group, so a kind can be checked against the diff. */
+export function boardFacts(root: string, board: string): Record<string, string> {
+  const { project } = boardConfig(root, board), dru = `${project}.kicad_dru`, shape = boardShape(readFileSync(`${project}.kicad_pcb`, 'utf8'));
+  return { stackup: sha256Text(JSON.stringify([shape.layers, shape.stackup, shape.thickness])), outline: sha256Text(JSON.stringify(shape.outline)), design_rules: existsSync(dru) ? sha256File(dru) : 'none' };
 }
 
 /** One hash of the board shape and the design rules of BOARD. A missing .kicad_dru is a value, and a board that cannot be read is an error. */

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -159,6 +160,29 @@ test('startup gets ten seconds, with or without a lock', needsBinary, () => {
   put('worker.lock', '');
   assert.equal(status(folder, 1005).get('status'), 'starting');
   assert.equal(status(folder, 1011).get('status'), 'error');
+});
+
+test('a live supervisor that has no lock yet is still starting after the budget, up to the hard bound', needsBinary, async () => {
+  // Under load the OS can hold a new process before its first instruction for more than ten seconds.
+  state({ status: 'starting', updated_unix: 1000.0 });
+  // The argv of a supervisor before its lock. Not `sh -c sleep`: sh replaces itself with sleep and the argv goes.
+  const supervisor = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)', 'lock', 'supervise', join(folder, 'worker.lock')], { stdio: 'ignore' });
+  await new Promise(resolve => supervisor.once('spawn', resolve));
+  try {
+    put('supervisor.pid', String(supervisor.pid));
+    assert.equal(status(folder, 1011).get('status'), 'starting');
+    assert.equal(status(folder, 1119).get('status'), 'starting');
+    assert.equal(status(folder, 1121).get('cause'), 'supervisor did not take its lock in 120 s; inspect worker.log');
+  } finally { supervisor.kill(); }
+});
+
+test('a dead or reused supervisor pid does not hold a run in starting', needsBinary, () => {
+  state({ status: 'starting', updated_unix: 1000.0 });
+  put('supervisor.pid', String(spawnSync('true').pid));   // exited and reaped: no process has this pid now
+  assert.equal(status(folder, 1011).get('cause'), 'supervisor did not start; inspect worker.log');
+  put('supervisor.pid', String(process.pid));   // a live process that is not the supervisor of this run
+  assert.equal(status(folder, 1011).get('cause'), 'supervisor did not start; inspect worker.log');
+  assert.equal(status(folder, 1005).get('status'), 'starting');
 });
 
 test('a terminal run stays as recorded', () => {

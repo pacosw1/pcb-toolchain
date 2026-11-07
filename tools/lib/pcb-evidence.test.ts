@@ -80,11 +80,18 @@ test('verify refuses a receipt with no binding, changed evidence or an escaping 
 
 test('verify needs a verdict and confirmed cleanup', () => {
   seal({ status: 'error' });
-  assert.throws(() => verify(folder), /confirmed process cleanup/);
+  assert.throws(() => verify(folder), /run ended with status error/);
   seal({ cleanup: { complete: false } });
   assert.throws(() => verify(folder), /confirmed process cleanup/);
   seal({ cleanup: null });
   assert.throws(() => verify(folder), attributeError);
+});
+
+test('a bad status names its own cause, not the process cleanup', () => {
+  seal({ status: 'error', cause: 'Error: [Errno 2] report.json' });
+  assert.throws(() => verify(folder), (error: Error) => error.message === 'run ended with status error: Error: [Errno 2] report.json');
+  seal({ status: 'error', cause: 'broken', cleanup: { complete: false } });
+  assert.throws(() => verify(folder), /status error: broken; process cleanup is not confirmed/);
 });
 
 const benchmarkRow = (value: object) => JSON.parse(jsonDumps(value)) as { runs: Record<string, any>[]; comparable: boolean; comparison_reason: string };

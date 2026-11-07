@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import { reseal } from './lib/cad-seal.ts';
+import { sealFixtureBoard } from './lib/cad-seal-fixture.ts';
 import { approveFixture } from './lib/layout-plan-fixture.ts';
 import { footprints } from './lib/native-board.ts';
 import { sha256File } from './lib/json-file.ts';
@@ -216,13 +216,13 @@ test('a legal unmoved seed remains a candidate in comparison mode', t => {
 
 test('place stops for a board with no approved layout plan, and continues for an approved or an exempt board', async t => {
   const root = project(t, [['U1', 1, 2, 0]]), folder = join(root, 'hardware-design/boards/X'), log = join(root, '.gate/layout-plan/X.jsonl');
-  reseal(root, 'X', { tool: 'fixture', run_id: null });
+  sealFixtureBoard(root, 'X');
   assert.throws(() => admitPlace(root, 'X'), /X has no layout plan[^]*tools\/pcb layout X --approve/);
   writeFileSync(join(folder, 'SPEC.md'), 'limit');
   writeFileSync(join(folder, 'route.json'), JSON.stringify({ schema: 'iot-lab.route.v1', backend: 'tracemaker', layers: ['F.Cu', 'B.Cu'], stages: [{ name: 'main' }] }));
   writeFileSync(join(folder, 'placement-constraints.json'), JSON.stringify({ schema: 'iot-lab.engineering-constraints.v1', rules: [{ id: 'near', kind: 'part_distance', source: { path: 'hardware-design/boards/X/SPEC.md', sha256: sha256File(join(folder, 'SPEC.md')), page: 1 } }] }));
   writeFileSync(join(folder, 'layout-plan.json'), JSON.stringify({ schema: 'iot-lab.layout-plan.v1', intents: [{ id: 'a', statement: 'U1 near the edge', rule_ids: ['near'] }], route_plan: 'hardware-design/boards/X/route.json', approval: null }));
-  reseal(root, 'X', { tool: 'fixture', run_id: null });
+  sealFixtureBoard(root, 'X');
   assert.throws(() => admitPlace(root, 'X'), /not approved/);
   await approveFixture(root, 'X');
   admitPlace(root, 'X');

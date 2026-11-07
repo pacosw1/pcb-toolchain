@@ -85,9 +85,10 @@ test('the unfreeze record is no gate input', t => {
 test('a sealed write and an accepted seal on a frozen board are refused and change nothing', async t => {
   const p = project(t);
   let ran = false;
+  const before = readFileSync(p.pcb, 'utf8');
   assert.throws(() => sealedWrite(p.pcb, writer, () => { ran = true; writeFileSync(p.pcb, 'changed'); }), /X is frozen/);
   assert.equal(ran, false);
-  assert.equal(readFileSync(p.pcb, 'utf8'), 'fixture kicad_pcb');
+  assert.equal(readFileSync(p.pcb, 'utf8'), before);
   await assert.rejects(acceptSeal(p.root, 'X', 'first seal'), /X is frozen/);
   recordUnfreeze(p.root, 'X', { by: 'Ana', reason: 'fix' });
   sealedWrite(p.pcb, writer, () => { ran = true; writeFileSync(p.pcb, 'changed'); });

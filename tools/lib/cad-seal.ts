@@ -4,8 +4,10 @@
 // hardware-design/boards/BOARD/cad-seal.json (committed) holds the sha256 of each sealed file and the last writer. The local
 // log .gate/cad-seal/BOARD.jsonl gets one line per write or accepted edit. Run workspaces and candidate copies (a .gate/ segment
 // in the root path) are not canonical and are never sealed.
+// The record also holds the sha256 of the change log (lib/change-log.ts). Only `pcb change` moves that hash: no seal write hides a deleted or edited log.
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { assertCommand } from './board-machine.ts';
 import { assertWritable } from './board-freeze.ts';
 import { sha256Text } from './fingerprint.ts';
 import { gateInputs } from './gate-inputs.mjs';
@@ -22,7 +24,7 @@ const BOARDS = 'hardware-design/boards';
 const LOCK_WAIT_S = 5;
 
 export interface Writer { tool: string; run_id: string | null }
-export interface Seal { schema: string; board: string; files: Record<string, string>; sha256: string; writer: Writer }
+export interface Seal { schema: string; board: string; files: Record<string, string>; sha256: string; writer: Writer; change_log_sha256: string | null }
 export interface SealStatus { board: string; state: 'sealed' | 'changed' | 'missing' | 'not_canonical'; seal: string; sha256: string | null; changed: string[]; added: string[]; removed: string[] }
 
 /** A run workspace or candidate copy has a .gate/ segment in its path. */
@@ -35,7 +37,7 @@ const logPath = (root: string, board: string): string => join(root, '.gate/cad-s
 const posix = (path: string): string => path.split(sep).join('/');
 
 /** The sealed files of BOARD: its gate inputs with a CAD extension or a data name, and the JSON rule files of its checks, inside the root. The list comes from gateInputs, not a second finder. */
-function sealedFiles(root: string, board: string): Record<string, string> {
+export function sealedFiles(root: string, board: string): Record<string, string> {
   boardConfig(root, board);   // a clear error for an unknown board, before gateInputs reads its gate.json
   const inputs = gateInputs(root, board), rules = new Set(inputs.rules.filter(path => path.endsWith('.json')));
   const found = inputs.files.filter(path => (SEALED.test(path) || rules.has(path)) && existsSync(path) && !relative(root, path).startsWith('..'));
@@ -43,8 +45,48 @@ function sealedFiles(root: string, board: string): Record<string, string> {
 }
 
 /** One hash of the sealed schematic files of BOARD (.kicad_sch and .kicad_pro), from the same file list as the seal. */
-export function schematicSha256(root: string, board: string): string {
-  return sha256Text(JSON.stringify(Object.fromEntries(Object.entries(sealedFiles(root, board)).filter(([path]) => /\.kicad_(?:sch|pro)$/.test(path)))));
+export function schematicSha256(root: string, board: string, files: Record<string, string> = sealedFiles(root, board)): string {
+  return sha256Text(JSON.stringify(Object.fromEntries(Object.entries(files).filter(([path]) => /\.kicad_(?:sch|pro)$/.test(path)))));
+}
+
+/** The sealed schematic files of BOARD as full paths. */
+export function schematicFiles(root: string, board: string): string[] {
+  return Object.keys(sealedFiles(root, board)).filter(path => /\.kicad_(?:sch|pro)$/.test(path)).map(path => join(root, path));
+}
+
+/** The sealed JSON files of BOARD with their hashes: the gate data files and each rule file that gate.json names. */
+export function sealedJson(root: string, board: string, files: Record<string, string> = sealedFiles(root, board)): Record<string, string> {
+  return Object.fromEntries(Object.entries(files).filter(([path]) => path.endsWith('.json')));
+}
+
+/** The file hashes that the seal of BOARD holds, or null with no seal. */
+export const heldFiles = (root: string, board: string): Record<string, string> | null => readSeal(root, board)?.files ?? null;
+
+/** gate.json may differ from its sealed bytes in the project path only: with the old path back it must have the sealed hash. */
+function assertGateMoved(root: string, board: string, pairs: string[][], sealed: string): void {
+  const home = `${BOARDS}/${board}`, text = readFileSync(join(root, home, 'gate.json'), 'utf8'), now = String(JSON.parse(text).project);
+  const pair = pairs.find(([, to]) => posix(relative(home, to!)).startsWith(`${now}.kicad_`));
+  const old = pair && posix(relative(home, pair[0]!.replace(/\.kicad_\w+$/, '')));
+  if (!old || sha256Text(text.replace(JSON.stringify(now), JSON.stringify(old))) !== sealed) throw new Error(`cad_moved refuses ${board}: gate.json changed more than the project path`);
+}
+
+/** The moves that the seal and the files now prove, as `old -> new`. Each sealed path that is gone needs one new path with the same bytes. Any other difference is an error. */
+export function movedFiles(root: string, board: string): string[] {
+  const sealed = heldFiles(root, board), now = sealedFiles(root, board);
+  if (!sealed) throw new Error(`${board} has no CAD seal`);
+  const added = Object.keys(now).filter(path => !(path in sealed)), pairs: string[][] = [];
+  for (const path of Object.keys(sealed).filter(row => !(row in now))) {
+    const match = added.findIndex(other => now[other] === sealed[path]);
+    if (match < 0) throw new Error(`cad_moved refuses ${board}: ${path} has no new path with the same bytes. A change of content needs its own kind.`);
+    pairs.push([path, ...added.splice(match, 1)]);
+  }
+  if (added.length) throw new Error(`cad_moved refuses ${board}: ${added.join(', ')} has no sealed file with the same bytes`);
+  if (!pairs.length) throw new Error(`cad_moved refuses ${board}: no file moved since the seal. Run it before seal --accept.`);
+  for (const path of Object.keys(now).filter(row => row in sealed && now[row] !== sealed[row])) {
+    if (path !== `${BOARDS}/${board}/gate.json`) throw new Error(`cad_moved refuses ${board}: ${path} changed in place`);
+    assertGateMoved(root, board, pairs, sealed[path]!);
+  }
+  return pairs.map(([from, to]) => `${from} -> ${to}`);
 }
 
 function readSeal(root: string, board: string): Seal | null {
@@ -83,11 +125,24 @@ export function verifySeal(root: string, board: string): void {
 export function reseal(rootPath: string, board: string, writer: Writer, reason: string | null = null): void {
   const root = resolve(rootPath);
   if (!isCanonicalRoot(root)) return;
-  const before = readSeal(root, board)?.sha256 ?? null, files = sealedFiles(root, board), sha256 = sha256Text(JSON.stringify(files));
-  const record: Seal = { schema: SEAL_SCHEMA, board, files, sha256, writer };
+  const previous = readSeal(root, board), before = previous?.sha256 ?? null, files = sealedFiles(root, board), sha256 = sha256Text(JSON.stringify(files));
+  const record: Seal = { schema: SEAL_SCHEMA, board, files, sha256, writer, change_log_sha256: previous?.change_log_sha256 ?? null };
   durableJson(sealPath(root, board), record);
   mkdirSync(dirname(logPath(root, board)), { recursive: true });
   durableAppend(logPath(root, board), JSON.stringify({ tool: writer.tool, run_id: writer.run_id, before, after: sha256, reason }) + '\n');
+}
+
+/** The hash of the change log that the seal holds: null for no log, undefined for a board with no seal and for a root that is not canonical. */
+export function sealedChangeLog(rootPath: string, board: string): string | null | undefined {
+  const root = resolve(rootPath);
+  if (!isCanonicalRoot(root)) return undefined;
+  const record = readSeal(root, board);
+  return record ? record.change_log_sha256 ?? null : undefined;
+}
+
+/** Moves the seal to the new change log. The caller holds the seal lock. */
+export function bindChangeLog(root: string, board: string, sha256: string): void {
+  durableJson(sealPath(root, board), { ...readSeal(root, board), change_log_sha256: sha256 });
 }
 
 /** The calls of the seal lock, injected so a test needs no second process and no real wait. */
@@ -163,6 +218,19 @@ function targetsOf(path: string): { root: string; boards: string[] } | null {
   return names.length ? { root, boards: names } : null;
 }
 
+const admitted = new Set<string>();
+const editKey = (root: string, board: string): string => `${root}\0${board}`;
+
+/** Asks the machine once, then runs `work` as one edit: a tool with two files or a rollback does not stop at its own first write. A board is canonical CAD only inside this call. */
+export function oneEdit<T>(path: string, work: () => T): T {
+  const targets = targetsOf(path);
+  if (!targets) return work();
+  for (const board of targets.boards) assertCommand(targets.root, board, 'edit');
+  const keys = targets.boards.map(board => editKey(targets.root, board)).filter(key => !admitted.has(key));
+  for (const key of keys) admitted.add(key);
+  try { return work(); } finally { for (const key of keys) admitted.delete(key); }
+}
+
 /** Runs `write`. When PATH is canonical CAD it checks the seal first and records the new state after, so a tool cannot break the seal. */
 export function sealedWrite<T>(path: string, writer: Writer, write: () => T, deps?: SealLockDeps): T {
   const targets = targetsOf(path);
@@ -170,7 +238,10 @@ export function sealedWrite<T>(path: string, writer: Writer, write: () => T, dep
   // The seal lock of every covering board is held from the check to the new seal: no second writer is absorbed into this seal.
   const locked = (boards: string[]): T => {
     if (boards.length) return withSealLock(targets.root, boards[0]!, () => locked(boards.slice(1)), deps);
-    for (const board of targets.boards) { assertWritable(targets.root, board); verifySeal(targets.root, board); }
+    for (const board of targets.boards) {
+      assertWritable(targets.root, board); verifySeal(targets.root, board);
+      if (!admitted.has(editKey(targets.root, board))) assertCommand(targets.root, board, 'edit');
+    }
     const result = write();   // a write that throws leaves the old seal: a partial write is then caught, not hidden
     for (const board of targets.boards) reseal(targets.root, board, writer);
     return result;

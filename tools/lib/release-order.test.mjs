@@ -9,6 +9,7 @@ import {join} from 'node:path';
 import {approveRelease, releaseApprovalPath} from './release-approval.mjs';
 import {recordOrder, releaseOrders, releaseOrdersPath} from './release-order.mjs';
 import {gateInputs} from './gate-inputs.mjs';
+import {releaseFixtureBoard} from './cad-seal-fixture.ts';
 
 const sha = data => createHash('sha256').update(data).digest('hex');
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('image')]);
@@ -24,6 +25,7 @@ function fixture(t, {approve = true} = {}) {
   writeFileSync(join(root, 'report.json'), JSON.stringify({board: 'X', status: 'ready_for_user_review', checks: {cad_fabrication: {candidate_sha256: sha(MANIFEST)}}}));
   writeFileSync(join(root, 'top.png'), PNG);
   const candidate = join(root, 'candidate');
+  releaseFixtureBoard(root, 'X');
   if (approve) approveRelease(root, 'X', candidate, {by: 'Ana', reason: 'checked', report: join(root, 'report.json'), image: join(root, 'top.png')});
   const order = (more = {}) => ({by: 'Ana', what: '5 assembled boards, JLC economic assembly', quantity: 5, reference: 'JLC-1001', ...more});
   return {root, candidate, order};

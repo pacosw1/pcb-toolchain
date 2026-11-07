@@ -19,12 +19,16 @@ import { Registry, currentClient } from './rpc.ts'
 import { routingPolicy, runs } from './runs.ts'
 import type { RoutingPolicy } from './runs.ts'
 import { loopCommand, startRouteLoop } from './routeLoops.ts'
+import { createStateWatcher } from './stateWatch.ts'
+import { createCallWatcher } from './callWatch.ts'
 
 export const ENGINE_VERSION = '0.1.0'
 
 export const registry = new Registry()
 const started = Date.now()
 let project: Project | null = null
+const stateWatcher = createStateWatcher()
+const callWatcher = createCallWatcher()
 
 function needProject(): Project {
   if (!project) throw new Error('no project open')
@@ -41,7 +45,7 @@ registry.method('engine.info', [], 0, async () => ({
 
 export function projectOpen(root: string): ReturnType<Project['info']> {
   const next = new Project(root)
-  if (project && project.root !== next.root) unwatchAll()
+  if (project && project.root !== next.root) { unwatchAll(); stateWatcher.unwatchAll(); callWatcher.unwatchAll() }
   project = next
   runs.load(project.root)                           // runs of earlier engine processes (durable run records)
   return project.info()
@@ -59,6 +63,18 @@ registry.method('board.geometry', ['pcb'], 1, (pcb: string) => {
 registry.method('board.watch', ['pcb'], 1, (pcb: string) => watchBoard(currentClient(), pcb, needProject().resolve(pcb)))
 
 registry.method('board.unwatch', ['pcb'], 1, (pcb: string) => unwatchBoard(currentClient(), pcb))
+
+/** Read `pcb state` and `pcb history` of a board (by its gate name, such as CELLULAR-B) and watch the files they read for this
+ *  client: state.changed / state.error notifications follow (stateWatch.ts). Ends with state.unwatch or when the client disconnects. */
+registry.method('state.watch', ['board'], 1, (board: string) => stateWatcher.watch(currentClient(), needProject().root, board))
+
+registry.method('state.unwatch', ['board'], 1, (board: string) => stateWatcher.unwatch(currentClient(), board))
+
+/** Read the call log of the project (`.gate/calls.jsonl`, written by tools/pcb) and the run starts, and watch them for this
+ *  client: calls.changed / calls.error notifications follow (callWatch.ts). Ends with calls.unwatch or when the client disconnects. */
+registry.method('calls.watch', [], 0, () => callWatcher.watch(currentClient(), needProject().root))
+
+registry.method('calls.unwatch', [], 0, () => callWatcher.unwatch(currentClient()))
 
 /** BOM of a board revision joined to that revision's own BOM CSV (`bom` overrides it, project-relative). */
 registry.method('board.bom', ['pcb', 'bom'], 1, (pcb: string, csv?: string | null) => bom(needProject(), pcb, csv ?? null))

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import test, { type TestContext } from 'node:test';
 import { boardShapeSha256 } from './board-shape.ts';
 import { reseal, schematicSha256 } from './cad-seal.ts';
+import { sealFixtureBoard } from './cad-seal-fixture.ts';
+import { recordChange } from './change-log.ts';
 import { SCHEMA } from './engineering-constraints.ts';
 import { approveLayoutPlan, layoutGate, layoutPlanPath, layoutPlanStatus, type NetSource } from './layout-plan.ts';
 import { approveFixture, NO_NETS, PNG } from './layout-plan-fixture.ts';
@@ -28,7 +30,7 @@ function fixture(t: TestContext, plan: Row = {}) {
   writeFileSync(join(folder, 'route.json'), JSON.stringify(ROUTE));
   writeFileSync(join(folder, 'SPEC.md'), 'source');
   writeFileSync(placementRulesPath(root, 'X'), JSON.stringify({ schema: SCHEMA, rules: [rule('distance')] }));
-  reseal(root, 'X', { tool: 'fixture', run_id: null });
+  sealFixtureBoard(root, 'X');
   const path = layoutPlanPath(root, 'X');
   writeFileSync(path, JSON.stringify({ schema: 'iot-lab.layout-plan.v1', intents: INTENTS, route_plan: 'hardware-design/boards/X/route.json', approval: null, ...plan }));
   return { root, folder, path, rules: placementRulesPath(root, 'X'), route: join(folder, 'route.json') };
@@ -45,9 +47,9 @@ const events = (): { log: Row[]; emit: (kind: string, data?: Row) => void } => {
 const SHAPED = '(kicad_pcb (general (thickness 1.6)) (layers (0 "F.Cu" signal)) (setup (stackup (layer "core" (thickness 1.5)))) (footprint "R" (layer "F.Cu") (at 1 1) (property "Reference" "R1")) (gr_line (start 0 0) (end 50 0) (layer "Edge.Cuts") (uuid "1")))';
 async function shaped(t: TestContext) {
   const f = fixture(t), pcb = join(f.folder, 'X.kicad_pcb');
-  writeFileSync(pcb, SHAPED); reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  writeFileSync(pcb, SHAPED); sealFixtureBoard(f.root, 'X');
   await approve(f.root);
-  const write = (path: string, text: string) => { writeFileSync(path, text); reseal(f.root, 'X', { tool: 'fixture', run_id: null }); };
+  const write = (path: string, text: string) => { writeFileSync(path, text); sealFixtureBoard(f.root, 'X'); };
   return { ...f, pcb, write };
 }
 
@@ -88,7 +90,7 @@ test('an approval from before the board shape binding is stale, not invalid', as
 
 test('a board shape that cannot be read makes the approval stale and stops a new approval', async t => {
   const f = await shaped(t);
-  f.write(f.pcb, 'not a board');
+  writeFileSync(f.pcb, 'not a board'); reseal(f.root, 'X', { tool: 'fixture', run_id: null });
   const status = layoutPlanStatus(f.root, 'X');
   assert.equal(status.state, 'stale');
   assert.match(status.stale[0]!, /board shape cannot be read/);
@@ -103,7 +105,7 @@ test('a plan without approval is not approved, and approval records the person, 
   assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved');
   assert.equal(layoutGate(f.root, 'X', () => {}), null);
   const saved = JSON.parse(readFileSync(f.path, 'utf8')) as { approval: Row; intents: unknown };
-  assert.deepEqual(saved.approval, { by: 'Ana', reason: 'reviewed the edge intents', rules_sha256: sha256File(f.rules), route_plan_sha256: sha256File(f.route),
+  assert.deepEqual(saved.approval, { by: 'Ana', reason: 'reviewed the edge intents', change_event: 'c-0001', rules_sha256: sha256File(f.rules), route_plan_sha256: sha256File(f.route),
     schematic_sha256: schematicSha256(f.root, 'X'), board_shape_sha256: boardShapeSha256(f.root, 'X'), image: COPY_PNG, image_sha256: sha256File(imageOf(f.root)) });
   assert.equal(layoutPlanStatus(f.root, 'X').image, COPY_PNG);
   assert.equal(sha256File(join(f.root, COPY_PNG)), sha256File(imageOf(f.root)), 'the board folder holds a copy of the image');
@@ -124,6 +126,7 @@ test('a changed rule file makes the approval stale', async t => {
   const f = fixture(t);
   await approve(f.root);
   writeFileSync(f.rules, JSON.stringify({ schema: SCHEMA, rules: [rule('distance'), rule('other')] }));
+  sealFixtureBoard(f.root, 'X');
   const status = layoutPlanStatus(f.root, 'X');
   assert.equal(status.state, 'stale');
   assert.deepEqual(status.stale, ['placement-constraints.json changed since the approval']);
@@ -147,11 +150,11 @@ test('a sealed change of the schematic or the project file makes the approval st
   const f = fixture(t);
   writeFileSync(join(f.folder, 'X.kicad_sch'), '(kicad_sch one)');
   writeFileSync(join(f.folder, 'X.kicad_pro'), '{}');
-  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  sealFixtureBoard(f.root, 'X');
   await approve(f.root);
   assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved');
   writeFileSync(join(f.folder, 'X.kicad_sch'), '(kicad_sch two)');
-  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  sealFixtureBoard(f.root, 'X');
   const status = layoutPlanStatus(f.root, 'X');
   assert.equal(status.state, 'stale');
   assert.deepEqual(status.stale, ['the schematic changed since the approval']);
@@ -161,6 +164,40 @@ test('a sealed change of the schematic or the project file makes the approval st
   writeFileSync(join(f.folder, 'X.kicad_pro'), '{"changed": true}');
   reseal(f.root, 'X', { tool: 'fixture', run_id: null });
   assert.deepEqual(layoutPlanStatus(f.root, 'X').stale, ['the schematic changed since the approval']);
+});
+
+test('cad_moved keeps the approval of the same bytes, and a later edit makes it stale', async t => {
+  const f = fixture(t);
+  writeFileSync(join(f.folder, 'X.kicad_sch'), '(kicad_sch)');
+  sealFixtureBoard(f.root, 'X');
+  await approve(f.root);
+  mkdirSync(join(f.folder, 'cad'));
+  for (const name of ['X.kicad_pcb', 'X.kicad_sch']) renameSync(join(f.folder, name), join(f.folder, 'cad', name));
+  writeFileSync(join(f.folder, 'gate.json'), JSON.stringify({ project: 'cad/X', checks: {} }));
+  assert.deepEqual(layoutPlanStatus(f.root, 'X').stale, ['the schematic changed since the approval']);
+  recordChange(f.root, 'X', { kind: 'cad_moved', reason: 'new folder', by: 'Ana', refs: [] });
+  assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved');
+  writeFileSync(join(f.folder, 'cad/X.kicad_sch'), '(kicad_sch (edit))');
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  assert.deepEqual(layoutPlanStatus(f.root, 'X').stale, ['the schematic changed since the approval']);
+  recordChange(f.root, 'X', { kind: 'net_change', reason: 'edit', by: 'Ana', refs: [] });
+  assert.deepEqual(layoutPlanStatus(f.root, 'X').stale, ['the schematic changed since the approval']);
+});
+
+test('a recorded rule change leaves the approval stale until a person approves again', async t => {
+  const f = fixture(t);
+  await approve(f.root);
+  writeFileSync(join(f.folder, 'gate.json'), JSON.stringify({ project: 'X', checks: { erc: true } }));
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  recordChange(f.root, 'X', { kind: 'rule_change', reason: 'erc on', by: 'Ana', refs: [] });
+  assert.deepEqual(layoutPlanStatus(f.root, 'X').stale, ['the rules changed by c-0002 after the approval: erc on']);
+  assert.equal(layoutGate(f.root, 'X', () => {})!.code, 'layout_plan_stale');
+  await approve(f.root);
+  assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved', 'the same person and reason may approve again');
+  const plan = JSON.parse(readFileSync(f.path, 'utf8'));
+  delete plan.approval.change_event;
+  writeFileSync(f.path, JSON.stringify(plan));
+  assert.equal(layoutPlanStatus(f.root, 'X').state, 'stale', 'an approval with no event comes before each rule change');
 });
 
 test('a change of the board layout alone keeps the approval', async t => {

@@ -1,13 +1,15 @@
 // The board state machine. The table gives the allowed moves. Sealed evidence gives the position on each call, and no file stores it.
 // `transition` is pure and total: each state and event pair has a next state or a typed refusal.
 // The position is one of the process states A1 to A25. The B states are rules that hold at any position.
+import { releaseEvidence, releaseView } from './board-release.ts';
 import { sealStatus } from './cad-seal.ts';
 import { changeBlock, type ChangeBlock } from './change-log.ts';
 import { layoutGate, layoutPlanStatus } from './layout-plan.ts';
+import { runsBase } from './pcb-runs.ts';
 import { loadTransitions, type Command, type Evidence, type Freshness, type Guard, type StateId, type TransitionTable } from './transitions.ts';
 
 export const BOARD_STATES = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'A10', 'A11', 'A12', 'A13', 'A14', 'A15', 'A16', 'A17', 'A18', 'A19', 'A20', 'A21', 'A22', 'A23', 'A24', 'A25'] as const;
-export const CHANGE_KINDS = ['part_swap_new_footprint', 'part_swap_same_footprint', 'part_value_change', 'net_change', 'stackup_change', 'outline_change', 'design_rule_change', 'rule_change', 'route_plan_change', 'datasheet_change', 'out_of_stock', 'approval_withdrawn', 'route_stuck', 'gate_failed', 'drc_failed', 'fab_defect', 'bringup_failure', 'toolchain_change', 'human_edit', 'requirement_change', 'cad_after_order', 'baseline'] as const;
+export const CHANGE_KINDS = ['part_swap_new_footprint', 'part_swap_same_footprint', 'part_value_change', 'net_change', 'stackup_change', 'outline_change', 'design_rule_change', 'rule_change', 'approval_withdrawn', 'fab_defect', 'bringup_failure', 'human_edit', 'cad_after_order', 'defect_closed', 'cad_moved', 'baseline'] as const;
 
 export type BoardState = typeof BOARD_STATES[number];
 export type ChangeKind = typeof CHANGE_KINDS[number];
@@ -71,8 +73,12 @@ export function position(table: TransitionTable, found: Evidenced): Position {
   return { state: (last ? last.next[0] ?? last.id : FIRST) as BoardState, evidence: null, freshness: null };
 }
 
-/** What the commands need to read: the seal and the layout plan. A class with more proof comes from `pcb state`. */
-export function commandEvidence(root: string, board: string): Evidenced {
+/** What a call can read with no run: the seal, the layout plan and the release records. A run proves more; `judgedEvidence` of lib/board-view.ts reads that. */
+export function commandEvidence(root: string, board: string, base: string = runsBase(root)): Evidenced {
+  return { ...designEvidence(root, board), ...releaseEvidence(releaseView(root, board, base)) };
+}
+
+function designEvidence(root: string, board: string): Evidenced {
   const seal = sealStatus(root, board).state, layout = layoutPlanStatus(root, board).state;
   const schematic: Freshness = seal === 'sealed' ? 'current' : seal === 'not_canonical' ? 'exempt' : seal === 'changed' ? 'stale' : 'missing';
   if (layout === 'exempt') return { schematic, route_plan: 'exempt', layout_approval: 'exempt' };
@@ -95,8 +101,11 @@ function refusal(board: string, command: Command, at: Position, stop: Refused, b
 }
 
 /** Asks the machine for a command, from the position that the evidence gives now. It stops with the state, the event and the allowed events. */
-export function assertCommand(root: string, board: string, command: Command, table: TransitionTable = TABLE): void {
-  const block = changeBlock(root, board), at = position(table, commandEvidence(root, board));
-  const result = transition(table, at.state, { type: 'command', command }, { change_recorded: block === null });
-  if (!result.ok) throw new Error(refusal(board, command, at, result, block, at.evidence === 'route_plan' || at.evidence === 'layout_approval' ? layoutGate(root, board, () => {}) : null, table));
+export function assertCommand(root: string, board: string, command: Command, judged: Evidenced = {}, table: TransitionTable = TABLE): void {
+  const block = changeBlock(root, board), evidence = { ...judged, ...commandEvidence(root, board) };
+  // An open order keeps its CAD closed. A later change that makes older evidence stale must not move the board back to a state with CAD moves.
+  for (const at of [position(table, evidence), ...(evidence.order ? [position(table, { order: evidence.order })] : [])]) {
+    const result = transition(table, at.state, { type: 'command', command }, { change_recorded: block === null });
+    if (!result.ok) throw new Error(refusal(board, command, at, result, block, at.evidence === 'route_plan' || at.evidence === 'layout_approval' ? layoutGate(root, board, () => {}) : null, table));
+  }
 }

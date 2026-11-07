@@ -163,8 +163,7 @@ test('CAD changed outside our tools is state cad_unsealed with the seal command,
 test('a change with no event stops next with the code and the command', async t => {
   const f = fixture(t); f.run();
   writeFileSync(f.project + '.kicad_pcb', '(kicad_pcb (general (thickness 1.6)))');
-  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
-  recordChange(f.root, 'X', { kind: 'baseline', reason: 'start', by: 'Ana', refs: [] });
+  sealFixtureBoard(f.root, 'X');
   assert.notEqual((await f.next()).blocker?.code, 'change_unrecorded');
   writeFileSync(f.project + '.kicad_pcb', '(kicad_pcb (general (thickness 0.8)))');
   reseal(f.root, 'X', { tool: 'fixture', run_id: null });

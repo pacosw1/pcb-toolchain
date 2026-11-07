@@ -5,6 +5,7 @@ import {loadBoardSelection} from './board-selections.mjs';
 import {parseCsv} from './csv.mjs';
 import {owningBomRevision} from './bom-ownership.mjs';
 import {fileHashes,sha256,releaseRecipe,verifyFab,verifyReleaseGate,verifyBoardChecks} from './release-evidence.mjs';
+import {openDefects} from './change-log.ts';
 import {g5Decision} from './release-approval.mjs';
 
 const json=path=>JSON.parse(readFileSync(path,'utf8'));
@@ -119,6 +120,7 @@ export async function releaseReadiness(root,board,candidate,{stock,orientation,a
  await check('assembly_stock',()=>{need(stock,'fresh order-day JLC assembly stock receipt required (--stock DIR)');need(checks.cad_fabrication.status==='passed' && selectedModels,'valid fabrication candidate and selected BOM required');return inspectStock(candidate,manifest,stock,{asOf,boards,models:selectedModels});});
  await check('complete_assembly_stock',()=>{need(entry && checks.packet.status==='passed' && checks.cad_fabrication.status==='passed','valid packet and fabrication candidate required');return inspectCompleteAssembly(root,entry,candidate,manifest,stock,{asOf,boards});});
  await check('supplier_orientation',()=>{need(orientation,'attributable supplier package orientation review required (--orientation FILE)');need(checks.cad_fabrication.status==='passed','valid fabrication candidate required');return inspectOrientation(candidate,manifest,orientation);});
+ await check('open_defect',()=>{const hash=sha256(readFileSync(join(candidate,'release-manifest.json')));need(!openDefects(root,board).has(hash),`release ${hash} has an open defect. End it: tools/pcb change ${board} --kind defect_closed --refs ${hash},DECISION --reason TEXT --by NAME`);return {status:'passed'};});
  return {schema_version:1,board,revision:manifest?.revision??null,status:findings.length?'blocked':'ready_for_user_review',
   scope:'order_preparation',order_day_utc:asOf,boards,checks,findings,inputs,...g5Decision(root,board,candidate,findings),g6_qualified:false,ordered:false,
   limits:['Readiness is evidence for user review; it does not approve, order, reserve stock, assemble or establish measured qualification.']};

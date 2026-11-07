@@ -1,23 +1,17 @@
 // tools/pcb change, state and history: the event, the view and the log of a board.
-import { realpathSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { boardHistory, historyText } from './lib/board-history.ts';
 import { boardView, viewText } from './lib/board-view.ts';
 import { recordChange } from './lib/change-log.ts';
 import { parseFlags, runMain, UsageError } from './lib/cli.ts';
 import { nextAction } from './lib/pcb-next.ts';
 import { nextReaders } from './lib/pcb-next-readers.ts';
+import { runsBase } from './lib/pcb-runs.ts';
 import { projectRoot } from './lib/project-root.mjs';
 import { jsonDumps } from './lib/py-compat.mjs';
 
 const USAGE = `usage: pcb [--project DIR] change BOARD --kind KIND --reason TEXT --by NAME [--refs A,B] [--json]
        pcb [--project DIR] state BOARD [--runs-dir DIR] [--json]
        pcb [--project DIR] history BOARD [--runs-dir DIR] [--json]`;
-
-function runsBase(root: string, given: string | undefined): string {
-  const base = resolve(given ?? process.env.PCB_RUNS_DIR ?? resolve(root, '.gate/cli'));
-  try { return realpathSync(base); } catch { return base; }
-}
 
 async function main(given: string[]): Promise<number> {
   const argv = [...given];

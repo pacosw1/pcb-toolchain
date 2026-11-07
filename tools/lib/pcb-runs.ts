@@ -1,6 +1,8 @@
 // The read side of a supervised run: state, events and explanation from its durable folder. State and receipts stay as
 // jsonLoads gave them, so a number keeps its int or float type.
-import { closeSync, fstatSync, openSync, readdirSync, readSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { atomicJson } from './json-file.ts';
 import { lockHeld } from './file-lock.ts';
 import { verifySettled } from './pcb-evidence.ts';
@@ -11,9 +13,16 @@ import { caught, isDirectory, isFile, joinPath, jsonOf, pathExists } from './py-
 
 export const TERMINAL = new Set(['passed', 'failed', 'error', 'cancelled', 'timeout']);
 // JavaScript's $ also matches before a final newline; require the actual end, like Python fullmatch.
+/** The run folder of ROOT: GIVEN, then PCB_RUNS_DIR, then .gate/cli. */
+export function runsBase(root: string, given?: string): string {
+  const base = resolve(given ?? process.env.PCB_RUNS_DIR ?? resolve(root, '.gate/cli'));
+  try { return realpathSync(base); } catch { return base; }
+}
+
 export const RUN_ID = /^run-[A-Za-z0-9_-]+$(?![\s\S])/;
 export const EVENT_LIMIT = 100;
 const STARTUP_BUDGET_S = 10;
+const SUPERVISOR_LOCK_BOUND_S = 120;   // a live supervisor that has no lock after this hangs
 const INVENTORIES = ['engineering_inputs', 'engineering_absent_inputs', 'evidence_sha256', 'artifacts'];
 const GATE_FOLDERS = ['gate', 'candidate/gate', 'release-work/gate'];
 const DRC_GROUPS = ['violations', 'schematic_parity', 'unconnected_items'];
@@ -68,6 +77,17 @@ export function compactTerminal(result: Dict, folder: string): Dict {
 export function controllerAlive(folder: string): boolean | null {
   const lock = joinPath(folder, 'worker.lock');
   return pathExists(lock) ? lockHeld(lock) : null;
+}
+
+/** startCheck records the supervisor pid after the spawn event. Before its lock the supervisor still has the argv `lock supervise <run>/worker.lock`;
+ *  a pid that the OS gave to another process does not have it. No file, a bad file, no such process or a failed probe is no proof of life. */
+function supervisorAlive(folder: string): boolean {
+  let text: string;
+  try { text = readFileSync(joinPath(folder, 'supervisor.pid'), 'utf8'); } catch { return false; }
+  if (!/^[1-9][0-9]*$/.test(text)) return false;
+  const probe = spawnSync('/bin/ps', ['-o', 'command=', '-p', text], { encoding: 'utf8', timeout: 5000 });
+  if (probe.status !== 0) return false;
+  return probe.stdout.includes(` lock supervise `) && probe.stdout.includes(`/${folder.split('/').pop()}/worker.lock`);
 }
 
 const seconds = (value: unknown): number | null => {
@@ -134,7 +154,9 @@ export function status(folder: string, now = wallClock()): Dict {
   if (!TERMINAL.has(current())) adoptReceipt(state, folder);
   if (current() === 'starting' && alive !== true) {
     // Creating the lock and acquiring it are separate calls: the startup budget covers an absent and a new lock.
-    if (now - updated > STARTUP_BUDGET_S) markStopped(state, 'supervisor did not start; inspect worker.log');
+    // Under load the OS can hold the new supervisor before its first instruction for longer than the budget; a live pid is not a stop.
+    if (now - updated > SUPERVISOR_LOCK_BOUND_S) markStopped(state, `supervisor did not take its lock in ${SUPERVISOR_LOCK_BOUND_S} s; inspect worker.log`);
+    else if (now - updated > STARTUP_BUDGET_S && !supervisorAlive(folder)) markStopped(state, 'supervisor did not start; inspect worker.log');
   } else if (!TERMINAL.has(current()) && alive === false) {
     markStopped(state, 'supervisor stopped without a terminal result; cleanup unconfirmed');
   } else if (!TERMINAL.has(current()) && alive === null) {

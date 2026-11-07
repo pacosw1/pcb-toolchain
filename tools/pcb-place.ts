@@ -7,6 +7,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runMain, UsageError } from './lib/cli.ts';
 import { checkPlacementRules, placementRulesPath } from './lib/placement-rules.ts';
+import { assertCommand } from './lib/board-machine.ts';
 import { verifySeal } from './lib/cad-seal.ts';
 import { layoutGate, layoutLog } from './lib/layout-plan.ts';
 import type { Dict } from './lib/py-values.ts';
@@ -113,6 +114,7 @@ export function showCandidates(report: { candidates: Candidate[] }, json: boolea
 /** `place` runs only on a sealed board with an approved layout plan or a recorded exemption. */
 export function admitPlace(root: string, board: string): void {
   verifySeal(root, board);
+  assertCommand(root, board, 'place');
   const block = layoutGate(root, board, layoutLog(root, board));
   if (block) throw new Error(block.message);
 }

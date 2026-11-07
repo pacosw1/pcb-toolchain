@@ -1,6 +1,6 @@
 // Admit an isolated check and start its one-shot owner. Never writes CAD.
 import { spawn } from 'node:child_process';
-import { closeSync, mkdirSync, mkdtempSync, openSync } from 'node:fs';
+import { closeSync, mkdirSync, mkdtempSync, openSync, rmdirSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicJson, readObject } from './json-file.ts';
@@ -15,11 +15,14 @@ import { parentCandidate } from './pcb-candidate.ts';
 import { verify } from './pcb-evidence.ts';
 import { holdLock } from './file-lock.ts';
 import { assertCommand, commandOf } from './board-machine.ts';
+import { judgedNow, type Decide } from './board-view.ts';
 import { verifySeal } from './cad-seal.ts';
+import { nextAction } from './pcb-next.ts';
+import { nextReaders } from './pcb-next-readers.ts';
 import { assertRouteNotRepeated } from './route-repeat.ts';
 
 export interface LoopContext { id: string; round: number; launch_id: string; source_sha256: string; deadline_ms: number }
-export interface CheckOptions extends CandidateRequest { root: string; base: string; board: string; operation?: string; fromRun?: string; arguments?: string[]; timeout: number; heartbeat: number; changed?: boolean; fresh?: boolean; baseline?: string; cycle?: string; loopContext?: LoopContext }
+export interface CheckOptions extends CandidateRequest { decide?: Decide; root: string; base: string; board: string; operation?: string; fromRun?: string; arguments?: string[]; timeout: number; heartbeat: number; changed?: boolean; fresh?: boolean; baseline?: string; cycle?: string; loopContext?: LoopContext }
 
 function readDesign(args: string[]) {
   const option = (name: string) => { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : args.find(item => item.startsWith(name + '='))?.slice(name.length + 1); };
@@ -44,7 +47,8 @@ export async function startCheck(options: CheckOptions): Promise<string> {
   const config = configInfo ? join(configInfo.folder, 'gate.json') : undefined;
   if (configInfo) verifySeal(root, options.board);
   const event = configInfo ? commandOf(operation, options.kind) : null;
-  if (event) assertCommand(root, options.board, event);
+  // Only a release has moves that differ on what a run proves. A decision that fails stops the release.
+  if (event) assertCommand(root, options.board, event, event === 'release' ? await judgedNow(root, options.board, options.decide ?? ((where, name) => nextAction(where, name, { base, readers: nextReaders }))) : {});
   let baseline: string | undefined;
   if (options.baseline) {
     baseline = join(runDir(base, options.baseline), 'gate/findings.json');
@@ -65,8 +69,8 @@ export async function startCheck(options: CheckOptions): Promise<string> {
       || !Number.isSafeInteger(options.loopContext.round) || options.loopContext.round < 1 || options.loopContext.round > 8
       || !/^[a-f0-9]{24}$/.test(options.loopContext.launch_id) || options.loopContext.source_sha256 !== actionRecord?.source_revision
       || !Number.isFinite(options.loopContext.deadline_ms) || options.loopContext.deadline_ms <= Date.now())) throw new Error('invalid or expired loop context');
-  // A loop round is a decision of its own (tools/ROUTING-LOOP.md): its context is checked above.
-  if (operation === 'route' && !options.loopContext) assertRouteNotRepeated(base, root, options.board, actionRecord);
+  // A loop round passes only with inputs that differ from the stuck run or with a recorded decision, as any other route.
+  if (operation === 'route') assertRouteNotRepeated(base, root, options.board, actionRecord);
   const node = which(process.env.NODE ?? 'node');
   if (!node) throw new Error('Node.js is required to run the existing gate');
   mkdirSync(base, { recursive: true });
@@ -87,6 +91,8 @@ export async function startCheck(options: CheckOptions): Promise<string> {
     : operation === 'outcomes' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/placement_outcomes.ts'), ...(options.arguments ?? []), '--root', root, '--json', '--output', join(folder, 'operation/report.json')]
     : operation === 'ml' ? [node, '--experimental-strip-types', '--no-warnings', join(root, 'tools/pcb_ml.ts'), ...(options.arguments ?? []), '--root', root, '--json', '--output', join(folder, 'operation/report.json')]
     : [node, join(root, 'tools/gate.mjs'), board, '--evidence-dir', join(folder, 'gate')];
+  const tool = command.find(part => part.startsWith(join(root, 'tools/')));
+  if (tool && !isFile(tool)) { rmdirSync(folder); throw new Error(`${tool} is missing: the project does not hold its release tools; run pcb toolchain-sync`); }
   if (options.changed) command.push('--changed');
   if (options.fresh) command.push('--fresh');
   if (baseline) command.push('--findings-baseline', baseline);
@@ -119,6 +125,7 @@ export async function startCheck(options: CheckOptions): Promise<string> {
       cwd: root, env, detached: true, stdio: ['ignore', log, log],
     });
     await new Promise<void>((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
+    writeFileSync(join(folder, 'supervisor.pid'), String(child.pid));   // status() keeps a run with a live supervisor in starting
     child.unref();
   } catch (error) {
     atomicJson(join(folder, 'state.json'), { schema_version: 1, run_id: basename(folder), board: options.board,

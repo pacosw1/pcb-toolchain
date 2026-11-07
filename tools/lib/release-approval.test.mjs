@@ -2,9 +2,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
+import {existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {releaseFixtureBoard} from './cad-seal-fixture.ts';
 import {approveRelease, g5Decision, releaseApprovalPath, releaseApprovalStatus} from './release-approval.mjs';
 
 const sha = data => createHash('sha256').update(data).digest('hex');
@@ -12,11 +13,13 @@ const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a
 const MANIFEST = '{"schema_version":1,"board":"X","g5_ready":false}\n';
 
 function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'release-approval-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'release-approval-')));
   t.after(() => rmSync(root, {recursive: true, force: true}));
   mkdirSync(join(root, 'hardware-design/boards/X'), {recursive: true});
   mkdirSync(join(root, 'candidate'));
   writeFileSync(join(root, 'candidate/release-manifest.json'), MANIFEST);
+  writeFileSync(join(root, 'hardware-design/boards/X/gate.json'), '{"project":"cad/X","checks":{}}');
+  releaseFixtureBoard(root, 'X');
   const report = (more = {}) => ({schema_version: 1, board: 'X', status: 'ready_for_user_review', checks: {cad_fabrication: {status: 'passed', candidate_sha256: sha(MANIFEST)}}, g5_release_approved: false, ...more});
   const put = (name, data) => { writeFileSync(join(root, name), typeof data === 'string' || Buffer.isBuffer(data) ? data : JSON.stringify(data)); return join(root, name); };
   const args = (more = {}) => ({by: 'Ana', reason: 'checked the renders and the stock', report: put('report.json', report()), image: put('top.png', PNG), ...more});

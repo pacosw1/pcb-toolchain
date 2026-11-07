@@ -9,6 +9,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, fchmodSync, fchownSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { assertWritable } from './board-freeze.ts';
+import { assertCommand, commandOf } from './board-machine.ts';
 import { resealLocked, resealOnly, verifySeal } from './cad-seal.ts';
 import { holdLock } from './file-lock.ts';
 import { plainJson, readObject, readPyJson } from './json-file.ts';
@@ -270,6 +271,7 @@ export async function adopt(rootPath: string, folderPath: string, defect?: strin
   if (pathExists(finished)) return readObject<Dict>(finished);
   assertWritable(root, manifest.board);
   verifySeal(root, manifest.board);
+  assertCommand(root, manifest.board, commandOf(String(manifest.operation), manifest.kind as string | undefined) ?? 'edit');
   const state = context(root, manifest.board) as { frozen: boolean };
   if (state.frozen) await checkFrozenBaseline(manifest.node as string, root, folder, manifest.board, baseline, defect);
   return commitAdoption(root, folder, manifest, operation, candidate, defect ?? null);
