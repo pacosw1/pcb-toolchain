@@ -429,6 +429,13 @@ measurements, limits and margins. Rules live in
   estimate only predicts routing. Escape is 0 on a board with no escape model.
   It prints an edit command for legal candidates only. With no legal candidate,
   the command prints the report and `NO LEGAL CANDIDATE`, and exits 3.
+  Each `pcb place` call also writes `.gate/place/BOARD-candidates.json`: the table and the
+  SHA-256 of each spec file. The next call replaces this file.
+- `pcb edit BOARD --kind place --spec SPEC.json` must name a spec that is a row of that
+  record. The run keeps the row (`place_choice` in `run.json`) and the whole table, so the
+  reason for the seed stays after a new `pcb place` call. A spec from another source needs
+  `--origin hand` (written by a person or an agent) or `--origin move` (a route move). Without
+  a row and without `--origin`, the command stops and names the next action.
 
 Rule writes validate native references and cited source hashes, use canonical
 JSON, and reseal the board with one local log entry containing the reason.

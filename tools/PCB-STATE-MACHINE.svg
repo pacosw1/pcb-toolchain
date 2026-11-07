@@ -109,9 +109,9 @@
 <rect x="120" y="672" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
 <text x="235" y="689" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A9 Placement seeds</text>
 <text x="235" y="703" text-anchor="middle" font-size="10" fill="#333">enforced · no legal seed: exit 3</text>
-<rect x="120" y="730" width="230" height="40" rx="6" fill="#fbd5d5" stroke="#c0392b" stroke-width="1.6"/>
+<rect x="120" y="730" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
 <text x="235" y="747" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A10 Seed choice</text>
-<text x="235" y="761" text-anchor="middle" font-size="10" fill="#333">implicit · no record of the choice</text>
+<text x="235" y="761" text-anchor="middle" font-size="10" fill="#333">enforced · spec is a row or has an origin</text>
 <rect x="120" y="788" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
 <text x="235" y="805" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A11 Place edit</text>
 <text x="235" y="819" text-anchor="middle" font-size="10" fill="#333">enforced · candidate run</text>

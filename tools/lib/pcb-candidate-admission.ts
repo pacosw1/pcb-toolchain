@@ -4,6 +4,7 @@ import { validateExplicitSpec } from './explicit-spec.ts';
 import { readObject } from './json-file.ts';
 import { boardConfig, routePolicyArgs, sha } from './pcb-workflow.ts';
 import { isFile, resolvePath } from './py-path.ts';
+import { placeChoice } from './place-record.ts';
 import { boardPlanNets, routePlanNetErrors } from './route-plan-nets.ts';
 
 export const CANDIDATE = new Set(['build', 'edit', 'route', 'repair']);
@@ -11,7 +12,7 @@ export const OPERATIONS = new Set([...CANDIDATE, 'release']);
 export const ROUTERS = ['explicit', 'route-json', 'iotroute'];
 const ROUTE_SCHEMA = 'iot-lab.route.v1';
 
-export interface CandidateRequest { spec?: string; kind?: string; router?: string; plan?: string; engineeringManifest?: string; designContract?: string }
+export interface CandidateRequest { spec?: string; kind?: string; origin?: string; router?: string; plan?: string; engineeringManifest?: string; designContract?: string }
 interface Previous { engineering_manifest?: { path: string }; design_contract?: { path: string } }
 
 function bind(name: string, given: string): Record<string, unknown> {
@@ -45,6 +46,7 @@ export function candidateFields(root: string, operation: string, board: string, 
     const errors = routePlanNetErrors(fields.spec, boardNets(root, board, parent));
     if (errors.length) throw new Error(`route plan does not fit the nets of ${board}: ${errors.join('; ')}`);
   }
+  if (operation === 'edit' && request.kind === 'place') fields.place_choice = placeChoice(root, board, resolvePath(specPath!), request.origin);
   if (operation === 'route') fields.router = router;
   if (request.kind) fields.kind = request.kind;
   if (request.plan) fields.plan = bind('plan', request.plan);

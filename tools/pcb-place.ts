@@ -11,7 +11,8 @@ import { verifySeal } from './lib/cad-seal.ts';
 import { layoutGate, layoutLog } from './lib/layout-plan.ts';
 import type { Dict } from './lib/py-values.ts';
 import { footprints } from './lib/native-board.ts';
-import { boardConfig } from './lib/pcb-workflow.ts';
+import { boardConfig, sha } from './lib/pcb-workflow.ts';
+import { writePlaceRecord } from './lib/place-record.ts';
 import { projectRoot } from './lib/project-root.mjs';
 import { jsonDumps } from './lib/py-compat.mjs';
 import { withSuffix } from './lib/py-path.ts';
@@ -72,9 +73,16 @@ function placeCandidate(root: string, board: string, options: PlaceOptions, run:
   }
 }
 
+/** The table and the spec hashes: the place edit looks its spec up here and keeps the row in the run record. */
+function record(root: string, board: string, candidates: Candidate[]): void {
+  writePlaceRecord(root, board, candidates.map(({ seed, spec, legal, moved, margins, wirelength, estimates, misses }) =>
+    ({ seed, spec, spec_sha256: sha(spec), legal, moved, margins, wirelength, estimates, misses })));
+}
+
 export function placeBoard(root: string, board: string, options: PlaceOptions, run: Placer = placer): Placement {
-  const { spec, moved, edit } = placeCandidate(root, board, options, run);
-  return { board, spec, moved, edit };
+  const candidate = placeCandidate(root, board, options, run);
+  record(root, board, [candidate]);
+  return { board, spec: candidate.spec, moved: candidate.moved, edit: candidate.edit };
 }
 
 export function placeCandidates(root: string, board: string, options: PlaceOptions, seeds: number, run: Placer = placer): { board: string; candidates: Candidate[] } {
@@ -85,6 +93,7 @@ export function placeCandidates(root: string, board: string, options: PlaceOptio
     const seed = options.seed + i;
     candidates.push(placeCandidate(root, board, { ...options, seed, out: join(root, '.gate/place', `${board}-seed${seed}.json`) }, run, true));
   }
+  record(root, board, candidates);
   return { board, candidates: candidates.sort((a, b) => Number(b.legal) - Number(a.legal)) };   // The sort is stable: the seed order stays in each group.
 }
 

@@ -194,7 +194,7 @@ export function checkMove(root: string, board: string, evidence: string, text: s
   result.spec = join(dirname(output), 'move-spec.json');
   if (move.kind === 'move_part' || move.kind === 'move_cluster') {
     atomicJson(result.spec, { place: poses(move, context.parts) });
-    return { ...result, next_action: { kind: move.kind, argv: ['tools/pcb', 'edit', board, '--kind', 'place', '--spec', result.spec, '--detach', '--json'] } };
+    return { ...result, next_action: { kind: move.kind, argv: ['tools/pcb', 'edit', board, '--kind', 'place', '--origin', 'move', '--spec', result.spec, '--detach', '--json'] } };
   }
   const router = join(run, 'operation/router');
   if (!['route-json', 'iotroute'].includes(manifest.router ?? '') || !existsSync(router)) {

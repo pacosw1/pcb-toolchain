@@ -37,7 +37,7 @@ Build (A20) is another path to a candidate: a pipeline script can make the whole
 | A7 Layout plan written | The CAD seal is intact. Rules and route plan files exist. | Intents (`id`, `statement`, `rule_ids`), `route_plan` path, `placement-constraints.json`. | `layout-plan.json` with `approval: null`. | A8. [state `invalid` with the problem list; `missing`] | `lib/layout-plan.ts:53-111` (inspect), `:118-136` (status). `pcb-layout.ts:44`. | `enforced` |
 | A8 Layout plan approved (person gate) | A valid plan. An intact seal. The route plan matches the board nets. | Name, reason, image the person saw (PNG or SVG in the project). | `approval` with hashes of rules, route plan, schematic and image. Copy of the image. | A9. [`layout_plan_stale` when rules, route plan, schematic or image change: go to A7 or A8; `layout_plan_missing`] | `lib/layout-plan.ts:129-135`, `:139-149`, `:174-193`. `lib/pcb-candidate-screens.ts:76-83`. `pcb-place.ts:105-109`. `lib/pcb-next.ts:261-266`. Bypass: exemption (B1). The person check is in a hook only (D1). | `enforced` |
 | A9 Placement seeds | `admitPlace`: seal intact and plan approved. | Board, `--seeds N`, placement rules. | One spec file per seed `.gate/place/BOARD-seedN.json`. A table with legality, misses and estimates. | A10. [`NO LEGAL CANDIDATE`, exit 3: go to A7] | `pcb-place.ts:41`, `:80-90`, `:92-101`, `:105-109`. `lib/placement-rules.ts:37`. | `enforced` |
-| A10 Placement seed choice | None. | The table and the spec files. | The spec file that a person or an agent passes to `edit --kind place`. | A11. [none] | None. The next call of `pcb place` overwrites the specs (`pcb-place.ts:86`). The place edit does not check that its spec came from the table. | `implicit` |
+| A10 Placement seed choice | The spec of a place edit is a row of `.gate/place/BOARD-candidates.json`, or the call names an origin (`--origin hand` or `--origin move`). | The table and the spec files. | The spec file that a person or an agent passes to `edit --kind place`. | A11. [`the place spec is not a row of ...`: run `pcb place BOARD --seeds N`, or pass `--origin`] | `pcb-place.ts:77-85`, `:96` (the record). `lib/place-record.ts`. `lib/pcb-candidate-admission.ts:49` (`place_choice` in `run.json`: the row and the whole table, so a new `pcb place` call does not erase the reason). | `enforced` |
 | A11 Place edit (candidate run) | Design stage `schematic`. Approved plan. Seal intact. The action is admitted. | Spec `{"place": {...}}`, optional part review. | Isolated candidate. `operation/source.json`. `images/top.svg` and `images/bottom.svg`. | A18 gate, then A19 adopt. [`engineering_preflight`; `candidate_place_check`; failed gate: go to A9 or A10] | `lib/pcb-candidate-run.ts:351-362` (order), `:205-240`. `lib/pcb-action.ts:29-33`. `lib/stage-contracts.ts:14`. `pcb-check-finalize.ts:107-108`. | `enforced` |
 | A12 Board placed check (before route) | Placement rules fail on the board. | Board, `placement-constraints.json`. | Report `placement-rules-preflight.json`. | A13. [`board_unplaced` and state `needs_place`: go to A9] | `lib/pcb-candidate-run.ts:105-130`. `lib/pcb-next.ts:268-269`. A waiting candidate comes first: `next` names the adoption. | `enforced` |
 | A13 RF route | The board is placed. `rf-lines.json` and the `rf` gate check exist. | Route plan stage for RF nets, `rf-lines.json` (width, gap, reference, length). | RF copper in a candidate. `rf` check result. | A14. [`rf_failures` fail the gate: go to A14 or A11] | `rf_lines.ts:1-20`. `lib/gate-core.mjs:38` (`rf` is optional, `:53` does not require it). `lib/route-plan-schema.ts:101-110` (stage names only). The rule "RF first" is the order of the stage list: no tool checks it. | `recorded` |
@@ -121,7 +121,7 @@ A run that is not finished gives the state `observe` first.
 
 The list is sorted by the possible loss. The task numbers are the findings of CIP task #1555.
 Finding 1 (frozen board) is skipped on purpose: the lab removed `FOCUS.md`, so no board can be frozen.
-Findings 3, 4, 6, 7, 10 and 11 are fixed in the code and are not listed.
+Findings 3, 4, 6, 7, 10, 11 and 12 are fixed in the code and are not listed.
 
 | No. | Implicit state | Loss it can cause | Smallest enforcement |
 |---|---|---|---|
@@ -131,7 +131,6 @@ Findings 3, 4, 6, 7, 10 and 11 are fixed in the code and are not listed.
 | D4 | A6 Stackup (planned, #1554) | The layer count and the layer roles are chosen by habit. A wrong choice shows only after fabrication, as a wrong impedance or as false plane gaps. | Add the stage of #1554: a data file with layers and roles. The layout plan and the route plan must agree with it. |
 | D5 | B17 Route environment settings | Two runs with the same recorded inputs give different routes. A trial cannot be repeated. (#1555 finding 8) | Remove these keys in `workEnvironment`. Take features only from `gate.json` `route_features` or the route plan. |
 | D7 | B18 Route dispatch fallback | An error after the daemon took the job matches the rule. A local route runs while the daemon job also runs. Two results exist. (#1555 finding 9) | The client uses a distinct exit code only when it proved that nothing was sent. The dispatch matches only that code. |
-| D8 | A10 Placement seed choice | The reason for the chosen seed and the rejected seeds is lost. A new call replaces the specs. (#1555 finding 12) | Write `.gate/place/BOARD-candidates.json` with the table and the spec hashes. The place edit records whether its spec hash is in the table. |
 | D9 | A13 RF route order | RF nets route after other nets and lose their clear paths. The gate finds the loss late. | A check in the layout plan approval: the first route stage holds all nets of `rf-lines.json`. |
 | D10 | B14 Frozen board (skipped on purpose) | `pcb adopt` overwrites a frozen board with no baseline run. No board can be frozen now. (#1555 finding 1) | A `frozen` field in the registry with a reason. Fail closed when `FOCUS.md` has a Frozen heading that the registry does not list. |
 
@@ -143,9 +142,9 @@ The counts are for the rows of sections A and B.
 
 | Status | Section A | Section B | Total |
 |---|---|---|---|
-| `enforced` | 15 | 9 | 24 |
+| `enforced` | 16 | 9 | 25 |
 | `recorded` | 6 | 4 | 10 |
-| `implicit` | 4 | 5 | 9 |
+| `implicit` | 3 | 5 | 8 |
 | Total | 25 | 18 | 43 |
 
 ## F. How the diagram is made

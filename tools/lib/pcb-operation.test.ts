@@ -83,7 +83,7 @@ async function run(root: string, ...args: string[]): Promise<{ folder: string; r
 }
 
 const eventRows = (folder: string): Row[] => (existsSync(join(folder, 'events.jsonl')) ? readFileSync(join(folder, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line) as Row) : []);
-const edit = (root: string, ...more: string[]) => run(root, 'edit', 'X', '--kind', 'place', '--spec', join(root, 'spec.json'), ...more);
+const edit = (root: string, ...more: string[]) => run(root, 'edit', 'X', '--kind', 'place', '--origin', 'hand', '--spec', join(root, 'spec.json'), ...more);
 
 test('a verified candidate stays isolated and seals its board, gate and source receipts', needsBinary, async t => {
   const root = project(t), canonical = join(root, 'hardware-design/boards/X/cad/X.kicad_pcb');
@@ -213,6 +213,9 @@ test('bad options stop at the command line, before any run exists', t => {
   const root = project(t);
   const rejected: [string[], RegExp][] = [
     [['edit', 'X', '--kind', 'place'], /requires --spec/],
+    [['edit', 'X', '--kind', 'place', '--spec', 'spec.json'], /is not a row of .*X-candidates\.json; run `tools\/pcb place X --seeds N`/],
+    [['edit', 'X', '--kind', 'route', '--spec', 'spec.json', '--origin', 'hand'], /--origin is only for --kind place/],
+    [['edit', 'X', '--kind', 'place', '--spec', 'spec.json', '--origin', 'guess'], /--origin must be hand or move/],
     [['edit', 'X', '--spec', 'spec.json', '--kind', 'other'], /--kind/],
     [['repair', 'X'], /requires --plan/],
     [['route', 'X', '--router', 'engine', '--spec', 'spec.json'], /--router must be one of/],
@@ -320,7 +323,7 @@ printf 'fab' > "$FAB_RELEASE_OUT/fab.zip"
 
 test('cancelling stops the running tool and its operation with confirmed cleanup', needsBinary, async t => {
   const root = project(t, WRITER(MOVED, 0, 'await new Promise(done => setTimeout(done, 60000));'));
-  const call = pcb(root, 'edit', 'X', '--kind', 'place', '--spec', 'spec.json', '--detach', '--json');
+  const call = pcb(root, 'edit', 'X', '--kind', 'place', '--origin', 'hand', '--spec', 'spec.json', '--detach', '--json');
   assert.equal(call.status, 0, call.stderr);
   const id = (JSON.parse(call.stdout) as Row).run_id as string, folder = join(root, '.gate/cli', id);
   for (let i = 0; i < 200 && !eventRows(folder).some(row => row.type === 'tool.output' || row.type === 'tool.start'); i++) await delay(50);
@@ -332,7 +335,7 @@ test('cancelling stops the running tool and its operation with confirmed cleanup
 
 test('a deadline ends the candidate as a timeout, never as a verdict', needsBinary, async t => {
   const root = project(t, WRITER(MOVED, 0, 'await new Promise(done => setTimeout(done, 60000));'));
-  const { result } = await run(root, 'edit', 'X', '--kind', 'place', '--spec', 'spec.json', '--timeout', '1');
+  const { result } = await run(root, 'edit', 'X', '--kind', 'place', '--origin', 'hand', '--spec', 'spec.json', '--timeout', '1');
   assert.equal(result.status, 'timeout');
   assert.equal(result.exit_code, 124);
   assert.equal(result.candidate_verified, undefined);
