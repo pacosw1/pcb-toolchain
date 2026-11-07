@@ -3,7 +3,7 @@
 //
 //   node tools/build-bom-verified.mjs BOARD [--boards N]
 //
-// 1. kicad-cli netlist of the board schematic (gate.json / gate.pending.json names the project); one line per C-number
+// 1. kicad-cli netlist of the board schematic (gate.json, or gate.pending.json when the registry row has pending_gate, names the project); one line per C-number
 //    (footprint iot-lab:<C>), DNP parts on their own line.
 // 2. BOARD/BOM-JLC.csv (Designator, Value, LCSC Part #) -> tools/jlc_stock.mjs -> registry/evidence/<today>/<BOARD>-stock.json
 //    (class Basic / Extended, stock, sha256 of the response).
@@ -16,7 +16,7 @@ import {existsSync, mkdirSync, mkdtempSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, relative} from 'node:path';
 import {PyError, cli, compare, csvLine, get, head, item, jsonLoad, osError, parseArgs, print, processText, pyStr, readText, run, sorted, splitlines, strip, today, truthy} from './lib/py-compat.mjs';
-import {packetDirectory} from './lib/board-registry.mjs';
+import {gateFileName, packetDirectory} from './lib/board-registry.mjs';
 import {evidenceLookup} from './lib/bom-evidence.mjs';
 import {fileRoot} from './lib/project-root.mjs';
 import {findText, iter, parseXml} from './lib/xml-read.mjs';
@@ -29,9 +29,9 @@ function main() {
   const a = parseArgs({prog: 'build-bom-verified.mjs', positionals: ['board'], options: [{flag: '--boards', type: 'int', fallback: 5n}]}, process.argv.slice(2));
   const gdir = join(ROOT, 'hardware-design/boards', a.board);   // gate folder
   const bdir = join(ROOT, 'hardware-design/boards', packetDirectory(ROOT, a.board));   // packet folder: the owner of a revision gate
-  const config = ['gate.json', 'gate.pending.json'].map(name => join(gdir, name)).find(path => existsSync(path));
-  if (config === undefined) throw new PyError('StopIteration', '');
-  const sch = join(gdir, item(jsonLoad(config), 'project') + '.kicad_sch');
+  const gate = gateFileName(ROOT, a.board, gdir);   // the registry row decides active or pending; a conflict is refused
+  if (gate === null) throw new PyError('StopIteration', '');
+  const sch = join(gdir, item(jsonLoad(join(gdir, gate)), 'project') + '.kicad_sch');
   const xml = join(mkdtempSync(join(tmpdir(), 'tmp')), 'net.xml');
   run(KCLI, ['sch', 'export', 'netlist', '--format', 'kicadxml', '-o', xml, sch], {check: true});
   const lines = new Map();   // "<C>|<dnp>" -> line, in netlist order

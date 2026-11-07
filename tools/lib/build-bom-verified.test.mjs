@@ -28,7 +28,7 @@ function fixture(t, registry) {
   mkdirSync(board, {recursive: true});
   writeFileSync(join(board, 'gate.json'), '{"project":"cad/B"}');
   mkdirSync(join(root, 'bin'));
-  writeFileSync(join(root, 'bin/kicad-cli'), `#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && { out=$2; shift; }; shift; done\ncp "${root}/net.xml" "$out"\n`, {mode: 0o755});
+  writeFileSync(join(root, 'bin/kicad-cli'), `#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && { out=$2; shift; }; last=$1; shift; done\nprintf '%s' "$last" > "${root}/sch.arg"\ncp "${root}/net.xml" "$out"\n`, {mode: 0o755});
   writeFileSync(join(root, 'bin/curl'), `#!/bin/sh\nprintf '%s' '{"data":{"componentPageInfo":{"list":[{"componentCode":"C1","componentModelEn":"M","componentLibraryType":"base","stockCount":99999,"componentPrices":[]}]}}}'\n`, {mode: 0o755});
   writeFileSync(join(root, 'net.xml'), NET);
   if (registry) {
@@ -151,6 +151,44 @@ test('a gate-only board writes into the directory of the board that owns its rev
   assert.equal(rows(f, own)[1][SHEET], '../../registry/datasheets/Part_C1.pdf');
   assert.equal(readFileSync(join(own, 'BOM-JLC.csv'), 'utf8'), 'Comment,Designator,Footprint,LCSC Part #\r\n1k & more,"R10,R2",C1,C1\r\n');
   assert.deepEqual(readdirSync(join(f.root, 'hardware-design/boards/GO')), ['gate.json']);
+});
+// The gate state of a board comes from its registry row, not from which gate file names exist.
+function gateFixture(t, row, files) {
+  const f = fixture(t, [{id: 'B', directory: 'B', kind: 'board', lifecycle: 'planned', ...row}]);
+  rmSync(join(f.board, 'gate.json'));
+  for (const name of files) writeFileSync(join(f.board, name), JSON.stringify({project: `cad/${name}`}));
+  evidence(f, '2026-01-01/C1.json');
+  datasheet(f, 'Part_C1.pdf');
+  return f;
+}
+const schematic = f => readFileSync(join(f.root, 'sch.arg'), 'utf8');
+test('both gate files and no pending_gate in the registry row: gate.json is the active gate', t => {
+  const f = gateFixture(t, {}, ['gate.json', 'gate.pending.json']);
+  const r = f.run();
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(schematic(f), /hardware-design\/boards\/B\/cad\/gate.json\.kicad_sch$/);
+});
+test('pending_gate in the registry row and only gate.pending.json: the pending gate is read', t => {
+  const f = gateFixture(t, {pending_gate: 'gate.pending.json'}, ['gate.pending.json']);
+  const r = f.run();
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(schematic(f), /hardware-design\/boards\/B\/cad\/gate.pending.json\.kicad_sch$/);
+});
+test('pending_gate in the registry row and a gate.json: refuses and writes nothing', t => {
+  const f = gateFixture(t, {pending_gate: 'gate.pending.json'}, ['gate.json', 'gate.pending.json']);
+  const r = f.run();
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /^ValueError: B: the registry row has pending_gate but gate\.json exists\n$/);
+  assert.deepEqual(readdirSync(f.board).sort(), ['gate.json', 'gate.pending.json']);
+});
+test('only gate.pending.json and no pending_gate in the registry row: refuses', t => {
+  for (const row of [{}, {pending_gate: 'gate.json'}]) {
+    const f = gateFixture(t, row, ['gate.pending.json']);
+    const r = f.run();
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /^ValueError: B: .*pending_gate/);
+    assert.deepEqual(readdirSync(f.board), ['gate.pending.json']);
+  }
 });
 test('xml-read follows ElementTree on the KiCad netlist shape', () => {
   const root = parseXml('<?xml version="1.0"?><!-- c --><a x="1 &amp; 2" y=\'q\'><b>t<c/>tail</b><b/><d><![CDATA[<raw>]]></d></a>');
