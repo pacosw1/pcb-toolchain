@@ -6,7 +6,8 @@ import type { Report } from './design-contract-verifiers-async.ts';
 import { designServices } from './design-services.ts';
 import { designExemption } from './design-exemption.ts';
 import { checkManifest, reviewedContract, type ReviewServices } from './engineering-constraints.ts';
-import { prerequisiteStage, type AdmittedAction } from './pcb-action.ts';
+import { layoutGate } from './layout-plan.ts';
+import { prerequisiteStage, routesCopper, type AdmittedAction } from './pcb-action.ts';
 export { routesCopper } from './pcb-action.ts';
 import { atomicJson, readObject, sha256File } from './json-file.ts';
 import { verifyManifest } from './placement-rules.ts';
@@ -69,6 +70,16 @@ export async function designAdmission(root: string, folder: string, manifest: Op
       report: output, design_stage: through });
   }
   return report;
+}
+
+/** A run that places or routes needs an approved layout plan, or an exemption that writes one event. True when this stopped the run. */
+export function layoutAdmission(root: string, folder: string, manifest: OperationManifest, emit: Emit): boolean {
+  if (!routesCopper(manifest) && !(manifest.operation === 'edit' && manifest.kind === 'place')) return false;
+  const block = layoutGate(root, manifest.board, emit);
+  if (!block) return false;
+  atomicJson(join(folder, 'operation/result.json'), { status: 'failed', exit_code: 1, scope: 'layout_plan', operation: manifest.operation, blocker: block.code,
+    cause: block.message, candidate_verified: false, qualified: false, release_approved: false });
+  return true;
 }
 
 export function placementCheck(root: string, board: string, manifest: string, candidate: string, output: string, screens: EscapeStageReceipts): Row {

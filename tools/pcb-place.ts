@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { runMain, UsageError } from './lib/cli.ts';
 import { checkPlacementRules, placementRulesPath } from './lib/placement-rules.ts';
 import { verifySeal } from './lib/cad-seal.ts';
+import { layoutGate, layoutLog } from './lib/layout-plan.ts';
 import type { Dict } from './lib/py-values.ts';
 import { footprints } from './lib/native-board.ts';
 import { boardConfig } from './lib/pcb-workflow.ts';
@@ -100,6 +101,13 @@ export function showCandidates(report: { candidates: Candidate[] }, json: boolea
   return legal.length ? 0 : 3;
 }
 
+/** `place` runs only on a sealed board with an approved layout plan or a recorded exemption. */
+export function admitPlace(root: string, board: string): void {
+  verifySeal(root, board);
+  const block = layoutGate(root, board, layoutLog(root, board));
+  if (block) throw new Error(block.message);
+}
+
 function main(given: string[]): number {
   const argv = [...given];
   let explicit: string | undefined;
@@ -110,7 +118,7 @@ function main(given: string[]): number {
   const [board] = a.positionals;
   if (!board) throw new UsageError(USAGE);
   const root = projectRoot(explicit);
-  verifySeal(root, board);
+  admitPlace(root, board);
   const options = { out: a.text('--out'), seed: a.int('--seed') ?? 1, epochs: a.int('--epochs') ?? 8, steps: a.int('--steps') ?? 20000 };
   if (!a.has('--seeds')) console.log(jsonDumps(placeBoard(root, board, options)));
   else {

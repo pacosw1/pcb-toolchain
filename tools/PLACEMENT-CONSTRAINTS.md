@@ -165,3 +165,11 @@ the placer's `components.hpwl` as wirelength (null if absent), and `estimates`
 with its congestion, crossing, blocked-via and escape terms (null if absent). Non-distance
 rules without a millimetre margin report null. Without `--seeds`, the existing
 single-spec output and filename stay unchanged. `--out` is only for that mode.
+
+## Layout plan
+
+Placement starts only after a person approves `hardware-design/boards/BOARD/layout-plan.json`
+(schema `iot-lab.layout-plan.v1`). Each intent has an `id`, a `statement` and `rule_ids`. Every rule id must name
+a rule of the board rule file above. The plan also names the route plan. `tools/pcb layout BOARD --approve --by NAME
+--reason TEXT` stores the sha256 of the rule file and of the route plan. If one of them changes, the approval is
+stale and `place` and `route` stop until a person approves again. See "Layout plan" in `PCB-CLI.md`.

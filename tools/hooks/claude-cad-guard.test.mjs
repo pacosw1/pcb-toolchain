@@ -73,3 +73,14 @@ test('board placement rule edits are denied and mutation commands ask', () => {
   assert.equal(decisionOf(run({tool_name:'Bash',tool_input:{command:'tools/pcb --project /tmp/board constraints X --remove near --reason updated'}})).permissionDecision,'ask');
   assert.equal(run({tool_name:'Bash',tool_input:{command:'tools/pcb constraints X --json'}}).stdout,'');
 });
+
+test('pcb layout --approve asks a person, and so does a direct edit of a layout plan', () => {
+  for (const command of ['tools/pcb layout X --approve --by Ana --reason ok', 'tools/pcb --project /tmp/board layout X --approve --by Ana --reason ok']) {
+    const out = decisionOf(run({tool_name: 'Bash', tool_input: {command}}));
+    assert.equal(out.permissionDecision, 'ask');
+    assert.match(out.permissionDecisionReason, /person/);
+  }
+  for (const tool_name of ['Edit', 'Write']) assert.equal(decisionOf(run({tool_name, tool_input: {file_path: '/p/hardware-design/boards/X/layout-plan.json'}})).permissionDecision, 'ask');
+  for (const command of ['tools/pcb layout X', 'tools/pcb layout X --json']) assert.equal(run({tool_name: 'Bash', tool_input: {command}}).stdout, '');
+  assert.equal(run({tool_name: 'Edit', tool_input: {file_path: '/p/scratch/layout-plan.json'}}).stdout, '');
+});

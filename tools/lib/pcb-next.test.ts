@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import { exemptBoard } from './design-exempt-fixture.ts';
 import { sealFixtureBoard } from './cad-seal-fixture.ts';
 import { atomicJson, readObject, sha256File } from './json-file.ts';
+import { approveLayoutPlan } from './layout-plan.ts';
 import { evidenceFiles } from './pcb-evidence.ts';
 import { context as boardContext } from './pcb-workflow.ts';
 import { jsonDumps, PyError } from './py-compat.mjs';
@@ -71,6 +72,30 @@ test('a board with no design contract and no exemption is blocked; a contract or
   const report = await f.next(); assert.equal(report.state, 'blocked'); assert.equal(report.blocker?.code, 'design_contract_missing'); assert.equal(f.probes(), 0);
   atomicJson(join(f.root, 'hardware-design/registry/design-contracts/X.json'), { identity: { design_id: 'X' }, current_stage: 'requirements' });
   assert.equal((await f.next()).blocker?.code, 'design_assessment_missing');
+});
+
+test('a board with no approved layout plan is blocked with the code and the command; an approved or exempt board is not', async t => {
+  const f = fixture(t);
+  assert.notEqual((await f.next()).blocker?.code, 'layout_plan_missing', 'the fixture board is exempt');
+  exemptBoard(f.root, 'X', undefined, {}, false);
+  const none = await f.next();
+  assert.deepEqual([none.state, none.blocker?.code, none.next_action?.command], ['blocked', 'layout_plan_missing', 'tools/pcb layout X']);
+  assert.match(String(none.blocker?.message), /X has no layout plan/);
+  assert.equal(f.probes(), 0);
+  writeFileSync(join(f.board, 'SPEC.md'), 'limit');
+  writeFileSync(join(f.board, 'route.json'), JSON.stringify({ schema: 'iot-lab.route.v1', backend: 'tracemaker', layers: ['F.Cu', 'B.Cu'], stages: [{ name: 'main' }] }));
+  writeFileSync(join(f.board, 'placement-constraints.json'), JSON.stringify({ schema: 'iot-lab.engineering-constraints.v1', rules: [{ id: 'near', kind: 'part_distance', source: { path: 'hardware-design/boards/X/SPEC.md', sha256: sha256File(join(f.board, 'SPEC.md')), page: 1 } }] }));
+  writeFileSync(join(f.board, 'layout-plan.json'), JSON.stringify({ schema: 'iot-lab.layout-plan.v1', intents: [{ id: 'a', statement: 'U1 near the edge', rule_ids: ['near'] }], route_plan: 'hardware-design/boards/X/route.json', approval: null }));
+  sealFixtureBoard(f.root, 'X');
+  const unapproved = await f.next();
+  assert.deepEqual([unapproved.state, unapproved.blocker?.code, unapproved.next_action?.command], ['blocked', 'layout_plan_missing', 'tools/pcb layout X --approve --by NAME --reason TEXT']);
+  await approveLayoutPlan(f.root, 'X', 'Ana', 'reviewed');
+  assert.ok(!String((await f.next()).blocker?.code ?? '').startsWith('layout_plan'));
+  writeFileSync(join(f.board, 'route.json'), JSON.stringify({ schema: 'iot-lab.route.v1', backend: 'tracemaker', layers: ['F.Cu'], stages: [{ name: 'main' }] }));
+  const stale = await f.next();
+  assert.deepEqual([stale.state, stale.blocker?.code, stale.next_action?.command], ['blocked', 'layout_plan_stale', 'tools/pcb layout X --approve --by NAME --reason TEXT']);
+  writeFileSync(join(f.board, 'layout-plan.json'), '{not json');
+  assert.equal((await f.next()).blocker?.code, 'layout_plan_missing', 'an unreadable plan is not an approval');
 });
 
 test('missing native inputs name the exact source without a probe', async t => {

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Claude Code PreToolUse hook for the CAD seal (tools/PCB-CLI.md, "CAD seal").
 // Denies a direct edit of board CAD under hardware-design/ and asks a person before `pcb seal ... --accept`.
+// Asks a person before `pcb layout ... --approve` and before an edit of a board layout-plan.json.
 // Standalone on purpose: no imports from tools/lib. It fails open for input it cannot read, so it never blocks an unrelated tool.
 import {readFileSync} from 'node:fs';
 
@@ -18,8 +19,12 @@ export function guard(input) {
     if (CAD_FILE.test(path) && path.includes('hardware-design/')) {
       return decision('deny', 'Board CAD changes only through tools/pcb: a direct edit breaks the CAD seal. Use the tools/pcb commands, or ask a person to edit in KiCad and run tools/pcb seal BOARD --accept --reason TEXT.');
     }
+    if (path.endsWith('/layout-plan.json') && path.includes('hardware-design/boards/')) {
+      return decision('ask', 'A person must approve a change of the layout plan: it holds the approval that lets tools/pcb place and route run.');
+    }
   } else if (tool === 'Bash') {
     const command = String(args.command ?? '');
+    if (/\bpcb\b[^\n;&|]*\blayout\b/.test(command) && /--approve\b/.test(command)) return decision('ask', 'A person must approve the layout plan: tools/pcb layout --approve lets place and route run on the current rules and route plan.');
     if (/\bpcb\b[^\n;&|]*\bconstraints\b/.test(command) && /--(?:add|remove)\b/.test(command)) return decision('ask', 'Approve the board placement rule change and its reason.');
     if (command.includes('pcb seal') && command.includes('--accept')) {
       return decision('ask', 'A person must approve an accepted CAD edit: tools/pcb seal --accept records the current CAD as the sealed state.');

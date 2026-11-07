@@ -304,6 +304,31 @@ before a `pcb seal ... --accept` command runs:
 The staged-commit check (`tools/check-staged-gates.mjs`) hashes the staged CAD of each board and fails the commit
 when it does not agree with the staged or committed `cad-seal.json`.
 
+## Layout plan
+
+Rule: a person approves a layout plan before `place` or `route` runs. The commands that stop without an approved
+plan are `tools/pcb place`, `route`, `repair` and `edit --kind place`. `check`, `build` and `release` do not stop.
+
+`hardware-design/boards/BOARD/layout-plan.json` (schema `iot-lab.layout-plan.v1`) holds the `intents`
+(`{id, statement, rule_ids}`; each rule id exists in `placement-constraints.json`), the `route_plan` path (checked
+with the route plan schema) and the `approval`, which is `null` until a person approves.
+
+```sh
+tools/pcb layout BOARD [--json]
+tools/pcb layout BOARD --approve --by NAME --reason TEXT
+```
+
+The first form is read-only. It exits 1 when the plan is missing, not valid, not approved or stale. The second form
+records `by`, `reason`, and the sha256 of `placement-constraints.json` and of the route plan. It needs a valid plan and
+an intact CAD seal. A change to the rules or to the route plan after the approval makes the approval stale.
+A stale or missing plan stops the command with the code `layout_plan_stale` or `layout_plan_missing`. The message names
+the board and the next command. `tools/pcb next BOARD` returns the state `blocked` with the same code and command.
+
+A board can carry `layout_plan_exempt: {reason}` in its row of `hardware-design/registry/boards.json`. An exempt board
+continues, and each run writes one `layout_plan.exempt` event. A row with an empty reason stops the command.
+The `claude-cad-guard.mjs` hook asks a person before `pcb layout ... --approve` and before a direct edit of a
+`layout-plan.json`.
+
 ## Release, blocks and measurement
 
 [Release workflow](RELEASE-WORKFLOW.md) describes fresh staged fabrication,

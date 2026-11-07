@@ -353,3 +353,13 @@ test('a design contract exemption needs an object with a non-empty reason', t =>
     assert.deepEqual(details({ design_contract_exempt: bad }), ['design_contract_exempt must be an object with a non-empty reason'], JSON.stringify(bad));
   }
 });
+
+test('a layout plan exemption needs an object with a non-empty reason', t => {
+  const p = project(t);
+  goodBoard(p, 'GOOD');
+  const details = (more: Raw): string[] => { p.registry([entry('GOOD', more)]); return audit(p).findings.filter(finding => finding.type === 'registry_schema').map(finding => finding.detail); };
+  assert.deepEqual(details({ layout_plan_exempt: { reason: 'legacy board' } }), []);
+  for (const bad of [true, 'legacy', [], null, {}, { reason: '' }, { reason: ' ' }, { reason: 1 }]) {
+    assert.deepEqual(details({ layout_plan_exempt: bad }), ['layout_plan_exempt must be an object with a non-empty reason'], JSON.stringify(bad));
+  }
+});

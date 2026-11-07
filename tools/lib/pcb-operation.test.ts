@@ -13,7 +13,8 @@ import { exemptBoard } from './design-exempt-fixture.ts';
 import { BOARD as FIXTURE_BOARD, makeFixture } from './part-fixture.ts';
 import { verify } from './pcb-evidence.ts';
 import { postVerifyCommands } from './pcb-candidate-run.ts';
-import { candidateLayoutCheck, designAdmission, type OperationManifest } from './pcb-candidate-screens.ts';
+import { approveLayoutPlan } from './layout-plan.ts';
+import { candidateLayoutCheck, designAdmission, layoutAdmission, type OperationManifest } from './pcb-candidate-screens.ts';
 import { EscapeStageReceipts } from './route-decision-escape.ts';
 import { status } from './pcb-runs.ts';
 import { sha } from './pcb-workflow.ts';
@@ -554,6 +555,67 @@ test('design admission refuses a malformed exemption instead of continuing', asy
   const root = project(t);
   writeFileSync(join(root, 'hardware-design/registry/boards.json'), JSON.stringify({ schema_version: 1, boards: [{ id: 'X', design_contract_exempt: { reason: '' } }] }));
   await assert.rejects(admission(t, root), /design_contract_exempt/);
+});
+
+function layoutStop(root: string, operation: string, kind?: string) {
+  const folder = mkdtempSync(join(root, 'run-')), events: Row[] = [];
+  mkdirSync(join(folder, 'operation'), { recursive: true });
+  const manifest = { root, board: 'X', operation, kind, node: process.execPath, timeout_s: 1 } as OperationManifest;
+  const stopped = layoutAdmission(root, folder, manifest, (type, data) => { events.push({ type, ...data }); });
+  return { stopped, events, result: existsSync(join(folder, 'operation/result.json')) ? JSON.parse(readFileSync(join(folder, 'operation/result.json'), 'utf8')) as Row : null };
+}
+
+test('layout admission stops a place or route run with no approved plan, and names the board and the command', t => {
+  const root = project(t);
+  exemptBoard(root, 'X', undefined, {}, false);
+  for (const [operation, kind] of [['edit', 'place'], ['edit', 'route'], ['route', undefined], ['repair', undefined]] as const) {
+    const { stopped, events, result } = layoutStop(root, operation, kind);
+    assert.equal(stopped, true, `${operation} ${kind}`);
+    assert.deepEqual(events, []);
+    assert.deepEqual([result?.status, result?.exit_code, result?.scope, result?.blocker, result?.candidate_verified, result?.qualified, result?.release_approved], ['failed', 1, 'layout_plan', 'layout_plan_missing', false, false, false]);
+    assert.match(String(result?.cause), /X has no layout plan/);
+    assert.match(String(result?.cause), /tools\/pcb layout X --approve/);
+  }
+});
+
+test('layout admission does not gate a run that neither places nor routes', t => {
+  const root = project(t);
+  exemptBoard(root, 'X', undefined, {}, false);
+  for (const [operation, kind] of [['build', undefined], ['release', undefined], ['check', undefined]] as const) {
+    assert.deepEqual(layoutStop(root, operation, kind), { stopped: false, events: [], result: null }, operation);
+  }
+});
+
+test('layout admission: an exempt board continues with one layout_plan.exempt event; an approved plan continues with none', async t => {
+  const root = project(t);
+  const exempt = layoutStop(root, 'edit', 'place');
+  assert.equal(exempt.stopped, false);
+  assert.deepEqual(exempt.events.map(row => [row.type, row.board, row.reason]), [['layout_plan.exempt', 'X', 'test fixture has no layout plan']]);
+  assert.equal(exempt.result, null);
+  exemptBoard(root, 'X', undefined, {}, false);
+  const folder = join(root, 'hardware-design/boards/X');
+  writeFileSync(join(folder, 'SPEC.md'), 'limit');
+  writeFileSync(join(folder, 'route.json'), JSON.stringify({ schema: 'iot-lab.route.v1', backend: 'tracemaker', layers: ['F.Cu', 'B.Cu'], stages: [{ name: 'main' }] }));
+  writeFileSync(join(folder, 'placement-constraints.json'), JSON.stringify({ schema: 'iot-lab.engineering-constraints.v1', rules: [{ id: 'near', kind: 'part_distance', source: { path: 'hardware-design/boards/X/SPEC.md', sha256: sha(join(folder, 'SPEC.md')), page: 1 } }] }));
+  writeFileSync(join(folder, 'layout-plan.json'), JSON.stringify({ schema: 'iot-lab.layout-plan.v1', intents: [{ id: 'a', statement: 'U1 near the edge', rule_ids: ['near'] }], route_plan: 'hardware-design/boards/X/route.json', approval: null }));
+  sealFixtureBoard(root, 'X');
+  assert.match(String(layoutStop(root, 'route').result?.cause), /not approved/);
+  await approveLayoutPlan(root, 'X', 'Ana', 'reviewed');
+  assert.deepEqual(layoutStop(root, 'route'), { stopped: false, events: [], result: null });
+  writeFileSync(join(folder, 'route.json'), JSON.stringify({ schema: 'iot-lab.route.v1', backend: 'tracemaker', layers: ['F.Cu'], stages: [{ name: 'main' }] }));
+  const stale = layoutStop(root, 'route');
+  assert.equal(stale.stopped, true);
+  assert.equal(stale.result?.blocker, 'layout_plan_stale');
+});
+
+test('a place run for a board with no approved layout plan fails before the snapshot', needsBinary, async t => {
+  const root = project(t);
+  exemptBoard(root, 'X', undefined, {}, false);
+  const { folder, result } = await edit(root);
+  assert.equal(result.status, 'failed', String(result.cause));
+  assert.equal(result.scope, 'layout_plan');
+  assert.match(String(result.cause), /tools\/pcb layout X --approve/);
+  assert.equal(existsSync(join(folder, 'workspace')), false);
 });
 
 test('the candidate layout screen writes a blocked report for a contract it cannot judge', t => {

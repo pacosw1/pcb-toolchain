@@ -9,7 +9,7 @@ import { atomicJson, plainJson, readObject, sha256File } from './json-file.ts';
 import { iotroutePolicy } from './outcome-controls.ts';
 import { checkPlacementRules, verifyManifest } from './placement-rules.ts';
 import { verifyAction } from './pcb-action.ts';
-import { candidateLayoutCheck, designAdmission, type OperationManifest, placementCheck, routesCopper } from './pcb-candidate-screens.ts';
+import { candidateLayoutCheck, designAdmission, layoutAdmission, type OperationManifest, placementCheck, routesCopper } from './pcb-candidate-screens.ts';
 import { parentCandidate } from './pcb-candidate.ts';
 import { declaredPours, pcbIdentity, type PourSet } from './pcb-identity.ts';
 import { type Emit, execute, measuredStage, operationEvent, type Row } from './pcb-operation-log.ts';
@@ -337,6 +337,7 @@ export async function runOperation(folderPath: string): Promise<number> {
   verifyAction(manifest, manifest.action);
   const design = await designAdmission(root, folder, manifest, emit);
   if (design && design.status !== 'passed') return 1;
+  if (layoutAdmission(root, folder, manifest, emit)) return 1;
   if (manifest.operation === 'release') return release(folder, root, manifest);
   const parent = manifest.from_run ? parentCandidate(root, manifest.board, manifest.from_run) : null;
   return candidateOperation(folder, root, manifest, design as unknown as Row | null, parent, emit);
