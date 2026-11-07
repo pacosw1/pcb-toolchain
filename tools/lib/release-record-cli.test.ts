@@ -13,9 +13,10 @@ const sha = (data: string | Buffer) => createHash('sha256').update(data).digest(
 const MANIFEST = '{"schema_version":1,"board":"X","g5_ready":false}\n';
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('image')]);
 
-function fixture(t: { after(fn: () => void): void }) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'release-record-cli-')));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+function fixture(t: { after(fn: () => void): void }, where = '') {
+  const top = realpathSync(mkdtempSync(join(tmpdir(), 'release-record-cli-')));
+  const root = where ? join(top, where) : top;
+  t.after(() => rmSync(top, { recursive: true, force: true }));
   const board = join(root, 'hardware-design/boards/X');
   mkdirSync(join(board, 'cad'), { recursive: true });
   mkdirSync(join(root, 'candidate'));
@@ -103,4 +104,23 @@ test('an order is refused with no approval, with a stale approval, and with a ba
   assert.notEqual(stale.status, 0);
   assert.match(stale.stderr, /stale/);
   assert.equal(existsSync(join(f.board, 'release-orders.jsonl')), false);
+});
+
+test('approve is refused in a run workspace and writes nothing', t => {
+  const f = fixture(t, '.gate/workspace');
+  const done = f.approve();
+  assert.notEqual(done.status, 0);
+  assert.match(done.stderr, /not canonical/);
+  assert.equal(existsSync(join(f.board, 'release-approval.json')), false);
+});
+
+test('an order writes one log line, and its flags need --record', t => {
+  const f = fixture(t);
+  assert.equal(f.approve().status, 0);
+  assert.equal(f.order().status, 0);
+  const log = readFileSync(join(f.root, '.gate/release-approval/X.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(log.map(row => row.type), ['release_approval.approved', 'release_order.recorded']);
+  assert.equal(log[1].reference, 'JLC-1');
+  assert.equal(f.call('release-order', 'X', '--by', 'Ana').status, 2);
+  assert.equal(f.call('release-order', 'X', '--record', '--candidate', join(f.root, 'candidate'), '--by', 'Ana').status, 2);
 });

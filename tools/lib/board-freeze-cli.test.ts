@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -8,9 +8,10 @@ import { fileURLToPath } from 'node:url';
 
 const cli = fileURLToPath(new URL('../pcb-unfreeze.ts', import.meta.url));
 
-function fixture(t: { after(fn: () => void): void }, frozen: boolean) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'unfreeze-cli-')));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+function fixture(t: { after(fn: () => void): void }, frozen: boolean, where = '') {
+  const top = realpathSync(mkdtempSync(join(tmpdir(), 'unfreeze-cli-')));
+  const root = where ? join(top, where) : top;
+  t.after(() => rmSync(top, { recursive: true, force: true }));
   mkdirSync(join(root, 'hardware-design/boards/X'), { recursive: true });
   mkdirSync(join(root, 'hardware-design/registry'), { recursive: true });
   writeFileSync(join(root, 'hardware-design/registry/boards.json'), JSON.stringify({ schema_version: 1, boards: [{ id: 'X', directory: 'X', ...(frozen ? { frozen: { reason: 'sent to the fab' } } : {}) }] }));
@@ -35,6 +36,14 @@ test('record writes the unfreeze record and then the state is unfrozen', t => {
   const record = JSON.parse(readFileSync(join(f.root, 'hardware-design/boards/X/unfreeze.json'), 'utf8'));
   assert.deepEqual([record.schema, record.board, record.by, record.reason, record.frozen_reason], ['iot-lab.unfreeze.v1', 'X', 'Ana', 'fix a short', 'sent to the fab']);
   assert.equal(f.call('X').status, 0);
+});
+
+test('record is refused in a run workspace and writes nothing', t => {
+  const f = fixture(t, true, '.gate/workspace');
+  const done = f.call('X', '--record', '--by', 'Ana', '--reason', 'fix');
+  assert.notEqual(done.status, 0);
+  assert.match(done.stderr, /not canonical/);
+  assert.equal(existsSync(join(f.root, 'hardware-design/boards/X/unfreeze.json')), false);
 });
 
 test('record needs both values, a frozen board and a known board', t => {

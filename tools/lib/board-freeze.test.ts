@@ -7,6 +7,7 @@ import { assertWritable, freezeStatus, recordUnfreeze } from './board-freeze.ts'
 import { acceptSeal, sealedWrite } from './cad-seal.ts';
 import { sealFixtureBoard } from './cad-seal-fixture.ts';
 import { gateInputs } from './gate-inputs.mjs';
+import { changeRules } from '../pcb-constraints.ts';
 
 const writer = { tool: 'unit', run_id: null };
 const NONE = Symbol('no frozen field');
@@ -62,6 +63,13 @@ test('a record of the unfreeze is refused for a board that is not frozen and wit
   assert.throws(() => recordUnfreeze(p.root, 'X', { by: ' ', reason: 'x' }), /--by/);
   assert.throws(() => recordUnfreeze(p.root, 'X', { by: 'Ana', reason: '' }), /--reason/);
   assert.equal(existsSync(p.record), false);
+});
+
+test('a rule change on a frozen board is refused before it reads anything', async t => {
+  const p = project(t);
+  await assert.rejects(changeRules(p.root, 'X', { remove: 'any-rule', reason: 'fix' }), /X is frozen/);
+  recordUnfreeze(p.root, 'X', { by: 'Ana', reason: 'fix' });
+  await assert.rejects(changeRules(p.root, 'X', { remove: 'any-rule', reason: 'fix' }), /unknown rule: any-rule/);
 });
 
 test('the unfreeze record is no gate input', t => {

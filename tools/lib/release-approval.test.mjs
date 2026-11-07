@@ -91,6 +91,14 @@ test('a malformed record is invalid and never approved', t => {
     writeFileSync(f.record, JSON.stringify(bad));
     assert.equal(releaseApprovalStatus(f.root, 'X', f.candidate).state, 'invalid', JSON.stringify(bad).slice(0, 60));
   }
+  for (const path of ['/etc/passwd', '../outside.json', 'a/../../outside.json']) {
+    for (const key of ['report', 'image']) {
+      writeFileSync(f.record, JSON.stringify({...record, [key]: path}));
+      const status = releaseApprovalStatus(f.root, 'X', f.candidate);
+      assert.equal(status.state, 'invalid', `${key} ${path}`);
+      assert.match(status.problems.join(' '), /inside the project/);
+    }
+  }
   writeFileSync(f.record, 'not json');
   const unreadable = releaseApprovalStatus(f.root, 'X', f.candidate);
   assert.equal(unreadable.state, 'invalid');

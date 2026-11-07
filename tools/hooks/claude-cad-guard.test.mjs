@@ -114,6 +114,7 @@ test('an edit of the frozen field, an unfreeze record or the unfreeze command as
     {tool_name: 'Edit', tool_input: {file_path: REGISTRY, old_string: '"id": "X"', new_string: '"id": "X", "frozen": {"reason": "x"}'}},
     {tool_name: 'Write', tool_input: {file_path: '/p/hardware-design/boards/B/unfreeze.json', content: '{}'}},
     {tool_name: 'Bash', tool_input: {command: 'tools/pcb unfreeze B --record --by Ana --reason x'}},
+    {tool_name: 'Bash', tool_input: {command: `sed -i 's/"id": "X"/"id": "X", "frozen": {"reason": "x"}/' hardware-design/registry/boards.json`}},
   ]) assert.equal(decisionOf(run(input)).permissionDecision, 'ask', JSON.stringify(input));
   for (const input of [
     {tool_name: 'Edit', tool_input: {file_path: REGISTRY, old_string: '"id": "X"', new_string: '"id": "Y"'}},

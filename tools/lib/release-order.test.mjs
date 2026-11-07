@@ -86,6 +86,19 @@ test('a damaged order log is an error, never an empty list', t => {
   assert.throws(() => releaseOrders(f.root, 'X'), /line 1/);
 });
 
+test('an order line with an extra key, a missing key or a quantity that is not a positive whole number is an error', t => {
+  const f = fixture(t);
+  const entry = recordOrder(f.root, 'X', f.candidate, f.order());
+  const path = releaseOrdersPath(f.root, 'X');
+  const bad = [{...entry, extra: 1}, Object.fromEntries(Object.entries(entry).filter(([key]) => key !== 'what')), ...[0, -1, 1.5, '5', null].map(quantity => ({...entry, quantity}))];
+  for (const line of bad) {
+    writeFileSync(path, JSON.stringify(line) + '\n');
+    assert.throws(() => releaseOrders(f.root, 'X'), /line 1/, JSON.stringify(line).slice(0, 80));
+  }
+  writeFileSync(path, JSON.stringify(entry) + '\n');
+  assert.equal(releaseOrders(f.root, 'X').length, 1);
+});
+
 test('no order log reads as no orders', t => {
   assert.deepEqual(releaseOrders(fixture(t).root, 'X'), []);
 });
