@@ -264,6 +264,8 @@ for(const [name,client,cause] of [
   ['a submit with no answer',{exit:1,noId:true},/no job id: the job may exist/],
   ['a job line whose id cannot be read',{exit:2,noId:true,stderr:'pcb-job: job J1 (queued)'},/job id cannot be read: the job may exist/],
   ['HTTP 500 at submit',{exit:2,noId:true,stderr:'pcb-job: 500: internal'},/no job id: the job may exist/],
+  ['exit 2 with a refusal text but not the client\'s proof',{exit:2,noId:true,stderr:'pcb-job: 429: queue full'},/no job id: the job may exist/],
+  ['an error of the client itself',{exit:1,noId:true,stderr:'pcb-job: usage: x'},/no job id: the job may exist/],
   ['an attempt that ran before one that could not start',{exit:1,job:jobOf('failed','start',null,[{outcome:'infra'},{outcome:'start'}])},/start detail/],
 ]) test(`partway, ${name}: exit 2, a cause in result.json, no local run`,async t=>{
   const p=project(t,{client});
@@ -277,7 +279,7 @@ for(const [name,client,cause] of [
 });
 
 for(const [name,client] of [
-  ['the daemon refused the submit',{exit:2,noId:true,stderr:'pcb-job: 429: queue full'}],
+  ['the client proved that the daemon took no job (exit 76)',{exit:76,noId:true,stderr:'pcb-job: 429: queue full'}],
   ['every attempt ended start',{exit:1,job:jobOf('failed','start',null,[{outcome:'start'}])}],
 ]) test(`partway, ${name}: the job never started, so the run is local on a clean folder`,async t=>{
   const p=project(t,{client});

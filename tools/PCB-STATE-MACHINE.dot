@@ -36,7 +36,7 @@ digraph pcb_state_machine {
     A17 [label="A17 Finishing edits\nrecorded · stitch, silk, test points" fillcolor="#fff0c2" color="#c98a00"];
     B17 [label="B17 Route env\nenforced · set variable refuses the run" fillcolor="#d7f0e0" color="#1f7a45"];
     A16 [label="A16 Diagnose + repair\nenforced · bounded repair" fillcolor="#d7f0e0" color="#1f7a45"];
-    B18 [label="B18 Dispatch fallback\nimplicit · stderr text match" fillcolor="#fbd5d5" color="#c0392b"];
+    B18 [label="B18 Dispatch fallback\nenforced · only exit 76 runs local" fillcolor="#d7f0e0" color="#1f7a45"];
   }
   subgraph cluster_gate { label="Gate and adopt"; style=rounded; color="#b9bec7"; bgcolor="#f5f6f8";
     A20 [label="A20 Build (pipeline)\nenforced · alternative to place + route" fillcolor="#d7f0e0" color="#1f7a45"];

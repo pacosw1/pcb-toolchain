@@ -75,7 +75,7 @@ Build (A20) is another path to a candidate: a pipeline script can make the whole
 | B15 Person approval (who approves) | None. | `--by NAME` is any text. | The name in the approval. | A8, B4, B5. [none] | A regex in a Claude Code hook only: `hooks/claude-cad-guard.mjs:33-36`. `lib/layout-plan.ts:175`. | `implicit` |
 | B16 Gate configuration and check data files | None. | `gate.json` (`stage`, `checks`), `reference-planes.json`, `diff-pairs.json`, `current-paths.json`, `rf-lines.json`. | None. | A18. [none] | None. The seal pattern covers `.kicad_*` and `placement-constraints.json` only (`lib/cad-seal.ts:15`). | `implicit` |
 | B17 Route environment settings | None of `ROUTE_FEATURES`, `ROUTE_FEATURES_FILE`, `ROUTE_BOARD` is set (an empty value is unset). | The features come from `route-features.json`, `route_features` in the `gate.json` of the board, and the route plan. | None. The environment is not an input. | A14. [`ROUTE_FEATURES ... are set`: unset them and use `route_features` in `gate.json`] | `lib/pcb-candidate-admission.ts:31`, `:35-36` (`ROUTE_ENVIRONMENT`, for `build`, `edit`, `route` and `repair`). The gate hash binds `gate.json`. | `enforced` |
-| B18 Route dispatch fallback | None. | Exit code 2 and the stderr text. | A local route when the text says "the daemon took no job". | A14. [none] | `router/route-dispatch.mjs:353`. | `implicit` |
+| B18 Route dispatch fallback | The client exits 76 (`EXIT_NOT_TAKEN`) and prints no job id. | The exit code of the client. | A local route, only on exit 76. | A14. [any other exit: no verdict, exit 2, the job may exist and is not run again] | `router/route-dispatch.mjs` (`NOT_TAKEN`). `apps/job-daemon/src/client.ts` (`EXIT_NOT_TAKEN`, `notTaken`, `refusal`). The client proves it only for a stop before the job request, or a 4xx answer to it. | `enforced` |
 
 ## C. The states and codes of `pcb next`
 
@@ -121,7 +121,7 @@ A run that is not finished gives the state `observe` first.
 
 The list is sorted by the possible loss. The task numbers are the findings of CIP task #1555.
 Finding 1 (frozen board) is skipped on purpose: the lab removed `FOCUS.md`, so no board can be frozen.
-Findings 3, 4, 6, 7, 8, 10, 11 and 12 are fixed in the code and are not listed.
+Findings 3, 4, 6, 7, 8, 9, 10, 11 and 12 are fixed in the code and are not listed.
 
 | No. | Implicit state | Loss it can cause | Smallest enforcement |
 |---|---|---|---|
@@ -129,7 +129,6 @@ Findings 3, 4, 6, 7, 8, 10, 11 and 12 are fixed in the code and are not listed.
 | D2 | B16 Gate configuration and check data files | The stage is set to G3, or the `rf` key is removed. The gate passes with fewer checks. No record says who changed it. (#1555 finding 5) | Add `gate.json` and the check data files to the seal and the hook. Let the stage go up only, with a reason in the seal log. |
 | D3 | A22 Release approval G5 and A24 Order | A person orders boards without a recorded approval. Nobody can show what the person saw. The manifest always says `g5_ready: false`. | Add a release approval record, like the layout approval: name, reason, hash of the release manifest. `readiness` checks it. |
 | D4 | A6 Stackup (planned, #1554) | The layer count and the layer roles are chosen by habit. A wrong choice shows only after fabrication, as a wrong impedance or as false plane gaps. | Add the stage of #1554: a data file with layers and roles. The layout plan and the route plan must agree with it. |
-| D7 | B18 Route dispatch fallback | An error after the daemon took the job matches the rule. A local route runs while the daemon job also runs. Two results exist. (#1555 finding 9) | The client uses a distinct exit code only when it proved that nothing was sent. The dispatch matches only that code. |
 | D9 | A13 RF route order | RF nets route after other nets and lose their clear paths. The gate finds the loss late. | A check in the layout plan approval: the first route stage holds all nets of `rf-lines.json`. |
 | D10 | B14 Frozen board (skipped on purpose) | `pcb adopt` overwrites a frozen board with no baseline run. No board can be frozen now. (#1555 finding 1) | A `frozen` field in the registry with a reason. Fail closed when `FOCUS.md` has a Frozen heading that the registry does not list. |
 
@@ -141,9 +140,9 @@ The counts are for the rows of sections A and B.
 
 | Status | Section A | Section B | Total |
 |---|---|---|---|
-| `enforced` | 16 | 10 | 26 |
+| `enforced` | 16 | 11 | 27 |
 | `recorded` | 6 | 4 | 10 |
-| `implicit` | 3 | 4 | 7 |
+| `implicit` | 3 | 3 | 6 |
 | Total | 25 | 18 | 43 |
 
 ## F. How the diagram is made

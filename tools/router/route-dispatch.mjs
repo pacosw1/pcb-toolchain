@@ -21,7 +21,7 @@ import {liveCommand} from '../lib/live-command.mjs';
 // A daemon failure partway. A job that may have run is never run again here, because the same route would run twice:
 // after an unclear submit, a lost connection, a timeout or a lost result the exit is 2 and result.json names the job.
 // Local runs only when the job provably never started: the daemon refused the submit, the submit never left this Mac
-// (client exit 2 and no job id, except HTTP 500, which may come after the record), every attempt ended `start`, or the
+// (client exit 76 and no job id: the client proved it, by a stop before the job request or a 4xx answer to it), every attempt ended `start`, or the
 // job reached its queue bound (PCB_QUEUE_WAIT_S). The daemon ends that job itself, so no start can race the local run.
 //
 // The wait does not spend the run's time. --timeout starts when the job runs, and under `pcb` the seconds spent queued
@@ -42,7 +42,8 @@ const SPRINT_IMAGE='iot-lab-route:10.0-nightly-4fe1ca2060';
 const HAPPY='kicad-happy';
 const RECORD_SCHEMA='iot-lab.iotroute-run.v1';
 const DEFAULT_TIMEOUT_S=600;   // tools/pcb's --timeout default
-const CANCEL_MS=1500;          // lean_owned sends SIGKILL 2 s after SIGTERM
+const NOT_TAKEN=76;            // the client's proof that the daemon took no job (EXIT_NOT_TAKEN of apps/job-daemon/src/client.ts)
+const CANCEL_MS=1500;         // lean_owned sends SIGKILL 2 s after SIGTERM
 // To tune. A wait this long has a good chance to end: 90 % of the host's busy spells were over in 210 s (guard log,
 // 17 days to 2026-11-04), and the local run is there. tools/pcb-check-worker.ts has the same number; a test keeps them equal.
 const QUEUE_WAIT_S=300;
@@ -350,7 +351,7 @@ async function runOnDaemon(plan,timeoutS){
     if(!id){
       // A job line that this parser cannot read is not proof that no job exists. Never rerun on it.
       if(/^pcb-job: job\b/m.test(stderr))return noVerdict(plan,`submit printed a job line whose job id cannot be read: the job may exist, not rerun`,null,null);
-      if(code===2&&!/^pcb-job: 500:/m.test(stderr)){say('the daemon took no job');return null;}
+      if(code===NOT_TAKEN){say('the daemon took no job');return null;}
       return noVerdict(plan,`submit ended with exit ${code} and no job id: the job may exist, not rerun`,null,null);
     }
     if(code===3)return noVerdict(plan,`daemon unreachable, job ${id} goes on: pcb-job watch ${id}`,id,null);

@@ -364,6 +364,13 @@ such a run as not current, and for a run that waits for adoption it shows the im
 differently. Set the features in `route_features` of the `gate.json` of the board, or in the route plan. `tools/route-features.json`
 holds the defaults. The comment in that file about the environment applies to tools that are not candidate runs.
 
+## Route dispatch fallback
+
+`router/route-dispatch.mjs` runs a route on the job daemon. It runs the route on this machine only when the client
+`pcb-job` exits 76 and prints no job id. The client uses 76 only when it proved that the daemon took no job: it stopped
+before the job request, or the daemon answered that request with a 4xx status. A 5xx answer may come after the job record,
+so it keeps exit 2. Every other end gives no verdict (exit 2), names the job when there is one, and never starts a second route.
+
 ## Release, blocks and measurement
 
 [Release workflow](RELEASE-WORKFLOW.md) describes fresh staged fabrication,
