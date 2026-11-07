@@ -81,14 +81,16 @@ function candidateFixture(t: { after(fn: () => void): void }) {
   const manifest = { root, board: 'X', operation: 'edit', node: process.execPath };
   const operation: Record<string, unknown> = { candidate, candidate_sha256: sha(candidate), candidate_verified: true,
     identity_preserved: true, protected_source_changes: [], artifacts: {} };
-  const save = (resultOverrides: Record<string, unknown> = {}) => {
+  const save = (resultOverrides: Record<string, unknown> = {}, sealedImages = true) => {
     put(join(folder, 'run.json'), JSON.stringify(manifest));
     put(join(folder, 'operation/result.json'), JSON.stringify(operation));
     put(join(folder, 'operation/source.json'), '{"files":{}}');
     put(join(folder, 'gate/result.json'), '{}');
     put(join(folder, 'gate/findings.json'), '{}');
-    const hashes = Object.fromEntries(['run.json', 'operation/result.json', 'operation/source.json', 'gate/result.json', 'gate/findings.json']
-      .map(name => [name, sha(join(folder, name))]));
+    put(join(folder, 'images/top.svg'), '<svg>top</svg>');
+    put(join(folder, 'images/bottom.svg'), '<svg>bottom</svg>');
+    const hashes = Object.fromEntries(['run.json', 'operation/result.json', 'operation/source.json', 'gate/result.json', 'gate/findings.json',
+      ...(sealedImages ? ['images/top.svg', 'images/bottom.svg'] : [])].map(name => [name, sha(join(folder, name))]));
     put(join(folder, 'result.json'), JSON.stringify({ status: 'passed', cleanup: { complete: true },
       candidate_sha256: sha(candidate), evidence_sha256: hashes, ...resultOverrides }));
   };
@@ -161,6 +163,13 @@ test('parent continuation accepts a fully bound unchanged candidate', t => {
   const output = parentCandidate(f.root, 'X', { folder: f.folder, result_sha256: sha(join(f.folder, 'result.json')) });
   assert.equal(output.candidate, f.candidate);
   assert.equal(output.dependencies[f.candidate], sha(f.candidate));
+  assert.deepEqual(readFileSync(f.target), before);
+});
+
+test('adoption refuses a run that does not meet its stage contract', async t => {
+  const f = candidateFixture(t), before = readFileSync(f.target);
+  f.save({}, false);
+  await assert.rejects(adopt(f.root, f.folder), /stage contract not met: edit stage output images\/top\.svg is not in the sealed run record/);
   assert.deepEqual(readFileSync(f.target), before);
 });
 

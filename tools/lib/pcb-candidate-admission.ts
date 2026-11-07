@@ -4,6 +4,7 @@ import { validateExplicitSpec } from './explicit-spec.ts';
 import { readObject } from './json-file.ts';
 import { boardConfig, routePolicyArgs, sha } from './pcb-workflow.ts';
 import { isFile, resolvePath } from './py-path.ts';
+import { placeChoice } from './place-record.ts';
 import { boardPlanNets, routePlanNetErrors } from './route-plan-nets.ts';
 
 export const CANDIDATE = new Set(['build', 'edit', 'route', 'repair']);
@@ -11,7 +12,7 @@ export const OPERATIONS = new Set([...CANDIDATE, 'release']);
 export const ROUTERS = ['explicit', 'route-json', 'iotroute'];
 const ROUTE_SCHEMA = 'iot-lab.route.v1';
 
-export interface CandidateRequest { spec?: string; kind?: string; router?: string; plan?: string; engineeringManifest?: string; designContract?: string }
+export interface CandidateRequest { spec?: string; kind?: string; origin?: string; router?: string; plan?: string; engineeringManifest?: string; designContract?: string }
 interface Previous { engineering_manifest?: { path: string }; design_contract?: { path: string } }
 
 function bind(name: string, given: string): Record<string, unknown> {
@@ -25,8 +26,14 @@ function specFor(root: string, operation: string, board: string, router: string,
   return join(boardConfig(root, board).folder, 'route.json');
 }
 
+// These change the features of a route, and no run record keeps them. The features come from route-features.json, the
+// route_features of the board gate.json (bound by the gate hash) and the route plan.
+const ROUTE_ENVIRONMENT = ['ROUTE_FEATURES', 'ROUTE_FEATURES_FILE', 'ROUTE_BOARD'];
+
 /** The manifest fields of this candidate. A continued run keeps the reviewed inputs of its parent. */
 export function candidateFields(root: string, operation: string, board: string, request: CandidateRequest, parent?: string, boardNets = boardPlanNets): Record<string, unknown> {
+  const unrecorded = CANDIDATE.has(operation) ? ROUTE_ENVIRONMENT.filter(name => process.env[name]) : [];
+  if (unrecorded.length) throw new Error(`${unrecorded.join(', ')} are set. They change a candidate run and no run record keeps them. Unset them and put route_features in the gate.json of the board`);
   const previous = parent ? readObject<Previous>(join(parent, 'run.json')) : undefined;
   const reviewed = (folder: string): string | undefined => { const path = join(root, 'hardware-design/registry', folder, `${board}.json`); return isFile(path) ? path : undefined; };
   const candidate = CANDIDATE.has(operation);
@@ -45,6 +52,7 @@ export function candidateFields(root: string, operation: string, board: string, 
     const errors = routePlanNetErrors(fields.spec, boardNets(root, board, parent));
     if (errors.length) throw new Error(`route plan does not fit the nets of ${board}: ${errors.join('; ')}`);
   }
+  if (operation === 'edit' && request.kind === 'place') fields.place_choice = placeChoice(root, board, resolvePath(specPath!), request.origin);
   if (operation === 'route') fields.router = router;
   if (request.kind) fields.kind = request.kind;
   if (request.plan) fields.plan = bind('plan', request.plan);

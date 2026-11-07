@@ -358,6 +358,22 @@ program comes from `KICAD_CLI`, or else the KiCad of the machine. If `kicad-cli`
 the cause names it. A run that failed before it had a board keeps its own cause.
 The sealed run record (`evidence_sha256`) binds the images. A passed run whose declared file is missing, or is not in
 that record, is sealed as `error` with the file named.
+`pcb adopt` and `pcb next` read the same table. `adopt` refuses a run whose contract files are missing or unsealed. `next` marks
+such a run as not current, and for a run that waits for adoption it shows the image paths in `blocker.images`.
+
+## Route settings of the environment
+
+`build`, `edit`, `route` and `repair` refuse to start while `ROUTE_FEATURES`, `ROUTE_FEATURES_FILE` or `ROUTE_BOARD` is set
+(an empty value counts as unset). No run record keeps these variables, so two runs with the same recorded inputs could route
+differently. Set the features in `route_features` of the `gate.json` of the board, or in the route plan. `tools/route-features.json`
+holds the defaults. The comment in that file about the environment applies to tools that are not candidate runs.
+
+## Route dispatch fallback
+
+`router/route-dispatch.mjs` runs a route on the job daemon. It runs the route on this machine only when the client
+`pcb-job` exits 76 and prints no job id. The client uses 76 only when it proved that the daemon took no job: it stopped
+before the job request, or the daemon answered that request with a 4xx status. A 5xx answer may come after the job record,
+so it keeps exit 2. Every other end gives no verdict (exit 2), names the job when there is one, and never starts a second route.
 
 ## Release, blocks and measurement
 
@@ -468,6 +484,13 @@ measurements, limits and margins. Rules live in
   estimate only predicts routing. Escape is 0 on a board with no escape model.
   It prints an edit command for legal candidates only. With no legal candidate,
   the command prints the report and `NO LEGAL CANDIDATE`, and exits 3.
+  Each `pcb place` call also writes `.gate/place/BOARD-candidates.json`: the table and the
+  SHA-256 of each spec file. The next call replaces this file.
+- `pcb edit BOARD --kind place --spec SPEC.json` must name a spec that is a row of that
+  record. The run keeps the row (`place_choice` in `run.json`) and the whole table, so the
+  reason for the seed stays after a new `pcb place` call. A spec from another source needs
+  `--origin hand` (written by a person or an agent) or `--origin move` (a route move). Without
+  a row and without `--origin`, the command stops and names the next action.
 
 Rule writes validate native references and cited source hashes, use canonical
 JSON, and reseal the board with one local log entry containing the reason.

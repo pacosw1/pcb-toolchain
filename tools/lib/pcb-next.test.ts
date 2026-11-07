@@ -54,6 +54,7 @@ function fixture(t: { after: (fn: () => void) => void }) {
     if (['build', 'edit', 'route', 'repair'].includes(operation)) {
       const candidate = join(folder, 'workspace/hardware-design/boards/X/cad/X.kicad_pcb'); mkdirSync(join(candidate, '..'), { recursive: true }); writeFileSync(candidate, 'candidate fixture');
       atomicJson(join(folder, 'operation/source.json'), sources); atomicJson(join(folder, 'operation/result.json'), { candidate });
+      for (const image of ['top', 'bottom']) { mkdirSync(join(folder, 'images'), { recursive: true }); writeFileSync(join(folder, 'images', image + '.svg'), `<svg>${image}</svg>`); }
       Object.assign(receipt, { candidate_verified: true, identity_preserved: true, source_unchanged: true });
     }
     seal(folder, receipt); return folder;
@@ -182,6 +183,17 @@ test('verified candidates require explicit adoption; frozen boards name required
   assert.deepEqual(frozen.blocker?.required_inputs, ['baseline_run_id', 'finding_id']);
   f.options.readers.sourceState = () => ({ changed: true });
   assert.equal((await f.next()).evidence.freshness, 'stale');
+});
+
+test('a candidate run shows its image paths and needs its stage contract files', async t => {
+  const f = fixture(t), folder = f.run('run-edit', 'edit');
+  const shown = await f.next();
+  assert.equal(shown.next_action?.kind, 'explicit_adoption');
+  assert.deepEqual(shown.blocker?.images, [join(folder, 'images/top.svg'), join(folder, 'images/bottom.svg')]);
+  rmSync(join(folder, 'images/bottom.svg')); f.seal(folder);   // a run sealed without its image
+  const broken = await f.next();
+  assert.equal(broken.evidence.freshness, 'stale'); assert.notEqual(broken.next_action?.kind, 'explicit_adoption');
+  assert.match(String(broken.evidence.cause), /stage contract not met: edit stage output images\/bottom\.svg is missing/);
 });
 
 test('routing repairs require current sources and current parent admission', async t => {

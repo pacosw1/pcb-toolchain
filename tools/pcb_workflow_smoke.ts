@@ -174,7 +174,7 @@ function placementCycle(smoke: Smoke, board: string, target: string, part: strin
   const defect = (findings.findings as Row[]).find(row => row.stage === 'drc' && row.severity === 'error' && (row.refs?.includes(part) || JSON.stringify(row.items ?? []).includes(part)));
   if (!defect) throw new Error(`injected ${part} defect was not found in real native DRC`);
   smoke.passed(CASES[5]!, { run_id: baseline.run_id, defect: defect.id, rule: defect.rule });
-  const repaired = smoke.pcb(['edit', board, '--kind', 'place', '--spec', repair, '--json', '--timeout', String(smoke.remaining())]);
+  const repaired = smoke.pcb(['edit', board, '--kind', 'place', '--origin', 'hand', '--spec', repair, '--json', '--timeout', String(smoke.remaining())]);
   const { findings: after } = nativeContract(smoke, repaired.run_id, 'passed');
   const receipt = smoke.read(repaired.run_id, 'operation/result.json'), candidate = receipt.candidate as string;
   if (!receipt.candidate_verified || !receipt.identity_preserved || !receipt.source_unchanged) throw new Error('CLI did not verify a preserved isolated repair');
