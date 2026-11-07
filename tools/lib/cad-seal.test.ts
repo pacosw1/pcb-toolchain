@@ -32,7 +32,7 @@ test('a clean seal passes and the record is deterministic', t => {
   assert.equal(readFileSync(p.seal, 'utf8'), first);
   const record = JSON.parse(first);
   assert.equal(record.schema, 'iot-lab.cad-seal.v1');
-  assert.deepEqual(Object.keys(record.files), ['hardware-design/boards/X/cad/X.kicad_dru', PCB, 'hardware-design/boards/X/cad/X.kicad_pro', 'hardware-design/boards/X/cad/X.kicad_sch']);
+  assert.deepEqual(Object.keys(record.files), ['hardware-design/boards/X/cad/X.kicad_dru', PCB, 'hardware-design/boards/X/cad/X.kicad_pro', 'hardware-design/boards/X/cad/X.kicad_sch', 'hardware-design/boards/X/gate.json']);
   assert.deepEqual(record.writer, { tool: 'fixture', run_id: null });
   assert.doesNotMatch(first, /time|date|_at/);
 });
@@ -116,10 +116,85 @@ test('sealedWrite fails closed when a canonical board has no seal, and skips non
   const p = project(t);
   assert.throws(() => sealedWrite(p.pcb, writer, () => {}), /no CAD seal/);
   let ran = 0;
-  sealedWrite(join(p.root, 'hardware-design/boards/X/gate.json'), writer, () => { ran++; });
+  sealedWrite(join(p.root, 'hardware-design/boards/X/gate-metrics.json'), writer, () => { ran++; });
   sealedWrite(p.put('hardware-design/boards/_art/a.kicad_sch', 'x'), writer, () => { ran++; });
   sealedWrite(join(p.root, 'elsewhere.kicad_pcb'), writer, () => { ran++; });
   assert.equal(ran, 3);
+});
+
+const GATE = 'hardware-design/boards/X/gate.json';
+/** A board whose gate.json names check data files: a default name, a custom name in a folder, and a file that a rule file names. */
+function dataBoard(t: { after(fn: () => void): void }) {
+  const p = project(t);
+  p.put('hardware-design/boards/X/gate.json', JSON.stringify({ project: 'cad/X', stage: 'G4', checks: { rf: 'rf-lines.json', pairs: 'rules/custom-pairs.json' } }));
+  p.put('hardware-design/boards/X/rf-lines.json', '{"lines":[]}');
+  p.put('hardware-design/boards/X/reference-planes.json', '{"grounds":[]}');
+  p.put('hardware-design/boards/X/rules/custom-pairs.json', '{"more":"extra.json"}');
+  p.put('hardware-design/boards/X/rules/extra.json', '{"pairs":[]}');
+  return p;
+}
+
+test('the seal covers gate.json and every check data file, and each change stops the next command', t => {
+  const p = dataBoard(t);
+  sealFixtureBoard(p.root, 'X');
+  const files = Object.keys(JSON.parse(readFileSync(p.seal, 'utf8')).files);
+  for (const name of ['gate.json', 'rf-lines.json', 'reference-planes.json', 'rules/custom-pairs.json', 'rules/extra.json']) assert.ok(files.includes(`hardware-design/boards/X/${name}`), `${name} is sealed`);
+  verifySeal(p.root, 'X');
+  for (const name of ['gate.json', 'rf-lines.json', 'reference-planes.json', 'rules/custom-pairs.json', 'rules/extra.json']) {
+    const path = join(p.root, 'hardware-design/boards/X', name), original = readFileSync(path, 'utf8');
+    writeFileSync(path, original + ' ');
+    assert.throws(() => verifySeal(p.root, 'X'), (error: Error) => error.message.includes(`changed: hardware-design/boards/X/${name}`), name);
+    writeFileSync(path, original);
+    verifySeal(p.root, 'X');
+  }
+});
+
+test('a removed gate check key and a removed data file are caught', t => {
+  const p = dataBoard(t);
+  sealFixtureBoard(p.root, 'X');
+  writeFileSync(join(p.root, GATE), JSON.stringify({ project: 'cad/X', stage: 'G3', checks: {} }));
+  assert.throws(() => verifySeal(p.root, 'X'), new RegExp(`changed: ${GATE}`));
+  writeFileSync(join(p.root, GATE), JSON.stringify({ project: 'cad/X', stage: 'G4', checks: { rf: 'rf-lines.json', pairs: 'rules/custom-pairs.json' } }));
+  rmSync(join(p.root, 'hardware-design/boards/X/rf-lines.json'));
+  assert.throws(() => verifySeal(p.root, 'X'), /removed: hardware-design\/boards\/X\/rf-lines\.json/);
+});
+
+test('a new check data file is caught as added', t => {
+  const p = dataBoard(t);
+  sealFixtureBoard(p.root, 'X');
+  p.put('hardware-design/boards/X/diff-pairs.json', '{}');
+  assert.throws(() => verifySeal(p.root, 'X'), /added: hardware-design\/boards\/X\/diff-pairs\.json/);
+});
+
+test('an old seal without data files fails closed with a message that names the cause and the one-time accept', t => {
+  const p = dataBoard(t);
+  sealFixtureBoard(p.root, 'X');
+  const record = JSON.parse(readFileSync(p.seal, 'utf8'));
+  record.files = Object.fromEntries(Object.entries(record.files).filter(([path]) => /\.kicad_/.test(path)));
+  writeFileSync(p.seal, JSON.stringify(record));
+  assert.equal(sealStatus(p.root, 'X').state, 'changed');
+  assert.throws(() => verifySeal(p.root, 'X'), (error: Error) => error.message.includes(`added: ${GATE}`) && /older toolchain/.test(error.message)
+    && error.message.includes('tools/pcb seal X --accept --reason TEXT'));
+  reseal(p.root, 'X', writer, 'cover the data files');
+  verifySeal(p.root, 'X');
+});
+
+test('a CAD-only change does not show the old-seal hint', t => {
+  const p = dataBoard(t);
+  sealFixtureBoard(p.root, 'X');
+  writeFileSync(p.pcb, 'edited');
+  assert.throws(() => verifySeal(p.root, 'X'), (error: Error) => !/older toolchain/.test(error.message));
+});
+
+test('sealedWrite of gate.json checks the seal first and reseals after', t => {
+  const p = dataBoard(t);
+  sealFixtureBoard(p.root, 'X');
+  sealedWrite(join(p.root, GATE), writer, () => writeFileSync(join(p.root, GATE), JSON.stringify({ project: 'cad/X', stage: 'G5', checks: {} })));
+  verifySeal(p.root, 'X');
+  writeFileSync(p.pcb, 'tampered');
+  let ran = false;
+  assert.throws(() => sealedWrite(join(p.root, GATE), writer, () => { ran = true; }), /changed outside our tools/);
+  assert.equal(ran, false);
 });
 
 /** Seal lock calls with a fake clock: sleeping moves the clock and nothing waits. */

@@ -236,3 +236,19 @@ test('place stops for a board with no approved layout plan, and continues for an
   assert.equal(events().length, 1);
   assert.deepEqual([events()[0]!.board, events()[0]!.reason], ['X', 'legacy board']);
 });
+
+test('each place call writes the comparison table and the spec hashes to a record that the place edit reads', t => {
+  const root = project(t, [['U1', 1, 2, 0]]), record = join(root, '.gate/place/X-candidates.json');
+  const placer = (args: string[]) => {
+    if (args[0] !== 'write') return;
+    const folder = join(args[args.indexOf('--outdir') + 1]!, 'cand0'); mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, 'X.kicad_pcb'), board([['U1', 9, 8, 90]]));
+  };
+  const single = placeBoard(root, 'X', { seed: 7, epochs: 1, steps: 1 }, placer);
+  const first = JSON.parse(readFileSync(record, 'utf8')) as { board: string; rows: { seed: number; spec: string; spec_sha256: string; legal: boolean }[] };
+  assert.equal(first.board, 'X');
+  assert.deepEqual(first.rows.map(row => [row.seed, row.spec, row.spec_sha256, row.legal]), [[7, single.spec, sha256File(single.spec), true]]);
+  const many = placeCandidates(root, 'X', { seed: 1, epochs: 1, steps: 1 }, 2, placer);
+  const second = JSON.parse(readFileSync(record, 'utf8')) as typeof first;
+  assert.deepEqual(second.rows.map(row => [row.seed, row.spec_sha256]), many.candidates.map(row => [row.seed, sha256File(row.spec)]));
+});

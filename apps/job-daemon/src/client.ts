@@ -31,12 +31,20 @@ const EXIT_UNREACHABLE = 3;
 const EXIT_RESULTS_PENDING = 4;
 /** The job reached its queue bound and never ran. EX_TEMPFAIL of sysexits.h: nothing is wrong with it, try again later. */
 const EXIT_QUEUE_BOUND = 75;
+/**
+ * The client proved that the daemon took no job: it stopped before the job request, or the daemon answered that request
+ * with a 4xx refusal. Any other exit of a submit leaves it open whether a job exists. A caller may rerun the job only on this one.
+ */
+const EXIT_NOT_TAKEN = 76;
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const die = (msg: string, code = 2): never => {
   console.error(`pcb-job: ${msg}`);
   process.exit(code);
 };
+const notTaken = (msg: string): never => die(msg, EXIT_NOT_TAKEN);
+/** A 4xx answer to the job request refuses it. A 5xx may come after the record, so it is not proof. */
+const refusal = (status: number): number => (status >= 400 && status < 500 ? EXIT_NOT_TAKEN : 2);
 
 const baseUrl = (): string => (process.env.JOBD_URL || die('set JOBD_URL=http://host:port')).replace(/\/$/, '');
 
@@ -52,10 +60,10 @@ function api(p: string, init: RequestInit = {}): Promise<Response> {
   return fetch(baseUrl() + p, { ...init, headers });
 }
 
-async function apiJson<T>(p: string, init?: RequestInit): Promise<T> {
+async function apiJson<T>(p: string, init?: RequestInit, beforeJob = false): Promise<T> {
   const res = await api(p, init);
   const body = (await res.json()) as T & { error?: string };
-  if (!res.ok) die(`${res.status}: ${body.error ?? 'request failed'}`);
+  if (!res.ok) die(`${res.status}: ${body.error ?? 'request failed'}`, beforeJob ? refusal(res.status) : 2);
   return body;
 }
 
@@ -267,7 +275,7 @@ export function stageLiveSources(project: string, stage: string, inputs: string[
 export function stageJob(toolchain: string, project: string, board: string, inputs: string[], snapshot=false): string {
   const rel = path.isAbsolute(board) ? path.relative(project, board) : board.replace(/\/$/, '');
   if (rel.startsWith('..') || !fs.statSync(path.join(project, rel), { throwIfNoEntry: false })?.isDirectory()) {
-    die(`no board dir ${board} under ${project} (set IOT_LAB to the project root)`);
+    notTaken(`no board dir ${board} under ${project} (set IOT_LAB to the project root)`);
   }
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'pcb-job-'));
   try {
@@ -306,7 +314,7 @@ function packStage(stage: string, tarFile: string): void {
     env: { ...process.env, COPYFILE_DISABLE: '1' },
     stdio: 'inherit',
   });
-  if (r.status !== 0) die('tar failed');
+  if (r.status !== 0) notTaken('tar failed');
 }
 
 interface ManifestFile {
@@ -347,10 +355,10 @@ async function sendBlob(f: ManifestFile): Promise<void> {
   for (let i = 0; i < BUSY_RETRIES; i++) {
     const res = await api(`/blobs/${f.sha256}`, { method: 'PUT', body: await fs.openAsBlob(f.source) });
     if (res.ok) return;
-    if (res.status !== 503) die(`${res.status}: upload of ${f.path} failed`);
+    if (res.status !== 503) notTaken(`${res.status}: upload of ${f.path} failed`);
     await sleep(2000);
   }
-  die(`upload of ${f.path}: daemon busy`);
+  notTaken(`upload of ${f.path}: daemon busy`);
 }
 
 /** The job as a manifest: only the files the daemon lacks cross the network. null when the daemon has no cache. */
@@ -365,7 +373,7 @@ async function sendCached(spec: Parsed['spec'], stage: string): Promise<JobRecor
       body: JSON.stringify({ sha256: files.map((f) => f.sha256) }),
     });
     if (asked.status === 404) return null;
-    if (!asked.ok) die(`${asked.status}: cache check failed`);
+    if (!asked.ok) notTaken(`${asked.status}: cache check failed`);
     const missing = new Set(((await asked.json()) as { missing: string[] }).missing);
     const send = [...new Map(files.filter((f) => missing.has(f.sha256)).map((f) => [f.sha256, f])).values()];
     const bytes = send.reduce((n, f) => n + f.bytes, 0);
@@ -381,10 +389,10 @@ async function sendCached(spec: Parsed['spec'], stage: string): Promise<JobRecor
     });
     if (res.status === 409) continue; // a file left the cache between the check and the job
     const body = (await res.json()) as JobRecord & { error?: string };
-    if (!res.ok) die(`${res.status}: ${body.error ?? 'request failed'}`);
+    if (!res.ok) die(`${res.status}: ${body.error ?? 'request failed'}`, refusal(res.status));
     return body;
   }
-  return die('the cache lost files twice during one submit');
+  return notTaken('the cache lost files twice during one submit');
 }
 
 interface Parsed {
@@ -398,15 +406,15 @@ interface Parsed {
 
 function parseSubmit(argv: string[]): Parsed {
   const split = argv.indexOf('--');
-  if (split < 1 || split === argv.length - 1) die(USAGE);
+  if (split < 1 || split === argv.length - 1) notTaken(USAGE);
   const command = argv.slice(split + 1);
   const opts = argv.slice(1, split);
   const p: Parsed = { board: argv[0], inputs: [], results: '', spec: { command }, fit: false, snapshot:false };
   const retryExitCodes: number[] = [];
   for (let i = 0; i < opts.length; i += 2) {
     const [k, v] = [opts[i], opts[i + 1]];
-    if (v === undefined) die(`${k} needs a value`);
-    if (k === '--in') p.inputs.push(fs.existsSync(v) ? v : die(`no input file ${v}`));
+    if (v === undefined) notTaken(`${k} needs a value`);
+    if (k === '--in') p.inputs.push(fs.existsSync(v) ? v : notTaken(`no input file ${v}`));
     else if (k === '--results') p.results = v;
     else if (k === '--cpus') p.spec.cpus = Number(v);
     else if (k === '--mem') p.spec.memGb = Number(v);
@@ -417,9 +425,9 @@ function parseSubmit(argv: string[]): Parsed {
     else if (k === '--retry-exit') retryExitCodes.push(Number(v));
     else if (k === '--image') p.spec.image = v;
     else if (k === '--name') p.spec.name = v;
-    else if (k === '--fit') p.fit = v === 'budget' || die('--fit takes the value budget');
-    else if (k === '--snapshot') p.snapshot = v === 'board' || die('--snapshot takes the value board');
-    else die(`unknown option ${k}\n${USAGE}`);
+    else if (k === '--fit') p.fit = v === 'budget' || notTaken('--fit takes the value budget');
+    else if (k === '--snapshot') p.snapshot = v === 'board' || notTaken('--snapshot takes the value board');
+    else notTaken(`unknown option ${k}\n${USAGE}`);
   }
   if (retryExitCodes.length) p.spec.retryExitCodes = retryExitCodes;
   return p;
@@ -428,7 +436,7 @@ function parseSubmit(argv: string[]): Parsed {
 /** --fit budget: lower --cpus and --mem to what the daemon allows, for callers written for a bigger machine. */
 async function fitBudget(p: Parsed): Promise<void> {
   if (!p.fit) return;
-  const { budget } = await apiJson<{ budget: { cpus: number; memGb: number } }>('/status');
+  const { budget } = await apiJson<{ budget: { cpus: number; memGb: number } }>('/status', undefined, true);
   for (const [key, most] of [['cpus', budget.cpus], ['memGb', budget.memGb]] as const) {
     const asked = p.spec[key];
     if (typeof asked === 'number' && asked > most) {
@@ -456,7 +464,7 @@ async function submit(p: Parsed): Promise<JobRecord> {
       method: 'POST',
       headers: { 'x-job-spec': header, 'content-type': 'application/gzip' },
       body: await fs.openAsBlob(tarFile),
-    });
+    }, true);
   } finally {
     fs.rmSync(stage, { recursive: true, force: true });
     fs.rmSync(tmp, { recursive: true, force: true });

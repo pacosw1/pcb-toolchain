@@ -354,6 +354,16 @@ test('a design contract exemption needs an object with a non-empty reason', t =>
   }
 });
 
+test('a frozen field needs an object with a non-empty reason', t => {
+  const p = project(t);
+  goodBoard(p, 'GOOD');
+  const details = (more: Raw): string[] => { p.registry([entry('GOOD', more)]); return audit(p).findings.filter(finding => finding.type === 'registry_schema').map(finding => finding.detail); };
+  assert.deepEqual(details({ frozen: { reason: 'sent to the fab' } }), []);
+  for (const bad of [true, 'frozen', [], null, {}, { reason: '' }, { reason: ' ' }, { reason: 1 }]) {
+    assert.deepEqual(details({ frozen: bad }), ['frozen must be an object with a non-empty reason'], JSON.stringify(bad));
+  }
+});
+
 test('a layout plan exemption needs an object with a non-empty reason', t => {
   const p = project(t);
   goodBoard(p, 'GOOD');

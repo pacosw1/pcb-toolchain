@@ -109,9 +109,9 @@
 <rect x="120" y="672" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
 <text x="235" y="689" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A9 Placement seeds</text>
 <text x="235" y="703" text-anchor="middle" font-size="10" fill="#333">enforced · no legal seed: exit 3</text>
-<rect x="120" y="730" width="230" height="40" rx="6" fill="#fbd5d5" stroke="#c0392b" stroke-width="1.6"/>
+<rect x="120" y="730" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
 <text x="235" y="747" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A10 Seed choice</text>
-<text x="235" y="761" text-anchor="middle" font-size="10" fill="#333">implicit · no record of the choice</text>
+<text x="235" y="761" text-anchor="middle" font-size="10" fill="#333">enforced · place edit names a table row</text>
 <rect x="120" y="788" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
 <text x="235" y="805" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A11 Place edit</text>
 <text x="235" y="819" text-anchor="middle" font-size="10" fill="#333">enforced · candidate run</text>
@@ -130,30 +130,30 @@
 <rect x="120" y="1054" width="230" height="40" rx="6" fill="#fff0c2" stroke="#c98a00" stroke-width="1.6"/>
 <text x="235" y="1071" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A17 Finishing edits</text>
 <text x="235" y="1085" text-anchor="middle" font-size="10" fill="#333">recorded · stitch, silk, test points</text>
-<rect x="388" y="1054" width="232" height="40" rx="6" fill="#fbd5d5" stroke="#c0392b" stroke-width="1.6"/>
+<rect x="388" y="1054" width="232" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
 <text x="504" y="1071" text-anchor="middle" font-size="12" font-weight="700" fill="#111">B17 Route env</text>
-<text x="504" y="1085" text-anchor="middle" font-size="10" fill="#333">implicit · process.env not recorded</text>
+<text x="504" y="1085" text-anchor="middle" font-size="10" fill="#333">enforced · set variables stop the run</text>
 <rect x="120" y="1112" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
 <text x="235" y="1129" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A16 Diagnose + repair</text>
 <text x="235" y="1143" text-anchor="middle" font-size="10" fill="#333">enforced · bounded repair</text>
-<rect x="388" y="1112" width="232" height="40" rx="6" fill="#fbd5d5" stroke="#c0392b" stroke-width="1.6"/>
+<rect x="388" y="1112" width="232" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
 <text x="504" y="1129" text-anchor="middle" font-size="12" font-weight="700" fill="#111">B18 Dispatch fallback</text>
-<text x="504" y="1143" text-anchor="middle" font-size="10" fill="#333">implicit · stderr text match</text>
+<text x="504" y="1143" text-anchor="middle" font-size="10" fill="#333">enforced · only on client exit 76</text>
 <rect x="120" y="1204" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
 <text x="235" y="1221" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A20 Build (pipeline)</text>
 <text x="235" y="1235" text-anchor="middle" font-size="10" fill="#333">enforced · alternative to place + route</text>
 <rect x="120" y="1262" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
 <text x="235" y="1279" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A18 Gate G3 / G4 / G5</text>
 <text x="235" y="1293" text-anchor="middle" font-size="10" fill="#333">enforced · checks of gate.json</text>
-<rect x="388" y="1262" width="232" height="40" rx="6" fill="#fbd5d5" stroke="#c0392b" stroke-width="1.6"/>
+<rect x="388" y="1262" width="232" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
 <text x="504" y="1279" text-anchor="middle" font-size="12" font-weight="700" fill="#111">B16 Gate config</text>
-<text x="504" y="1293" text-anchor="middle" font-size="10" fill="#333">implicit · gate.json not sealed</text>
+<text x="504" y="1293" text-anchor="middle" font-size="10" fill="#333">enforced · gate.json and data sealed</text>
 <rect x="120" y="1320" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
 <text x="235" y="1337" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A19 Adopt</text>
 <text x="235" y="1351" text-anchor="middle" font-size="10" fill="#333">enforced · journal + new seal</text>
-<rect x="388" y="1320" width="232" height="40" rx="6" fill="#fbd5d5" stroke="#c0392b" stroke-width="1.6"/>
+<rect x="388" y="1320" width="232" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
 <text x="504" y="1337" text-anchor="middle" font-size="12" font-weight="700" fill="#111">B14 Frozen board</text>
-<text x="504" y="1351" text-anchor="middle" font-size="10" fill="#333">implicit · FOCUS.md heading</text>
+<text x="504" y="1351" text-anchor="middle" font-size="10" fill="#333">enforced · registry field + unfreeze</text>
 <rect x="120" y="1378" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
 <text x="235" y="1395" text-anchor="middle" font-size="12" font-weight="700" fill="#111">B3 CAD seal</text>
 <text x="235" y="1409" text-anchor="middle" font-size="10" fill="#333">enforced · sealed / changed</text>
@@ -164,16 +164,16 @@
 <rect x="120" y="1470" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
 <text x="235" y="1487" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A21 Release candidate</text>
 <text x="235" y="1501" text-anchor="middle" font-size="10" fill="#333">enforced · fresh gate + release checks</text>
-<rect x="120" y="1528" width="230" height="40" rx="6" fill="#fbd5d5" stroke="#c0392b" stroke-width="1.6"/>
-<rect x="123.5" y="1531.5" width="223" height="33" rx="4" fill="none" stroke="#c0392b" stroke-width="1.2"/>
+<rect x="120" y="1528" width="230" height="40" rx="6" fill="#fff0c2" stroke="#c98a00" stroke-width="1.6"/>
+<rect x="123.5" y="1531.5" width="223" height="33" rx="4" fill="none" stroke="#c98a00" stroke-width="1.2"/>
 <text x="235" y="1545" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A22 Release approval G5</text>
-<text x="235" y="1559" text-anchor="middle" font-size="10" fill="#333">implicit · person gate; no record</text>
+<text x="235" y="1559" text-anchor="middle" font-size="10" fill="#333">recorded · person gate; approval record</text>
 <rect x="120" y="1586" width="230" height="40" rx="6" fill="#fff0c2" stroke="#c98a00" stroke-width="1.6"/>
 <text x="235" y="1603" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A23 Readiness</text>
 <text x="235" y="1617" text-anchor="middle" font-size="10" fill="#333">recorded · stock receipt of the day</text>
-<rect x="120" y="1644" width="230" height="40" rx="6" fill="#fbd5d5" stroke="#c0392b" stroke-width="1.6"/>
+<rect x="120" y="1644" width="230" height="40" rx="6" fill="#fff0c2" stroke="#c98a00" stroke-width="1.6"/>
 <text x="235" y="1661" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A24 Order + assembly</text>
-<text x="235" y="1675" text-anchor="middle" font-size="10" fill="#333">implicit · no record</text>
+<text x="235" y="1675" text-anchor="middle" font-size="10" fill="#333">recorded · order record; assembly open</text>
 <rect x="120" y="1702" width="230" height="40" rx="6" fill="#fff0c2" stroke="#c98a00" stroke-width="1.6"/>
 <text x="235" y="1719" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A25 Bring-up</text>
 <text x="235" y="1733" text-anchor="middle" font-size="10" fill="#333">recorded · bench evidence</text>

@@ -81,14 +81,16 @@ function candidateFixture(t: { after(fn: () => void): void }) {
   const manifest = { root, board: 'X', operation: 'edit', node: process.execPath };
   const operation: Record<string, unknown> = { candidate, candidate_sha256: sha(candidate), candidate_verified: true,
     identity_preserved: true, protected_source_changes: [], artifacts: {} };
-  const save = (resultOverrides: Record<string, unknown> = {}) => {
+  const save = (resultOverrides: Record<string, unknown> = {}, sealedImages = true) => {
     put(join(folder, 'run.json'), JSON.stringify(manifest));
     put(join(folder, 'operation/result.json'), JSON.stringify(operation));
     put(join(folder, 'operation/source.json'), '{"files":{}}');
     put(join(folder, 'gate/result.json'), '{}');
     put(join(folder, 'gate/findings.json'), '{}');
-    const hashes = Object.fromEntries(['run.json', 'operation/result.json', 'operation/source.json', 'gate/result.json', 'gate/findings.json']
-      .map(name => [name, sha(join(folder, name))]));
+    put(join(folder, 'images/top.svg'), '<svg>top</svg>');
+    put(join(folder, 'images/bottom.svg'), '<svg>bottom</svg>');
+    const hashes = Object.fromEntries(['run.json', 'operation/result.json', 'operation/source.json', 'gate/result.json', 'gate/findings.json',
+      ...(sealedImages ? ['images/top.svg', 'images/bottom.svg'] : [])].map(name => [name, sha(join(folder, name))]));
     put(join(folder, 'result.json'), JSON.stringify({ status: 'passed', cleanup: { complete: true },
       candidate_sha256: sha(candidate), evidence_sha256: hashes, ...resultOverrides }));
   };
@@ -164,6 +166,13 @@ test('parent continuation accepts a fully bound unchanged candidate', t => {
   assert.deepEqual(readFileSync(f.target), before);
 });
 
+test('adoption refuses a run that does not meet its stage contract', async t => {
+  const f = candidateFixture(t), before = readFileSync(f.target);
+  f.save({}, false);
+  await assert.rejects(adopt(f.root, f.folder), /stage contract not met: edit stage output images\/top\.svg is not in the sealed run record/);
+  assert.deepEqual(readFileSync(f.target), before);
+});
+
 test('adoption requires its source, operation and gate evidence to be bound', async t => {
   const f = candidateFixture(t), before = readFileSync(f.target);
   const required = ['operation/result.json', 'operation/source.json', 'gate/result.json', 'gate/findings.json'];
@@ -177,6 +186,13 @@ test('adoption requires its source, operation and gate evidence to be bound', as
   }
   put(join(f.folder, 'operation/source.json'), '{"files":{"tampered":true}}');
   await assert.rejects(adopt(f.root, f.folder), /verified run evidence changed/);
+  assert.deepEqual(readFileSync(f.target), before);
+});
+
+test('adoption into a board with a frozen registry field is refused until a person records an unfreeze', { skip: iotrouteMissing() }, async t => {
+  const f = candidateFixture(t), before = readFileSync(f.target);
+  put(join(f.root, 'hardware-design/registry/boards.json'), JSON.stringify({ schema_version: 1, boards: [{ id: 'X', directory: 'X', frozen: { reason: 'sent to the fab' } }] }));
+  await assert.rejects(adopt(f.root, f.folder), /X is frozen: sent to the fab/);
   assert.deepEqual(readFileSync(f.target), before);
 });
 

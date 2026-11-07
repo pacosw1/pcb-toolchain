@@ -25,7 +25,7 @@ digraph pcb_state_machine {
     A8 [label="A8 Layout plan approved\nenforced · person gate; stale on change" fillcolor="#d7f0e0" color="#1f7a45" peripheries=2];
     B15 [label="B15 Approver identity\nimplicit · any --by name; hook only" fillcolor="#fbd5d5" color="#c0392b"];
     A9 [label="A9 Placement seeds\nenforced · no legal seed: exit 3" fillcolor="#d7f0e0" color="#1f7a45"];
-    A10 [label="A10 Seed choice\nimplicit · no record of the choice" fillcolor="#fbd5d5" color="#c0392b"];
+    A10 [label="A10 Seed choice\nenforced · place edit names a table row" fillcolor="#d7f0e0" color="#1f7a45"];
     A11 [label="A11 Place edit\nenforced · candidate run" fillcolor="#d7f0e0" color="#1f7a45"];
   }
   subgraph cluster_route { label="Route"; style=rounded; color="#b9bec7"; bgcolor="#f5f6f8";
@@ -34,24 +34,24 @@ digraph pcb_state_machine {
     A14 [label="A14 Staged route\nenforced · no repeat when stuck" fillcolor="#d7f0e0" color="#1f7a45"];
     A15 [label="A15 Stuck + decision\nenforced · move from a fixed list" fillcolor="#d7f0e0" color="#1f7a45"];
     A17 [label="A17 Finishing edits\nrecorded · stitch, silk, test points" fillcolor="#fff0c2" color="#c98a00"];
-    B17 [label="B17 Route env\nimplicit · process.env not recorded" fillcolor="#fbd5d5" color="#c0392b"];
+    B17 [label="B17 Route env\nenforced · set variables stop the run" fillcolor="#d7f0e0" color="#1f7a45"];
     A16 [label="A16 Diagnose + repair\nenforced · bounded repair" fillcolor="#d7f0e0" color="#1f7a45"];
-    B18 [label="B18 Dispatch fallback\nimplicit · stderr text match" fillcolor="#fbd5d5" color="#c0392b"];
+    B18 [label="B18 Dispatch fallback\nenforced · only on client exit 76" fillcolor="#d7f0e0" color="#1f7a45"];
   }
   subgraph cluster_gate { label="Gate and adopt"; style=rounded; color="#b9bec7"; bgcolor="#f5f6f8";
     A20 [label="A20 Build (pipeline)\nenforced · alternative to place + route" fillcolor="#d7f0e0" color="#1f7a45"];
     A18 [label="A18 Gate G3 / G4 / G5\nenforced · checks of gate.json" fillcolor="#d7f0e0" color="#1f7a45"];
-    B16 [label="B16 Gate config\nimplicit · gate.json not sealed" fillcolor="#fbd5d5" color="#c0392b"];
+    B16 [label="B16 Gate config\nenforced · gate.json and data sealed" fillcolor="#d7f0e0" color="#1f7a45"];
     A19 [label="A19 Adopt\nenforced · journal + new seal" fillcolor="#d7f0e0" color="#1f7a45"];
-    B14 [label="B14 Frozen board\nimplicit · FOCUS.md heading" fillcolor="#fbd5d5" color="#c0392b"];
+    B14 [label="B14 Frozen board\nenforced · registry field + unfreeze" fillcolor="#d7f0e0" color="#1f7a45"];
     B3 [label="B3 CAD seal\nenforced · sealed / changed" fillcolor="#d7f0e0" color="#1f7a45"];
     B4 [label="B4 Seal accept\nenforced · person gate; hook only" fillcolor="#d7f0e0" color="#1f7a45" peripheries=2];
   }
   subgraph cluster_fab { label="Fabrication"; style=rounded; color="#b9bec7"; bgcolor="#f5f6f8";
     A21 [label="A21 Release candidate\nenforced · fresh gate + release checks" fillcolor="#d7f0e0" color="#1f7a45"];
-    A22 [label="A22 Release approval G5\nimplicit · person gate; no record" fillcolor="#fbd5d5" color="#c0392b" peripheries=2];
+    A22 [label="A22 Release approval G5\nrecorded · person gate; approval record" fillcolor="#fff0c2" color="#c98a00" peripheries=2];
     A23 [label="A23 Readiness\nrecorded · stock receipt of the day" fillcolor="#fff0c2" color="#c98a00"];
-    A24 [label="A24 Order + assembly\nimplicit · no record" fillcolor="#fbd5d5" color="#c0392b"];
+    A24 [label="A24 Order + assembly\nrecorded · order record; assembly open" fillcolor="#fff0c2" color="#c98a00"];
     A25 [label="A25 Bring-up\nrecorded · bench evidence" fillcolor="#fff0c2" color="#c98a00"];
   }
   A1 -> A2;

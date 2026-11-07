@@ -57,6 +57,7 @@ function fixture(t: { after: (fn: () => void) => void }) {
     if (['build', 'edit', 'route', 'repair'].includes(operation)) {
       const candidate = join(folder, 'workspace/hardware-design/boards/X/cad/X.kicad_pcb'); mkdirSync(join(candidate, '..'), { recursive: true }); writeFileSync(candidate, 'candidate fixture');
       atomicJson(join(folder, 'operation/source.json'), sources); atomicJson(join(folder, 'operation/result.json'), { candidate });
+      for (const image of ['top', 'bottom']) { mkdirSync(join(folder, 'images'), { recursive: true }); writeFileSync(join(folder, 'images', image + '.svg'), `<svg>${image}</svg>`); }
       Object.assign(receipt, { candidate_verified: true, identity_preserved: true, source_unchanged: true });
     }
     seal(folder, receipt); return folder;
@@ -175,7 +176,7 @@ test('a change with no event stops next with the code and the command', async t 
 test('legacy receipts cannot become current and G5 requests a fresh check', async t => {
   const f = fixture(t); atomicJson(join(f.board, '.gate/latest.json'), { run: 'old' }); atomicJson(join(f.board, '.gate/old/result.json'), { exit: 1 });
   const legacy = await f.next(); assert.equal(legacy.evidence.freshness, 'unverified_legacy'); assert.equal(legacy.state, 'needs_check');
-  atomicJson(join(f.board, 'gate.json'), { ...f.config, stage: 'G5' });
+  atomicJson(join(f.board, 'gate.json'), { ...f.config, stage: 'G5' }); sealFixtureBoard(f.root, 'X');   // a person accepted the new gate.json
   assert.ok((await f.next()).next_action?.argv.includes('--fresh')); assert.equal(f.probes(), 0);
 });
 
@@ -200,7 +201,7 @@ test('completed failures expose their native finding and location', async t => {
 test('changed config and invalid native artifacts fail before tool verification', async t => {
   const f = fixture(t), folder = f.run(); writeFileSync(join(folder, 'gate/drc.json'), '{}');
   assert.equal((await f.next()).evidence.freshness, 'invalid'); assert.equal(f.probes(), 0);
-  f.seal(folder); atomicJson(join(f.board, 'gate.json'), { ...f.config, new_input: true });
+  f.seal(folder); atomicJson(join(f.board, 'gate.json'), { ...f.config, new_input: true }); sealFixtureBoard(f.root, 'X');
   const report = await f.next(); assert.equal(report.evidence.freshness, 'stale'); assert.match(String(report.blocker?.message), /gate changed/); assert.equal(f.probes(), 0);
 });
 
@@ -239,6 +240,17 @@ test('verified candidates require explicit adoption; frozen boards name required
   assert.deepEqual(frozen.blocker?.required_inputs, ['baseline_run_id', 'finding_id']);
   f.options.readers.sourceState = () => ({ changed: true });
   assert.equal((await f.next()).evidence.freshness, 'stale');
+});
+
+test('a candidate run shows its image paths and needs its stage contract files', async t => {
+  const f = fixture(t), folder = f.run('run-edit', 'edit');
+  const shown = await f.next();
+  assert.equal(shown.next_action?.kind, 'explicit_adoption');
+  assert.deepEqual(shown.blocker?.images, [join(folder, 'images/top.svg'), join(folder, 'images/bottom.svg')]);
+  rmSync(join(folder, 'images/bottom.svg')); f.seal(folder);   // a run sealed without its image
+  const broken = await f.next();
+  assert.equal(broken.evidence.freshness, 'stale'); assert.notEqual(broken.next_action?.kind, 'explicit_adoption');
+  assert.match(String(broken.evidence.cause), /stage contract not met: edit stage output images\/bottom\.svg is missing/);
 });
 
 test('routing repairs require current sources and current parent admission', async t => {
