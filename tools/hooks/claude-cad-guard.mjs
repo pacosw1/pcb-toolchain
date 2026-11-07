@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Claude Code PreToolUse hook for the CAD seal (tools/PCB-CLI.md, "CAD seal").
 // Denies a direct edit of board CAD under hardware-design/ and asks a person before `pcb seal ... --accept`.
+// Asks a person before an edit of gate.json or a check data file of a board (they are under the seal).
 // Asks a person before `pcb layout ... --approve` and before an edit of a board layout-plan.json.
 // Asks a person before an edit of registry/boards.json that writes design_contract_exempt or layout_plan_exempt.
 // Standalone on purpose: no imports from tools/lib. It fails open for input it cannot read, so it never blocks an unrelated tool.
@@ -8,7 +9,8 @@ import {readFileSync} from 'node:fs';
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const CAD_FILE = /(?:\.kicad_(pcb|sch|pro|dru)|\/placement-constraints\.json)$/;
-const EXEMPTION = /(?:design_contract|layout_plan)_exempt/;
+const GATE_DATA_FILE = /\/hardware-design\/boards\/[^/]+\/(?:gate|reference-planes|diff-pairs|current-paths|rf-lines)\.json$/;
+const EXEMPTION =/(?:design_contract|layout_plan)_exempt/;
 const EXEMPTION_REASON = 'A person must decide an exemption from the design contract or the layout plan: with it, tools/pcb place and route run with no contract or no approved plan.';
 
 const decision = (permissionDecision, permissionDecisionReason) => JSON.stringify({
@@ -21,6 +23,9 @@ export function guard(input) {
     const path = String(args.file_path ?? args.notebook_path ?? '').replaceAll('\\', '/');
     if (CAD_FILE.test(path) && path.includes('hardware-design/')) {
       return decision('deny', 'Board CAD changes only through tools/pcb: a direct edit breaks the CAD seal. Use the tools/pcb commands, or ask a person to edit in KiCad and run tools/pcb seal BOARD --accept --reason TEXT.');
+    }
+    if (GATE_DATA_FILE.test(path)) {
+      return decision('ask', 'A person must approve a change of gate.json or a check data file: it is under the CAD seal, and a change can weaken the gate. Then run tools/pcb seal BOARD --accept --reason TEXT.');
     }
     if (path.endsWith('/layout-plan.json') && path.includes('hardware-design/boards/')) {
       return decision('ask', 'A person must approve a change of the layout plan: it holds the approval that lets tools/pcb place and route run.');

@@ -118,7 +118,7 @@ test('CAD changed outside our tools is state cad_unsealed with the seal command,
 test('legacy receipts cannot become current and G5 requests a fresh check', async t => {
   const f = fixture(t); atomicJson(join(f.board, '.gate/latest.json'), { run: 'old' }); atomicJson(join(f.board, '.gate/old/result.json'), { exit: 1 });
   const legacy = await f.next(); assert.equal(legacy.evidence.freshness, 'unverified_legacy'); assert.equal(legacy.state, 'needs_check');
-  atomicJson(join(f.board, 'gate.json'), { ...f.config, stage: 'G5' });
+  atomicJson(join(f.board, 'gate.json'), { ...f.config, stage: 'G5' }); sealFixtureBoard(f.root, 'X');   // a person accepted the new gate.json
   assert.ok((await f.next()).next_action?.argv.includes('--fresh')); assert.equal(f.probes(), 0);
 });
 
@@ -143,7 +143,7 @@ test('completed failures expose their native finding and location', async t => {
 test('changed config and invalid native artifacts fail before tool verification', async t => {
   const f = fixture(t), folder = f.run(); writeFileSync(join(folder, 'gate/drc.json'), '{}');
   assert.equal((await f.next()).evidence.freshness, 'invalid'); assert.equal(f.probes(), 0);
-  f.seal(folder); atomicJson(join(f.board, 'gate.json'), { ...f.config, new_input: true });
+  f.seal(folder); atomicJson(join(f.board, 'gate.json'), { ...f.config, new_input: true }); sealFixtureBoard(f.root, 'X');
   const report = await f.next(); assert.equal(report.evidence.freshness, 'stale'); assert.match(String(report.blocker?.message), /gate changed/); assert.equal(f.probes(), 0);
 });
 

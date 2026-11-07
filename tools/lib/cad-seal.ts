@@ -1,4 +1,6 @@
 // The CAD seal: canonical board CAD changes only through our tools, and a change made any other way stops the next command.
+// The gate configuration (gate.json) and the check data files (reference-planes.json, diff-pairs.json, current-paths.json, rf-lines.json,
+// and each JSON rule file that a check names) are sealed too: a change there weakens the gate as much as a CAD change.
 // hardware-design/boards/BOARD/cad-seal.json (committed) holds the sha256 of each sealed file and the last writer. The local
 // log .gate/cad-seal/BOARD.jsonl gets one line per write or accepted edit. Run workspaces and candidate copies (a .gate/ segment
 // in the root path) are not canonical and are never sealed.
@@ -12,7 +14,9 @@ import { SEAL_FILE } from './pcb-source-policy.ts';
 import { boardConfig } from './pcb-workflow.ts';
 
 export const SEAL_SCHEMA = 'iot-lab.cad-seal.v1';
-const SEALED = /(?:\.kicad_(pcb|sch|pro|dru)|\/placement-constraints\.json)$/;
+const CAD = /\.kicad_(pcb|sch|pro|dru)$/;
+// The data files of the gate: gate.json and the check data files by name. A rule file with another name is sealed through the rules of gateInputs.
+const SEALED = /(?:\.kicad_(pcb|sch|pro|dru)|\/(?:placement-constraints|gate|reference-planes|diff-pairs|current-paths|rf-lines)\.json)$/;
 const BOARDS = 'hardware-design/boards';
 const LOCK_WAIT_S = 5;
 
@@ -29,10 +33,11 @@ const sealPath = (root: string, board: string): string => join(root, BOARDS, boa
 const logPath = (root: string, board: string): string => join(root, '.gate/cad-seal', `${board}.jsonl`);
 const posix = (path: string): string => path.split(sep).join('/');
 
-/** The sealed files of BOARD: its gate inputs with a CAD extension, inside the root. The list comes from gateInputs, not a second finder. */
+/** The sealed files of BOARD: its gate inputs with a CAD extension or a data name, and the JSON rule files of its checks, inside the root. The list comes from gateInputs, not a second finder. */
 function sealedFiles(root: string, board: string): Record<string, string> {
   boardConfig(root, board);   // a clear error for an unknown board, before gateInputs reads its gate.json
-  const found = gateInputs(root, board).files.filter(path => SEALED.test(path) && existsSync(path) && !relative(root, path).startsWith('..'));
+  const inputs = gateInputs(root, board), rules = new Set(inputs.rules.filter(path => path.endsWith('.json')));
+  const found = inputs.files.filter(path => (SEALED.test(path) || rules.has(path)) && existsSync(path) && !relative(root, path).startsWith('..'));
   return Object.fromEntries(found.map(path => [posix(relative(root, path)), sha256File(path)]).sort(([a], [b]) => (a! < b! ? -1 : 1)));
 }
 
@@ -67,7 +72,10 @@ export function verifySeal(root: string, board: string): void {
   if (status.state === 'missing') throw new Error(`${board} has no CAD seal (${status.seal}). Create the first seal: tools/pcb seal ${board} --accept --reason "first seal"`);
   if (status.state !== 'changed') return;
   const rows = [...status.changed.map(path => `changed: ${path}`), ...status.added.map(path => `added: ${path}`), ...status.removed.map(path => `removed: ${path}`)];
-  throw new Error(`CAD of ${board} changed outside our tools:\n  ${rows.join('\n  ')}\nUndo the change: git checkout -- <file>\nOr accept an edit that a person made in KiCad: tools/pcb seal ${board} --accept --reason TEXT`);
+  // A seal made before the gate files were sealed lacks them: they show as added, and nothing else differs.
+  const old = status.added.some(path => !CAD.test(path)) && !status.changed.length && !status.removed.length
+    ? '\nThe gate configuration and the check data files are sealed too. If this seal comes from an older toolchain, it does not cover them: accept it once.' : '';
+  throw new Error(`CAD of ${board} changed outside our tools:\n  ${rows.join('\n  ')}${old}\nUndo the change: git checkout -- <file>\nOr accept an edit that a person made in KiCad: tools/pcb seal ${board} --accept --reason TEXT`);
 }
 
 /** Records the CAD of BOARD as it is now. A root that is not canonical is left alone. */

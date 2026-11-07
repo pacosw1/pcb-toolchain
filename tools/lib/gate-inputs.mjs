@@ -184,7 +184,7 @@ export function gateInputs(root, board, configName = 'gate.json', environment = 
     }
   }
   for(const repo of environment.repositories ?? []) for(const p of walkFiles(repo,p=>p.endsWith('.py'))) add(p);
-  return {cfg, project, files:[...files].sort()};
+  return {cfg, project, files:[...files].sort(), rules:[...new Set(rules)].sort()};
 }
 
 export function fingerprint(root, files, versions = {}, externalRoots = {}) {

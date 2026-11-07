@@ -246,6 +246,7 @@ test('no operation of tools/pcb falls back to Python', t => {
 function iotroute(root: string, body: string): void {
   // A route run admits the gate first: a valid configuration, and the validator in the snapshot.
   writeFileSync(join(root, 'hardware-design/boards/X/gate.json'), JSON.stringify({ project: 'cad/X', stage: 'G4', checks: { erc: true, drc: true, paths: 'paths.json', viapads: {}, kicad_happy: {}, port_labels: true } }));
+  sealFixtureBoard(root, 'X');   // a person accepted the new gate.json
   mkdirSync(join(root, 'tools/lib'));
   writeFileSync(join(root, 'tools/lib/gate-core.mjs'), readFileSync(new URL('./gate-core.mjs', import.meta.url)));
   mkdirSync(join(root, 'tools/router'));
@@ -675,6 +676,7 @@ test('gate.json post_verify hooks run on the verified candidate, and a failing o
   writeFileSync(join(root, 'tools/semantic.mjs'), `import { readFileSync, writeFileSync } from 'node:fs';
 writeFileSync(process.argv[3], readFileSync(process.argv[2], 'utf8').length + '\\n'); process.exitCode = process.env.SEMANTIC_EXIT === '1' ? 1 : 0;`);
   writeFileSync(gate, JSON.stringify({ project: 'cad/X', checks: { drc: true }, post_verify: [{ stage: 'board-semantic-0', run: ['{node}', 'tools/semantic.mjs', '{candidate}', '{operation}/board-check.txt'] }] }));
+  sealFixtureBoard(root, 'X');   // a person accepted the new gate.json
   const { folder, result } = await edit(root);
   assert.equal(result.status, 'passed', String(result.cause));
   assert.ok(existsSync(join(folder, 'operation/board-semantic-0.log')));
@@ -690,6 +692,7 @@ test('gate.json place_check hooks stop a placement edit before the full gate', n
   const root = project(t), gate = join(root, 'hardware-design/boards/X/gate.json');
   writeFileSync(join(root, 'tools/rules.mjs'), `process.exitCode = process.env.RULES_EXIT === '1' ? 1 : 0;`);
   writeFileSync(gate, JSON.stringify({ project: 'cad/X', checks: { drc: true }, place_check: [{ stage: 'board-placement', run: ['{node}', 'tools/rules.mjs', '{candidate}'] }] }));
+  sealFixtureBoard(root, 'X');   // a person accepted the new gate.json
   const { folder, result } = await edit(root);
   assert.equal(result.status, 'passed', String(result.cause));
   assert.ok(existsSync(join(folder, 'operation/board-placement.log')));
@@ -705,6 +708,7 @@ test('gate.json place_check hooks stop a placement edit before the full gate', n
 test('a route edit does not run the place_check hooks', needsBinary, async t => {
   const root = project(t), gate = join(root, 'hardware-design/boards/X/gate.json');
   writeFileSync(gate, JSON.stringify({ project: 'cad/X', checks: { drc: true }, place_check: [{ stage: 'board-placement', run: ['{node}', 'tools/gone.mjs'] }] }));
+  sealFixtureBoard(root, 'X');   // a person accepted the new gate.json
   writeFileSync(join(root, 'spec.json'), '{"routes":[]}');
   const { folder, result } = await run(root, 'edit', 'X', '--kind', 'route', '--spec', join(root, 'spec.json'));
   assert.equal(existsSync(join(folder, 'operation/board-placement.log')), false, String(result.cause));

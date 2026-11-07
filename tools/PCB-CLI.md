@@ -266,7 +266,11 @@ Rule: canonical CAD changes only through our tools. Do not edit `.kicad_pcb`, `.
 
 `hardware-design/boards/BOARD/cad-seal.json` (schema `iot-lab.cad-seal.v1`, committed) holds the sha256 of each
 CAD file of the board, the total hash, and the last writer (`tool`, `run_id`). It has no timestamp. The file list
-comes from the gate inputs of the board. Each tool that writes CAD updates the seal. The local log
+comes from the gate inputs of the board. It also covers `gate.json`, `reference-planes.json`, `diff-pairs.json`,
+`current-paths.json`, `rf-lines.json`, `placement-constraints.json` and each JSON rule file that `gate.json` names.
+A change of one of them stops the next command like a change of the board. A seal made by an older toolchain does
+not list these files. It fails closed and names them as `added`: run `tools/pcb seal BOARD --accept --reason TEXT` once.
+Each tool that writes CAD updates the seal. The local log
 `.gate/cad-seal/BOARD.jsonl` gets one line per write or accepted edit: tool, before hash, after hash, reason.
 
 If the CAD does not agree with the seal, `check`, `build`, `edit`, `route`, `repair`, `release`, the passthrough
@@ -286,7 +290,7 @@ accept it or restore it.
 
 To make a Claude Code agent follow the rule, enable the hook in the `.claude/settings.json` of the project. The hook
 denies `Edit`, `Write`, `MultiEdit` and `NotebookEdit` on CAD files under `hardware-design/`, and it asks a person
-before a `pcb seal ... --accept` command runs:
+before an edit of `gate.json` or a check data file of a board and before a `pcb seal ... --accept` command runs:
 
 ```json
 {

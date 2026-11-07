@@ -73,7 +73,7 @@ Build (A20) is another path to a candidate: a pipeline script can make the whole
 | B13 Agent trial (`run.pending.json` then `run.json`) | One trial runs once. | A trial case. | `run.json` or a settled crash record. | `collect`. [a crashed runner gives a failed verdict] | `lib/agent-trial-run.ts:42-60`. | `enforced` |
 | B14 Frozen board | The line `- BOARD` under `## Frozen` in `FOCUS.md`. | `FOCUS.md` text. | `frozen: true` in `context`. Adopt then needs `--baseline` and `--defect`. | A19. [a missing file or heading reads as not frozen] | `lib/pcb-workflow.ts:138-139`, `:187-188`, `:202`. `lib/pcb-candidate.ts:268-269`. | `implicit` |
 | B15 Person approval (who approves) | None. | `--by NAME` is any text. | The name in the approval. | A8, B4, B5. [none] | A regex in a Claude Code hook only: `hooks/claude-cad-guard.mjs:33-36`. `lib/layout-plan.ts:175`. | `implicit` |
-| B16 Gate configuration and check data files | None. | `gate.json` (`stage`, `checks`), `reference-planes.json`, `diff-pairs.json`, `current-paths.json`, `rf-lines.json`. | None. | A18. [none] | None. The seal pattern covers `.kicad_*` and `placement-constraints.json` only (`lib/cad-seal.ts:15`). | `implicit` |
+| B16 Gate configuration and check data files | None. | `gate.json` (`stage`, `checks`), `reference-planes.json`, `diff-pairs.json`, `current-paths.json`, `rf-lines.json`. | None. | A18. [a changed, added or removed file stops the next command] | `lib/cad-seal.ts:17-19` (`SEALED`) and `sealedFiles` seal `gate.json`, the data files by name, and each JSON rule file that `gate.json` names. `hooks/claude-cad-guard.mjs:12` asks a person before an edit. A seal made by an older toolchain lacks these files: it fails closed as `added`, with a message, until `seal --accept`. The stage can still go down: no up-only rule (D2). | `enforced` |
 | B17 Route environment settings | None. | `ROUTE_FEATURES`, `ROUTE_FEATURES_FILE`, `ROUTE_BOARD` in the environment. | None. | A14. [none] | `lib/pcb-candidate-run.ts:278` copies `process.env`. `lib/pcb-action.ts:34` does not record them. | `implicit` |
 | B18 Route dispatch fallback | None. | Exit code 2 and the stderr text. | A local route when the text says "the daemon took no job". | A14. [none] | `router/route-dispatch.mjs:353`. | `implicit` |
 
@@ -126,7 +126,7 @@ Findings 3, 4, 6, 7 and 11 are fixed in the code and are not listed.
 | No. | Implicit state | Loss it can cause | Smallest enforcement |
 |---|---|---|---|
 | D1 | B15 Person approval | An agent that is not Claude Code approves its own plan (`--by NAME` takes any text). Place and route then run on a plan that no person saw. The same holds for `seal --accept` and `constraints --add`. (#1555 finding 2) | `pcb layout` prints a one-time code in the terminal of the person. `--approve` needs that code. Use the same code for `seal --accept`. |
-| D2 | B16 Gate configuration and check data files | The stage is set to G3, or the `rf` key is removed. The gate passes with fewer checks. No record says who changed it. (#1555 finding 5) | Add `gate.json` and the check data files to the seal and the hook. Let the stage go up only, with a reason in the seal log. |
+| D2 | B16 Gate configuration and check data files | The stage is set to G3, or the `rf` key is removed. The gate passes with fewer checks. No record says who changed it. (#1555 finding 5) | Add `gate.json` and the check data files to the seal and the hook. Let the stage go up only, with a reason in the seal log. Done: the seal and the hook. Open: the up-only stage rule. |
 | D3 | A22 Release approval G5 and A24 Order | A person orders boards without a recorded approval. Nobody can show what the person saw. The manifest always says `g5_ready: false`. | Add a release approval record, like the layout approval: name, reason, hash of the release manifest. `readiness` checks it. |
 | D4 | A6 Stackup (planned, #1554) | The layer count and the layer roles are chosen by habit. A wrong choice shows only after fabrication, as a wrong impedance or as false plane gaps. | Add the stage of #1554: a data file with layers and roles. The layout plan and the route plan must agree with it. |
 | D5 | B17 Route environment settings | Two runs with the same recorded inputs give different routes. A trial cannot be repeated. (#1555 finding 8) | Remove these keys in `workEnvironment`. Take features only from `gate.json` `route_features` or the route plan. |
@@ -144,9 +144,9 @@ The counts are for the rows of sections A and B.
 
 | Status | Section A | Section B | Total |
 |---|---|---|---|
-| `enforced` | 15 | 9 | 24 |
+| `enforced` | 15 | 10 | 25 |
 | `recorded` | 6 | 4 | 10 |
-| `implicit` | 4 | 5 | 9 |
+| `implicit` | 4 | 4 | 8 |
 | Total | 25 | 18 | 43 |
 
 ## F. How the diagram is made

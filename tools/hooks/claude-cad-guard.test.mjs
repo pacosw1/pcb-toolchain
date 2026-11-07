@@ -32,6 +32,17 @@ test('MultiEdit on a .kicad_pro and NotebookEdit on a .kicad_dru are denied', ()
   ]) assert.equal(decisionOf(run({tool_name, tool_input})).permissionDecision, 'deny');
 });
 
+test('Edit on gate.json or a check data file of a board asks a person, and an unrelated json passes', () => {
+  for (const name of ['gate.json', 'reference-planes.json', 'diff-pairs.json', 'current-paths.json', 'rf-lines.json']) {
+    const out = decisionOf(run({tool_name: 'Edit', tool_input: {file_path: `/work/proj/hardware-design/boards/B/${name}`, old_string: 'a', new_string: 'b'}}));
+    assert.equal(out.permissionDecision, 'ask', name);
+    assert.match(out.permissionDecisionReason, /seal/);
+  }
+  const other = run({tool_name: 'Edit', tool_input: {file_path: '/work/proj/hardware-design/boards/B/gate-metrics.json'}});
+  assert.equal(other.stdout, '');
+  assert.equal(run({tool_name: 'Edit', tool_input: {file_path: '/work/proj/tools/gate.json'}}).stdout, '');
+});
+
 test('Edit on tools/foo.ts passes with no output', () => {
   const result = run({tool_name: 'Edit', tool_input: {file_path: '/work/proj/tools/foo.ts'}});
   assert.equal(result.status, 0);
