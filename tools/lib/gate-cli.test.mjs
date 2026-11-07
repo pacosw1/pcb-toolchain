@@ -270,3 +270,15 @@ test('commit hook cache: --cache-dir reuses checks across checkout paths and rer
  assert.deepEqual(scoped.events.filter(e=>e.type==='tool.start').map(e=>e.stage),['port_labels']);
  assert.equal(go(['--cache-dir',cacheDir,'--fresh']).code,2);assert.equal(go(['--cache-dir']).code,2);
 });
+
+test('the gate automatically runs placement and accepts an explicit declaration',t=>{
+ const f=fixture(t);
+ f.put(f.base+'placement-constraints.json',JSON.stringify({schema:'iot-lab.engineering-constraints.v1',rules:[]}));
+ f.put('tools/placement-check.ts',"console.log('placement: 1 FAIL'); process.exitCode=1;");
+ assert.equal(f.run(),1);
+ assert.equal(f.result().metrics.placement_failures,1);
+ const cfg=JSON.parse(readFileSync(join(f.root,f.base,'gate.json')));cfg.checks.placement='placement-constraints.json';f.put(f.base+'gate.json',JSON.stringify(cfg));
+ f.put('tools/placement-check.ts',"console.log('placement: 0 FAIL');");
+ assert.equal(f.run(),0);
+ assert.equal(f.result().metrics.placement_failures,0);
+});

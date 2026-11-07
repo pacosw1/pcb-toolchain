@@ -9,7 +9,7 @@ import { checkManifest, reviewedContract, type ReviewServices } from './engineer
 import { prerequisiteStage, type AdmittedAction } from './pcb-action.ts';
 export { routesCopper } from './pcb-action.ts';
 import { atomicJson, readObject, sha256File } from './json-file.ts';
-import { verifyManifest } from './part-review.ts';
+import { verifyManifest } from './placement-rules.ts';
 import { type Emit, measuredStage, type Row } from './pcb-operation-log.ts';
 import { boardConfig } from './pcb-workflow.ts';
 import { jsonDumps } from './py-compat.mjs';

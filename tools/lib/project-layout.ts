@@ -181,7 +181,7 @@ function gateReferences(audit: Audit, board: string, folder: string, name: strin
   if (text(cfg.project) && !project) audit.add('path_escape', 'error', board, cfg.project as string, `${name}: project leaves ${BOARDS}`);
   if (project) nativeFiles(audit, board, `${name} project`, project, schematicOnly);
   const checks = isObject(cfg.checks) ? cfg.checks : {}, happy = isObject(checks.kicad_happy) ? checks.kicad_happy : {};
-  for (const value of [checks.paths, checks.planes, checks.pairs, checks.rf, happy.exempt, happy.return_planes]) {
+  for (const value of [checks.paths, checks.planes, checks.pairs, checks.rf, checks.placement, happy.exempt, happy.return_planes]) {
     if (text(value)) ruleFiles(audit, board, name, folder, value as string, project);
   }
   for (const feature of Object.values(isObject(cfg.route_features) ? cfg.route_features : {})) {

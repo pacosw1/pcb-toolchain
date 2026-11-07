@@ -88,6 +88,11 @@ export function gateInputs(root, board, configName = 'gate.json', environment = 
   const native = p => /\.(kicad_(sch|pcb|pro|dru|sym|mod)|json)$/.test(p) || ['fp-lib-table','sym-lib-table'].includes(p.split('/').at(-1));
   for (const p of walkFiles(dirname(project),native)) add(p);
   for (const p of readdirSync(dir)) if (p.endsWith('.json') && !['gate-metrics.json','gate-waivers.json'].includes(p)) add(join(dir,p));
+  const placement = join(dir,'placement-constraints.json');
+  if (existsSync(placement)) for (const rule of JSON.parse(readFileSync(placement,'utf8')).rules ?? []) {
+    if (typeof rule.source?.path !== 'string' || rule.source.path.startsWith('/') || rule.source.path.split(/[\\/]/).includes('..')) throw new Error('invalid placement source path');
+    add(resolve(root,rule.source.path));
+  }
   const preservedPolicy = join(dir,'preserved-usb-policy.json');
   if(existsSync(preservedPolicy)) for(const source of JSON.parse(readFileSync(preservedPolicy,'utf8')).sources ?? []) {
     if(typeof source.path !== 'string' || !source.path.startsWith('hardware-design/') || source.path.split('/').includes('..')) throw new Error('invalid preserved policy source path');

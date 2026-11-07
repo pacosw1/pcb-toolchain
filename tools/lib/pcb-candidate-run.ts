@@ -7,7 +7,7 @@ import { designServices } from './design-services.ts';
 import { validateExplicitSpec } from './explicit-spec.ts';
 import { atomicJson, plainJson, readObject, sha256File } from './json-file.ts';
 import { iotroutePolicy } from './outcome-controls.ts';
-import { verifyManifest } from './part-review.ts';
+import { checkPlacementRules, verifyManifest } from './placement-rules.ts';
 import { verifyAction } from './pcb-action.ts';
 import { candidateLayoutCheck, designAdmission, type OperationManifest, placementCheck, routesCopper } from './pcb-candidate-screens.ts';
 import { parentCandidate } from './pcb-candidate.ts';
@@ -221,6 +221,12 @@ async function postChecks(run: Candidate, changed: string[], identity: boolean):
         return finish(folder, { status: 'failed', exit_code: 1, scope: 'candidate_place_check', operation, candidate_verified: false,
           cause: `placement check ${hook.stage} failed; see operation/${hook.stage}.log`, continuation_allowed: false, ...bound(run, changed, identity) });
       }
+    }
+    const output = join(folder, 'operation/placement-constraints.json');
+    const rules = checkPlacementRules(root, board, run.native, output);
+    if (rules && rules.status !== 'passed') {
+      return finish(folder, { status: 'failed', exit_code: 1, scope: 'candidate_place_check', operation, candidate_verified: false,
+        cause: 'placement constraints failed; see operation/placement-constraints.log', report: output, continuation_allowed: false, ...bound(run, changed, identity) });
     }
   }
   return null;

@@ -15,6 +15,7 @@ export const METRICS = {
   paths_low: {level: 'soft', target: 0},
   kicad_happy_findings: {level: 'soft', target: 0},
   port_label_failures: {level: 'soft', target: 0},
+  placement_failures: {level: 'soft', target: 0},
   rf_failures: {level: 'soft', target: 0},
 };
 
@@ -34,7 +35,7 @@ export const CORE_METRICS = ['erc_errors', 'drc_errors', 'drc_parity', 'drc_unco
 export const CHECK_METRICS = {
   erc: ['erc_errors', 'erc_warnings'], drc: ['drc_errors', 'drc_parity', 'drc_unconnected', 'drc_warnings'],
   planes: ['planes_failures'], pairs: ['pairs_failures'], paths: ['paths_low'], viapads: ['viapads'],
-  kicad_happy: ['kicad_happy_findings'], port_labels: ['port_label_failures'], rf: ['rf_failures'],
+  kicad_happy: ['kicad_happy_findings'], port_labels: ['port_label_failures'], rf: ['rf_failures'], placement: ['placement_failures'],
 };
 // Keep provenance collection and receipt verification in agreement about
 // which enabled checks still invoke pcbnew.
@@ -53,7 +54,7 @@ export function validateConfig(cfg) {
   for (const key of required) if (!cfg.checks?.[key]) errors.push(`required check disabled or absent: ${key}`);
   for (const [key, value] of Object.entries(cfg.checks ?? {})) {
     if (!(key in CHECK_METRICS)) errors.push(`unknown check: ${key}`);
-    if (['planes','pairs','paths','rf'].includes(key) && value && typeof value !== 'string') errors.push(`${key}: expected configuration filename`);
+    if (['planes','pairs','paths','rf','placement'].includes(key) && value && typeof value !== 'string') errors.push(`${key}: expected configuration filename`);
     if(['erc','drc','port_labels'].includes(key) && typeof value!=='boolean') errors.push(`${key}: expected boolean`);
     if(['viapads','kicad_happy'].includes(key) && value && (typeof value!=='object' || Array.isArray(value))) errors.push(`${key}: expected options object`);
   }

@@ -13,7 +13,7 @@ import { SEAL_FILE } from './pcb-source-policy.ts';
 import { boardConfig } from './pcb-workflow.ts';
 
 export const SEAL_SCHEMA = 'iot-lab.cad-seal.v1';
-const SEALED = /\.kicad_(pcb|sch|pro|dru)$/;
+const SEALED = /(?:\.kicad_(pcb|sch|pro|dru)|\/placement-constraints\.json)$/;
 const BOARDS = 'hardware-design/boards';
 const LOCK_WAIT_S = 5;
 

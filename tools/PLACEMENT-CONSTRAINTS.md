@@ -1,6 +1,6 @@
 # Reviewed placement constraints
 
-`engineering_constraints.py` consumes the verified part manifest from
+`engineering_constraints.ts` consumes the verified part manifest from
 `part_evidence.ts`. Reviews remain bound to the actual schematic, footprint,
 pad/net map, land geometry, original PDF hash and one-based source page.
 The engineering screen grants no routing, assembly, enclosure or bench qualification.
@@ -123,3 +123,42 @@ Recovery reads preserved native geometry and the original escape receipt,
 rechecks production writer rejection guards and records its later observation
 time explicitly. It does not repeat placement, extraction, escape generation or
 DRC, and does not claim a missing original checkpoint existed.
+
+## Board rule file
+
+`hardware-design/boards/BOARD/placement-constraints.json` holds `{schema, rules}`
+with the same `iot-lab.engineering-constraints.v1` schema. It needs no part review.
+Both `place.ts read --engineering-manifest FILE` and
+`engineering_constraints.ts check --manifest FILE` select the verifier by schema;
+unknown schemas stop. Source files and their hashes remain mandatory.
+
+- `part_distance`: `a` is one reference, `b` is a nonempty array of distinct
+  references, `metric` is `origin_nearest_euclidean`, with `min_mm` and/or
+  `max_mm`. The measurement is the nearest origin distance in millimetres.
+- `region`: `refs`, `box_mm: [x0,y0,x1,y1]`, `placement: "inside" | "outside"`,
+  `metric: "origin_in_box"`. Coordinates are board coordinates. Inside misses
+  use Euclidean distance to the box; outside misses use distance to the nearest
+  edge. Both allow the boundary with zero margin. A region's measured value is
+  its smallest signed margin, with a limit of zero. Positive margins pass.
+  Expanding a slot box by 6 mm gives a conservative 6 mm exclusion.
+
+Hole origins work when the holes are footprints with references in native
+geometry. Edge drawings without references cannot be distance endpoints.
+
+`tools/pcb constraints BOARD --json` shows rules and measurements.
+`--add RULE.json --reason TEXT` and `--remove ID --reason TEXT` validate and
+atomically write sorted rules, then reseal and record the reason locally.
+The seal and gate inputs include the rule file and the gate hashes its sources.
+A broken existing seal must be resolved before changing rules.
+
+Place edits run the shared screen after `place_check` hooks, with results in
+`operation/placement-constraints.json` and `.log`. The full gate automatically
+checks a board rule file; `checks.placement: "placement-constraints.json"` can
+also declare it explicitly. Boards without the file keep their existing checks.
+
+`tools/pcb place BOARD --seeds N [--json]` runs consecutive seeds starting at
+`--seed` (default 1), rejects rule misses, and writes
+`.gate/place/BOARD-seedS.json`. It reports each rule margin, the smallest margin,
+and the placer's `components.hpwl` as wirelength (null if absent). Non-distance
+rules without a millimetre margin report null. Without `--seeds`, the existing
+single-spec output and filename stay unchanged. `--out` is only for that mode.

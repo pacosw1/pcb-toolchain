@@ -29,6 +29,7 @@ function artifactMetrics(folder, stage) {
   const parsers={planes:()=>({planes_failures:countFrom(text,/(\d+) reference-plane failures/)}),
     pairs:()=>({pairs_failures:countFrom(text,/si_pairs: \d+ PASS, (\d+) FAIL/)}),
     viapads:()=>({viapads:countFrom(text,/(\d+) vias in SMD pads/)}),paths:()=>({paths_low:pathFailures(text)}),
+    placement:()=>({placement_failures:countFrom(text,/placement: (\d+) FAIL/)}),
     rf:()=>({rf_failures:countFrom(text,/rf_lines: \d+ PASS, (\d+) FAIL/)}),
     port_labels:()=>({port_label_failures:countFrom(text,/port_labels: .* (\d+) failures/)})};
   return parsers[stage]();

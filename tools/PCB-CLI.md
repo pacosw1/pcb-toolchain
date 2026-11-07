@@ -358,3 +358,21 @@ candidate refused first; an injected track gap diagnosed, repaired and adopted; 
 engineering cycle over those runs. The source project must stay unchanged. It proves the
 workflow, not the board. The thermal cases of `lib/placement-outcomes.test.ts` need
 `ROUTE_COVERAGE_BIN` on Linux and skip elsewhere.
+
+### Placement rules and candidates
+
+`pcb constraints BOARD [--json]` lists the source-bound board rules and current
+measurements, limits and margins. Rules live in
+`hardware-design/boards/BOARD/placement-constraints.json`.
+
+- `pcb constraints BOARD --add SPEC.json --reason TEXT` adds one rule.
+- `pcb constraints BOARD --remove ID --reason TEXT` removes one rule.
+- `pcb place BOARD --seeds N [--json]` compares consecutive seeds and writes a
+  placement spec for each candidate that meets the rules. The table includes
+  moved parts, smallest rule margin and reported wirelength.
+
+Rule writes validate native references and cited source hashes, use canonical
+JSON, and reseal the board with one local log entry containing the reason.
+Direct edits break the seal. The Claude CAD guard denies direct file edits and
+asks before rule-changing commands. Place edits check rules after board hooks;
+the full gate checks the file automatically or via `checks.placement`.

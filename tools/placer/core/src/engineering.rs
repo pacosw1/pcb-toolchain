@@ -53,6 +53,8 @@ enum Rule {
         retained_internal_copper: bool,
     },
     PinDistance { a: Endpoint, b: Endpoint, min_mm: Option<f64>, max_mm: Option<f64> },
+    PartDistance { a: String, b: Vec<String>, metric: String, min_mm: Option<f64>, max_mm: Option<f64> },
+    Region { refs: Vec<String>, box_mm: Box4, placement: String, metric: String },
     Clearance { a: Endpoint, b: Endpoint, min_mm: Option<f64> },
     ConnectorAccess {
         #[serde(rename = "ref")]
@@ -66,8 +68,9 @@ enum Rule {
 impl Rule {
     fn refs(&self) -> Vec<&str> {
         match self {
-            Self::Fixed { refs } | Self::RigidGroup { refs, .. } | Self::Escape { refs } => refs.iter().map(String::as_str).collect(),
+            Self::Fixed { refs } | Self::RigidGroup { refs, .. } | Self::Escape { refs } | Self::Region { refs, .. } => refs.iter().map(String::as_str).collect(),
             Self::PinDistance { a, b, .. } | Self::Clearance { a, b, .. } => vec![&a.reference, &b.reference],
+            Self::PartDistance { a, b, .. } => std::iter::once(a.as_str()).chain(b.iter().map(String::as_str)).collect(),
             Self::ConnectorAccess { reference, .. } => vec![reference],
         }
     }
@@ -175,6 +178,29 @@ fn pad_key(pad: &Value) -> String {
 impl Contract {
     /// The contract of a problem. `value` was verified by its producer; here each rule must be one this module can measure.
     pub fn new(value: &Value, units: &[Unit]) -> crate::Result<Self> {
+        for rule in value["rules"].as_array().ok_or("engineering rules must be an array")? {
+            let fields: &[&str] = match rule["kind"].as_str() {
+                Some("fixed") => &["refs"],
+                Some("rigid_group") => &["refs", "binding", "retained_internal_copper"],
+                Some("pin_distance" | "part_distance") => &["a", "b", "metric", "min_mm", "max_mm"],
+                Some("region") => &["refs", "box_mm", "placement", "metric"],
+                Some("clearance") => &["a", "b", "metric", "min_mm"],
+                Some("connector_access") => &["ref", "metric", "corridor_mm", "exit_side"],
+                Some("escape") => &["refs", "pads", "metric"],
+                _ => return Err("unsupported engineering rule kind".into()),
+            };
+            if rule.as_object().ok_or("engineering rule must be an object")?.keys().any(|key| !["id", "kind", "source"].contains(&key.as_str()) && !fields.contains(&key.as_str())) {
+                return Err("unsupported engineering rule field".into());
+            }
+            if let Some(metric) = rule.get("metric") {
+                let expected = match rule["kind"].as_str().unwrap_or("") {
+                    "pin_distance" => "pad_center_euclidean", "part_distance" => "origin_nearest_euclidean",
+                    "region" => "origin_in_box", "clearance" => "copper_edge_2d",
+                    "connector_access" => "courtyard_corridor_2d", "escape" => "native_minimum_track_escape", _ => "",
+                };
+                if metric.as_str() != Some(expected) { return Err("unsupported engineering metric".into()); }
+            }
+        }
         let doc: Document = serde_json::from_value(value.clone()).map_err(|e| format!("engineering contract: {e}"))?;
         let contract = Self { unit_rules: rules_of_units(&doc, units.len())?, anchors: units.iter().map(|u| (u.x, u.y)).collect(), doc };
         contract.check_rules()?;
@@ -184,6 +210,16 @@ impl Contract {
     fn check_rules(&self) -> crate::Result<()> {
         for rule in &self.doc.rules {
             match rule {
+                Rule::PartDistance { b, metric, min_mm, max_mm, .. } => {
+                    if b.is_empty() || b.iter().collect::<BTreeSet<_>>().len() != b.len() || metric != "origin_nearest_euclidean" || (min_mm.is_none() && max_mm.is_none()) || min_mm.unwrap_or(0.0) < 0.0 || max_mm.unwrap_or(0.0) < 0.0 || min_mm.unwrap_or(0.0) > max_mm.unwrap_or(f64::INFINITY) {
+                        return Err("unsupported part distance rule".into());
+                    }
+                }
+                Rule::Region { refs, box_mm: [a, b, c, d], placement, metric } => {
+                    if refs.is_empty() || refs.iter().collect::<BTreeSet<_>>().len() != refs.len() || !(a < c && b < d) || metric != "origin_in_box" || !["inside", "outside"].contains(&placement.as_str()) {
+                        return Err("unsupported region rule".into());
+                    }
+                }
                 Rule::PinDistance { a, b, .. } => {
                     self.endpoint(a)?;
                     self.endpoint(b)?;
@@ -274,6 +310,16 @@ impl Contract {
                 let measured = hypot(p.0 - q.0, p.1 - q.1);
                 (min_mm.unwrap_or(0.0) - measured).max(0.0).max(measured - max_mm.unwrap_or(f64::INFINITY))
             }
+            Rule::PartDistance { a, b, min_mm, max_mm, .. } => {
+                let p = self.moved(a, pose).origin();
+                let measured = b.iter().map(|r| { let q = self.moved(r, pose).origin(); hypot(p.0 - q.0, p.1 - q.1) }).fold(f64::INFINITY, f64::min);
+                (min_mm.unwrap_or(0.0) - measured).max(0.0).max(measured - max_mm.unwrap_or(f64::INFINITY))
+            }
+            Rule::Region { refs, box_mm: [a, b, c, d], placement, .. } => refs.iter().map(|r| {
+                let (x, y) = self.moved(r, pose).origin();
+                if placement == "inside" { hypot((a - x).max(0.0).max(x - c), (b - y).max(0.0).max(y - d)) }
+                else { (x - a).min(c - x).min(y - b).min(d - y).max(0.0) }
+            }).fold(0.0, f64::max),
             Rule::Clearance { a, b, min_mm } => (min_mm.unwrap_or(0.0) - pad_gap(&self.copper(a, pose), &self.copper(b, pose))).max(0.0),
             Rule::ConnectorAccess { reference, corridor_mm, exit_side } => self.connector_miss(reference, *corridor_mm, exit_side, pose),
         }

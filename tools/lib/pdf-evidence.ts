@@ -37,7 +37,7 @@ const isLink = (path: string): boolean => {
 };
 
 /** The executable of `name`, from the override, the upper-case variable, the bundled Poppler or PATH, with its identity. */
-export function tool(name: ToolName, override?: string): ToolInfo {
+function pdfTool(name: ToolName, override?: string): ToolInfo {
   const bundled = join(homedir(), POPPLER_BIN, name);
   const candidate = override || process.env[name.toUpperCase()] || (isFile(bundled) ? bundled : which(name));
   if (!candidate) throw runtimeError(`${name} is required; configure ${name.toUpperCase()} or install Poppler`);
@@ -46,9 +46,10 @@ export function tool(name: ToolName, override?: string): ToolInfo {
   if (result.status) throw runtimeError(`${name} version probe failed: ${tail(processText(result.stderr), 500)}`);
   return { path, sha256: sha(path), version: strip(processText(result.stdout) + processText(result.stderr)) };
 }
+export { pdfTool as tool };
 
 /** The page count of a PDF. `toolInputs` records the pdfinfo that was used and refuses a second, different one. */
-export function pdfPages(path: string, info: ToolInfo = tool('pdfinfo'), toolInputs?: Record<string, string>): number {
+export function pdfPages(path: string, info: ToolInfo = pdfTool('pdfinfo'), toolInputs?: Record<string, string>): number {
   const result = run(info.path, [path], { timeout: 30, env: { ...process.env, LC_ALL: 'C' } });
   const match = /^Pages:\s*([1-9][0-9]*)\s*$/m.exec(processText(result.stdout));
   if (result.status || !match) throw valueError(`cannot read actual PDF page count: ${tail(processText(result.stderr), 500)}`);
@@ -199,8 +200,8 @@ export async function inspectPdf(pdfPath: string, cachePath: string, pagesAsked:
   const hash = sha(pdf);
   const pages = [...new Set(pagesAsked)].sort((a, b) => a - b);
   checkRequest(pdf, pages, dpi);
-  const tools: Tools = { pdftotext: tool('pdftotext', extractors.pdftotext), pdfinfo: tool('pdfinfo', extractors.pdfinfo) };
-  if (pages.length) tools.pdftoppm = tool('pdftoppm', extractors.pdftoppm);
+  const tools: Tools = { pdftotext: pdfTool('pdftotext', extractors.pdftotext), pdfinfo: pdfTool('pdfinfo', extractors.pdfinfo) };
+  if (pages.length) tools.pdftoppm = pdfTool('pdftoppm', extractors.pdftoppm);
   const identity = { schema: 1, pdf_sha256: hash, tools, options: { text: TEXT_OPTIONS, render_pages: pages, dpi } };
   const key = digest(encoded(identity));
   const textIdentity = {
