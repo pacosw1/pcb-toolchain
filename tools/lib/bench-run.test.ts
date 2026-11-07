@@ -71,6 +71,21 @@ test('spawnExecutor follows a command to its run folder, and reports a command t
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('a signal stops the running child and returns at once, so the lock can be released', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'bench-signal-'));
+  try {
+    const trial = { id: 'sig', arm: 'base', family: 'A', board: 'ENV', split: 'development', case: 'ENV', replicate: 1, seed: 1,
+      argv: ['/bin/sleep', '30'], steps: [], env: {}, input: { path: 'e', sha256: sha('e') } };
+    const abort = new AbortController();
+    const started = Date.now();
+    const running = spawnExecutor(trial, { root, runsDir: join(root, 'runs'), timeoutMs: 60_000, signal: abort.signal });
+    setTimeout(() => abort.abort(), 100);
+    const record = await running;
+    assert.equal(record.cause, 'interrupted');
+    assert.ok(Date.now() - started < 10_000, `took ${Date.now() - started}ms`);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('route_input: a placer arm records the placed board it routed as the trial placement input', async () => {
   const root = mkdtempSync(join(tmpdir(), 'bench-ri-'));
   try {

@@ -100,5 +100,5 @@ export async function runTrial(dirPath: string, options: RunOptions = {}): Promi
     };
     atomicJson(join(dir, 'run.json'), record);
     return record;
-  } finally { release(); }
+  } finally { await release(); }
 }

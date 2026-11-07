@@ -16,7 +16,7 @@ export interface TrialRecord {
   /** The sealed run's own terminal status (passed, failed, timeout, cancelled), read from its result.json. */
   run_status?: string | null;
 }
-export interface ExecContext { root: string; runsDir: string; timeoutMs: number; work?: string }
+export interface ExecContext { root: string; runsDir: string; timeoutMs: number; work?: string; signal?: AbortSignal }
 export type Executor = (trial: PlannedTrial, context: ExecContext) => Promise<TrialRecord>;
 
 const GRACE_MS = 60_000;
@@ -36,23 +36,33 @@ function runIdOf(text: string): string | null {
   return null;
 }
 
-interface StepOutcome { code: number | null; stdout: string; stderr: string; timedOut: boolean; error: string | null }
+interface StepOutcome { code: number | null; stdout: string; stderr: string; timedOut: boolean; interrupted: boolean; error: string | null }
 
 function runStep(argv: string[], env: Record<string, string>, context: ExecContext, timeoutMs: number): Promise<StepOutcome> {
+  if (context.signal?.aborted) return Promise.resolve({ code: null, stdout: '', stderr: '', timedOut: false, interrupted: true, error: 'interrupted' });
   return new Promise(done => {
     const [command, ...args] = argv;
     const child = spawn(command!, args, { cwd: context.root, env: { ...process.env, ...env, PCB_RUNS_DIR: context.runsDir }, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '', stderr = '', timedOut = false;
+    let stdout = '', stderr = '', timedOut = false, interrupted = false, settled = false, killTimer: NodeJS.Timeout | undefined;
     child.stdout.on('data', chunk => { stdout += String(chunk); });
     child.stderr.on('data', chunk => { stderr = (stderr + String(chunk)).slice(-4000); });
-    const timer = setTimeout(() => {
-      timedOut = true;
+    // A deadline or a signal stops the same child: SIGINT first, then SIGKILL after the grace, so releasing
+    // the lock never leaves the trial running behind the next bench.
+    const terminate = (): void => {
       child.kill('SIGINT');
-      setTimeout(() => child.kill('SIGKILL'), GRACE_MS).unref();
-    }, Math.max(1, timeoutMs));
-    const finish = (code: number | null, error: string | null): void => { clearTimeout(timer); done({ code, stdout, stderr, timedOut, error }); };
+      if (!killTimer) { killTimer = setTimeout(() => child.kill('SIGKILL'), GRACE_MS); killTimer.unref(); }
+    };
+    const onAbort = (): void => { interrupted = true; terminate(); };
+    const timer = setTimeout(() => { timedOut = true; terminate(); }, Math.max(1, timeoutMs));
+    const finish = (code: number | null, error: string | null): void => {
+      if (settled) return; settled = true;
+      clearTimeout(timer); if (killTimer) clearTimeout(killTimer);
+      context.signal?.removeEventListener('abort', onAbort);
+      done({ code, stdout, stderr, timedOut, interrupted, error });
+    };
+    context.signal?.addEventListener('abort', onAbort, { once: true });
     child.on('error', error => finish(null, error.message));
-    child.on('close', code => finish(code, null));
+    child.on('close', code => finish(code, interrupted ? 'interrupted' : null));
   });
 }
 
@@ -94,8 +104,10 @@ export const spawnExecutor: Executor = async (trial, context) => {
     const argv = step.map(part => fill(part, values));
     const unfilled = argv.find(part => /\{(prev_run|prev_run_path)\}/.test(part));
     const wall_s = (): number => (performance.now() - started) / 1000;
+    if (context.signal?.aborted) return record(trial, { wall_s: wall_s(), cause: 'interrupted', command: trial.argv });
     if (unfilled) return record(trial, { wall_s: wall_s(), cause: `step ${index + 1} needs a previous sealed run that step ${index} did not produce`, command: trial.argv });
     last = await runStep(argv, trial.env, context, deadline - performance.now());
+    if (last.interrupted) return record(trial, { status: 'no_run', wall_s: wall_s(), exit_code: last.code, cause: 'interrupted', command: trial.argv });
     sealed = sealedOf(last.stdout, context);
     if (index < steps.length - 1 && (last.timedOut || last.error)) {
       return record(trial, { status: last.timedOut ? 'timeout' : 'no_run', wall_s: wall_s(), exit_code: last.code, cause: `step ${index + 1} ${last.error ?? 'reached the deadline'}` });
@@ -123,15 +135,16 @@ export function readRecord(out: string, id: string): TrialRecord | null {
   return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) as TrialRecord : null;
 }
 
-export interface RunOptions { root: string; runsDir: string; out: string; executor: Executor; onTrial?: (trial: PlannedTrial, record: TrialRecord, index: number, total: number) => void }
+export interface RunOptions { root: string; runsDir: string; out: string; executor: Executor; signal?: AbortSignal; onTrial?: (trial: PlannedTrial, record: TrialRecord, index: number, total: number) => void }
 
 /** Sequential on purpose: trials share the machine, and a finished trial's record is kept so a rerun resumes. */
 export async function runSuite(suite: Suite, options: RunOptions): Promise<TrialRecord[]> {
   mkdirSync(join(options.out, 'trials'), { recursive: true });
   const trials = expandTrials(suite);
   const records: TrialRecord[] = [];
-  const context: ExecContext = { root: options.root, runsDir: options.runsDir, timeoutMs: Math.round(suite.budget.timeout_s * 1000), work: join(options.out, 'work') };
+  const context: ExecContext = { root: options.root, runsDir: options.runsDir, timeoutMs: Math.round(suite.budget.timeout_s * 1000), work: join(options.out, 'work'), signal: options.signal };
   for (const [index, trial] of trials.entries()) {
+    if (options.signal?.aborted) break;
     const kept = readRecord(options.out, trial.id);
     const current = kept ?? await options.executor(trial, context);
     if (!kept) atomicJson(recordPath(options.out, trial.id), current);
