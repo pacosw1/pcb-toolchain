@@ -12,10 +12,12 @@ import { ChecksView } from './ChecksView'
 import { DatasheetView } from './DatasheetView'
 import { PartsView } from './PartsView'
 import { RunsView } from './RunsView'
+import { StateView } from './StateView'
+import { TimelineView } from './TimelineView'
 import { Viewer3D } from './Viewer3D'
 import type { Bom, BomLine, Finding, Geometry, ProjectInfo } from './types'
 
-type Tab = 'live' | 'schematic' | 'specs' | 'board' | '3d' | 'parts' | 'datasheets' | 'checks' | 'runs'
+type Tab = 'live' | 'schematic' | 'specs' | 'board' | '3d' | 'parts' | 'datasheets' | 'checks' | 'runs' | 'stages' | 'timeline'
 
 const STATE_COLOR: Record<EngineStatus['state'], string> = {
   ready: 'var(--ok)',
@@ -273,6 +275,8 @@ function App(): React.JSX.Element {
     ['3d', '3D', 'cube', null],
     ['parts', 'Parts / BOM', 'list', bom ? `${bom.summary.lines} lines` : null],
     ['datasheets', 'Datasheets', 'doc', bom ? String(bom.lines.filter((l) => l.datasheet).length) : null],
+    ['stages', 'Stages', 'stages', gate ? null : 'no gate'],
+    ['timeline', 'Tool calls', 'timeline', gate ? null : 'no gate'],
     ['checks', 'Checks', 'check', gate ? null : 'no gate'],
     ['live', 'Live solver', 'runs', null],
     ['runs', 'Runs', 'runs', gate ? null : 'no gate']
@@ -415,7 +419,11 @@ function App(): React.JSX.Element {
                 setTab('board')
               }}
             />
-          ) : tab === 'live' ? (<LiveView selection={linked} onSelect={setLinked} />) : geo && tab === 'runs' ? (
+          ) : tab === 'stages' ? (
+            <StateView key={project?.root + String(gate)} board={gate} pcb={pcb} root={project?.root ?? null} onOpen={(t) => setTab(t)} />
+          ) : tab === 'timeline' ? (
+            <TimelineView key={project?.root + String(gate)} board={gate} onOpen={(t) => setTab(t)} />
+          ) : tab === 'live' ? (<LiveView selection={linked} onSelect={setLinked} pcb={pcb} />) : geo && tab === 'runs' ? (
             <RunsView gate={gate} current={geo} onAdopted={() => setReload((n) => n + 1)} />
           ) : (
             <section className="panel placeholder" aria-label="Board view">

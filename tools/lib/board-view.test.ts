@@ -58,7 +58,9 @@ test('a path expands with the board, the project and the run, and shows if the f
   const top = items.find(item => item.path?.endsWith('images/top.svg'))!, schematic = items.find(item => item.path?.endsWith('X.kicad_sch'))!;
   assert.equal(top.path, join(run, 'images/top.svg')); assert.equal(top.exists, true); assert.equal(top.image, true);
   assert.equal(schematic.exists, true);
+  assert.equal(top.size, 6); assert.equal(schematic.size, 11);
   assert.equal(items.find(item => item.path?.endsWith('images/bottom.svg'))!.exists, false);
+  assert.equal('size' in items.find(item => item.path?.endsWith('images/bottom.svg'))!, false);
   assert.ok(view.images.includes(join(run, 'images/top.svg')));
   assert.equal(items.some(item => item.path?.includes('{')), false);
 });

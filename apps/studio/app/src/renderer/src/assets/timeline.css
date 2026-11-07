@@ -1,0 +1,548 @@
+/* Timeline: tool calls as swimlanes on one time axis. A tick is one call. Colors by result. */
+.calls {
+  --c-ok: var(--ok);
+  --c-failed: var(--err);
+  --c-running: var(--accent);
+  --c-unknown: var(--warn);
+  --lane: 128px;
+  --count: 52px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 1100px;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.calls code {
+  font: inherit;
+  overflow-wrap: anywhere;
+}
+
+/* Head: the pause button, the live state, the board and the range. */
+.calls-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.calls-play {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+.calls-play:hover {
+  border-color: var(--accent);
+}
+.calls-play svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+.calls-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+.calls-live {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--c-ok);
+}
+.calls-live::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--c-ok);
+  animation: calls-ping 1.8s ease-out infinite;
+}
+.calls-new {
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--c-unknown) 20%, transparent);
+  color: var(--c-unknown);
+}
+.calls-range {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin-left: auto;
+  color: var(--dim);
+}
+.calls-range b {
+  color: var(--text);
+  font-weight: 600;
+}
+.calls-warn {
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--c-unknown);
+  border-radius: 6px;
+  color: var(--c-unknown);
+}
+
+/* The chart. The lanes are a list; the overlay is the plot area for the run marks and the play head. */
+.chart {
+  position: relative;
+  padding: 10px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 8px);
+  background: color-mix(in srgb, var(--bg) 70%, #000);
+}
+.lanes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.lane {
+  display: grid;
+  grid-template-columns: var(--lane) 1fr var(--count);
+  align-items: center;
+  height: 30px;
+  border-bottom: 1px solid var(--border-soft, var(--border));
+}
+.lane:last-child {
+  border-bottom: 0;
+}
+.lane-name {
+  padding: 0 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lane-track {
+  position: relative;
+  height: 100%;
+  z-index: 2;
+  pointer-events: none; /* a click between ticks reaches the plot and moves the play head */
+}
+.lane-count {
+  padding-right: 12px;
+  text-align: right;
+  color: var(--text);
+}
+.lane-count i {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--c-failed) 25%, transparent);
+  color: var(--c-failed);
+  font-style: normal;
+}
+.overlay {
+  position: absolute;
+  inset: 10px var(--count) 10px var(--lane);
+  pointer-events: none;
+}
+.plot {
+  position: absolute;
+  inset: 0;
+  cursor: col-resize;
+  pointer-events: auto;
+}
+.mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px dashed color-mix(in srgb, var(--text) 35%, transparent);
+}
+.head {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  margin-left: -1px;
+  background: color-mix(in srgb, var(--text) 70%, transparent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--text) 40%, transparent);
+  transition: left 0.25s ease;
+}
+
+/* A tick is a button: a thin line with a wider hit area. */
+.tick {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  width: 12px;
+  margin-left: -6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  pointer-events: auto;
+  color: var(--c-ok);
+}
+.tick::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  border-radius: 1px;
+  background: currentColor;
+}
+.tick[data-state='failed'] {
+  color: var(--c-failed);
+}
+.tick[data-state='running'] {
+  color: var(--c-running);
+}
+.tick[data-state='running']::before {
+  animation: calls-breathe 1.2s ease-in-out infinite;
+}
+.tick[data-state='unknown'] {
+  color: var(--c-unknown);
+}
+.tick[data-state='unknown']::before {
+  background: repeating-linear-gradient(to bottom, currentColor 0 3px, transparent 3px 5px);
+}
+.tick[data-dim] {
+  opacity: 0.28;
+}
+.tick:hover::before,
+.tick:focus-visible::before,
+.tick-picked::before {
+  width: 4px;
+  left: 4px;
+  box-shadow: 0 0 8px currentColor;
+}
+.tick:focus-visible {
+  outline: none;
+}
+.tick-new::before {
+  animation: calls-flash 1.4s ease-out;
+}
+
+/* The tip shows on hover and on keyboard focus. */
+.tip {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  z-index: 10;
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  width: max-content;
+  max-width: 340px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--raised, var(--panel));
+  color: var(--text);
+  text-align: left;
+  transform: translateX(-50%);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 40%);
+  pointer-events: none;
+}
+.tick[data-edge='right'] .tip {
+  left: auto;
+  right: -6px;
+  transform: none;
+}
+.tick:hover .tip,
+.tick:focus-visible .tip {
+  display: flex;
+}
+.tip span {
+  color: var(--muted);
+}
+
+.calls-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0;
+  color: var(--dim);
+}
+.calls-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.mark-key {
+  width: 0;
+  height: 12px;
+  border-left: 1px dashed var(--muted);
+}
+
+.call-dot {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--c-ok);
+}
+.call-dot[data-state='failed'] {
+  background: var(--c-failed);
+}
+.call-dot[data-state='running'] {
+  background: var(--c-running);
+  animation: calls-breathe 1.2s ease-in-out infinite;
+}
+.call-dot[data-state='unknown'] {
+  background: none;
+  border: 1.5px dashed var(--c-unknown);
+}
+
+/* The details of the picked call. */
+.detail {
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--c-ok);
+  border-radius: 6px;
+  background: var(--panel);
+  animation: calls-rise 0.18s ease-out;
+}
+.detail[data-state='failed'] {
+  border-left-color: var(--c-failed);
+}
+.detail[data-state='running'] {
+  border-left-color: var(--c-running);
+}
+.detail[data-state='unknown'] {
+  border-left-color: var(--c-unknown);
+}
+.detail header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.detail header span {
+  color: var(--muted);
+}
+.detail header button,
+.detail dd button,
+.calls-more,
+.calls-empty button {
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.detail header button {
+  margin-left: auto;
+}
+.detail button:hover,
+.calls-more:hover,
+.calls-empty button:hover {
+  border-color: var(--accent);
+}
+.detail dl {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 4px 12px;
+  margin: 8px 0 0;
+}
+.detail dt {
+  color: var(--dim);
+}
+.detail dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The newest calls. The newest is bright. */
+.calls-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.calls-list li button {
+  display: grid;
+  grid-template-columns: 84px 8px minmax(70px, auto) 1fr auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.calls-list li button:hover,
+.calls-list li button[data-picked] {
+  background: var(--panel);
+}
+.calls-list li[data-newest] button {
+  color: var(--text);
+}
+.calls-list li b {
+  font-weight: 600;
+}
+.calls-list code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dim);
+}
+.calls-list li[data-newest] code {
+  color: var(--muted);
+}
+.row-age,
+.row-time {
+  color: var(--dim);
+  white-space: nowrap;
+}
+.row-new button {
+  animation: calls-row 1.6s ease-out;
+}
+.calls-more {
+  align-self: flex-start;
+}
+.calls-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--dim);
+}
+.calls-foot b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Empty, loading and failed views. */
+.calls-empty {
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  padding: 56px 16px;
+  color: var(--muted);
+  font-family: inherit;
+}
+.calls-empty svg {
+  width: 96px;
+  height: 64px;
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.calls-empty svg .ticks {
+  stroke: var(--dim);
+  stroke-width: 1.5;
+  animation: calls-breathe 2.4s ease-in-out infinite;
+}
+.calls-empty h2 {
+  margin: 0;
+  font-size: 15px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+}
+.calls-empty p {
+  margin: 0;
+  max-width: 62ch;
+  font-size: 13px;
+}
+.calls-sub {
+  margin: 0;
+  color: var(--dim);
+}
+.lane-skeleton {
+  height: 30px;
+  border-radius: 6px;
+  background: linear-gradient(
+      90deg,
+      var(--panel) 30%,
+      var(--raised, var(--border)) 50%,
+      var(--panel) 70%
+    )
+    200% 0 / 250% 100%;
+  animation: calls-shimmer 1.6s linear infinite;
+}
+
+@keyframes calls-ping {
+  from {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  to {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+@keyframes calls-breathe {
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes calls-flash {
+  from {
+    width: 8px;
+    margin-left: -3px;
+    box-shadow: 0 0 14px 4px currentColor;
+  }
+  to {
+    width: 2px;
+    margin-left: 0;
+    box-shadow: none;
+  }
+}
+@keyframes calls-row {
+  from {
+    background: color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+  to {
+    background: transparent;
+  }
+}
+@keyframes calls-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@keyframes calls-shimmer {
+  to {
+    background-position: -50% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .calls-live::after,
+  .tick[data-state='running']::before,
+  .call-dot[data-state='running'],
+  .tick-new::before,
+  .row-new button,
+  .detail,
+  .lane-skeleton,
+  .calls-empty svg .ticks {
+    animation: none;
+  }
+  .head {
+    transition: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .calls {
+    --lane: 84px;
+    --count: 40px;
+  }
+  .calls-list li button {
+    grid-template-columns: 70px 8px 1fr auto;
+  }
+  .calls-list code {
+    display: none;
+  }
+}

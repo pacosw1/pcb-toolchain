@@ -1,6 +1,6 @@
 // `pcb state`: the view of a board. It reads the evidence and the change log on each call and stores no state.
 // The position comes from the same `position` as the commands. `pcb next` already judges runs, so the view uses its decision and does not judge them again.
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { allowedEvents, commandEvidence, machineTable, position, type BoardState, type Evidenced } from './board-machine.ts';
 import { releaseText, releaseView, type ReleaseView } from './board-release.ts';
@@ -11,7 +11,7 @@ import { loadTransitions, redoFor, type Command, type Evidence, type Freshness, 
 type Row = Record<string, unknown>;
 export interface Decision { state?: string; blocker?: { code?: unknown }; next_action?: { command?: string }; observed_run?: { run_id?: unknown } | null; board_state?: unknown }
 export type Decide = (root: string, board: string) => Promise<Decision>;
-export interface ItemView { name: string; path: string | null; template?: string; exists: boolean; image?: true }
+export interface ItemView { name: string; path: string | null; template?: string; exists: boolean; size?: number; image?: true }
 export interface StateView { id: string; name: string; status: string; evidence: Evidence | null; freshness: Freshness | null; position: boolean; next: readonly string[]; back: State['back']; inputs: ItemView[]; outputs: ItemView[]; gap?: string }
 export interface KindView { kind: string; reenter: readonly string[]; redo: RedoRow[]; keep: readonly Evidence[]; approve: readonly string[] }
 export interface BoardView {
@@ -44,7 +44,8 @@ function expand(item: Item, values: Record<string, string | null>, images: strin
   const path = item.path.replace(/\{([^}]*)\}/g, (_, name: string) => values[name]!);
   const full = isAbsolute(path) ? path : resolve(values.root!, path), exists = existsSync(full), image = /\.(svg|png)$/.test(path);
   if (image && exists) images.push(full);
-  return { name: item.name, path: full, template: item.path, exists, ...(image ? { image: true as const } : {}) };
+  const stat = exists ? statSync(full) : null, size = stat?.isFile() ? stat.size : null;
+  return { name: item.name, path: full, template: item.path, exists, ...(size === null ? {} : { size }), ...(image ? { image: true as const } : {}) };
 }
 
 const kindView = (kind: Kind, readers: Readers): KindView => ({ kind: kind.id, reenter: kind.reenter, redo: redoFor(kind, readers), keep: kind.keep, approve: kind.approve });
