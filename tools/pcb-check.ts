@@ -40,10 +40,11 @@ async function follow(folder: string, machine: boolean): Promise<number> {
 
 /** Each option only where its operation reads it, so a mistyped command stops here and not after a snapshot. */
 function admitCandidate(operation: string, values: Record<string, unknown>): void {
-  const allowed: Record<string, string[]> = { spec: ['edit', 'route'], kind: ['edit'], router: ['route'], plan: ['repair'], 'engineering-manifest': [...CANDIDATE], 'design-contract': [...OPERATIONS] };
+  const allowed: Record<string, string[]> = { spec: ['edit', 'route'], kind: ['edit'], origin: ['edit'], router: ['route'], plan: ['repair'], 'engineering-manifest': [...CANDIDATE], 'design-contract': [...OPERATIONS] };
   for (const [name, operations] of Object.entries(allowed)) if (values[name] !== undefined && !operations.includes(operation)) throw new Error(`--${name} is not supported for ${operation}`);
   if (operation === 'edit' && !values.spec) throw new Error('edit requires --spec');
   if (operation === 'edit' && values.kind !== 'place' && values.kind !== 'route') throw new Error('edit requires --kind place or route');
+  if (values.origin !== undefined && values.kind !== 'place') throw new Error('--origin is only for --kind place');
   if (operation === 'repair' && !values.plan) throw new Error('repair requires --plan');
   if (values.router !== undefined && !ROUTERS.includes(values.router as string)) throw new Error(`--router must be one of ${ROUTERS.join(', ')}`);
 }
@@ -69,7 +70,7 @@ async function main(argv: string[]): Promise<number> {
     'runs-dir': { type: 'string' }, json: { type: 'boolean' }, detach: { type: 'boolean' }, follow: { type: 'boolean' },
     timeout: { type: 'string', default: '600' }, heartbeat: { type: 'string', default: '5' },
     changed: { type: 'boolean' }, fresh: { type: 'boolean' }, baseline: { type: 'string' }, cycle: { type: 'string' }, 'from-run': { type: 'string' },
-    spec: { type: 'string' }, kind: { type: 'string' }, router: { type: 'string' }, plan: { type: 'string' }, 'engineering-manifest': { type: 'string' }, 'design-contract': { type: 'string' },
+    spec: { type: 'string' }, kind: { type: 'string' }, origin: { type: 'string' }, router: { type: 'string' }, plan: { type: 'string' }, 'engineering-manifest': { type: 'string' }, 'design-contract': { type: 'string' },
   } });
   const onBoard = operation === 'check' || OPERATIONS.has(operation);
   if (positionals.length !== (onBoard ? 1 : 0)) throw new Error(onBoard ? `${operation} requires one board ID` : 'doctor takes no board ID');
@@ -95,7 +96,7 @@ async function main(argv: string[]): Promise<number> {
   if (values.detach && values.follow) throw new Error('--detach and --follow cannot be used together');
   if (values.changed && values.fresh) throw new Error('--changed and --fresh cannot be used together');
   const root = projectRoot(explicit), base = values['runs-dir'] ?? process.env.PCB_RUNS_DIR ?? `${root}/.gate/cli`;
-  const folder = await startCheck({ root, base, spec: values.spec, kind: values.kind, router: values.router, plan: values.plan, engineeringManifest: values['engineering-manifest'], designContract: values['design-contract'],
+  const folder = await startCheck({ root, base, spec: values.spec, kind: values.kind, origin: values.origin, router: values.router, plan: values.plan, engineeringManifest: values['engineering-manifest'], designContract: values['design-contract'],
     board: operation === 'ml' ? backend[1]! : operation === 'placement' ? backend[1]! : operation === 'routing' ? backend[1]! : operation === 'parts' ? (backend[0] === 'inspect' ? 'PARTS' : backend[1]!) : operation === 'outcomes' || operation === 'schematic' || operation === 'design' ? backend[1]! : operation === 'readiness' ? backend[0]! : positionals[0] ?? (operation === 'blocks' ? 'BLOCKS' : 'ENVIRONMENT'), operation, arguments: backend, timeout: Number(values.timeout), heartbeat: Number(values.heartbeat),
     changed: values.changed, fresh: values.fresh, baseline: values.baseline, cycle: values.cycle, fromRun: values['from-run'] });
   if (values.detach) {

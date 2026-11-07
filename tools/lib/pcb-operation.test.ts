@@ -83,7 +83,7 @@ async function run(root: string, ...args: string[]): Promise<{ folder: string; r
 }
 
 const eventRows = (folder: string): Row[] => (existsSync(join(folder, 'events.jsonl')) ? readFileSync(join(folder, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line) as Row) : []);
-const edit = (root: string, ...more: string[]) => run(root, 'edit', 'X', '--kind', 'place', '--spec', join(root, 'spec.json'), ...more);
+const edit = (root: string, ...more: string[]) => run(root, 'edit', 'X', '--kind', 'place', '--origin', 'hand', '--spec', join(root, 'spec.json'), ...more);
 
 test('a verified candidate stays isolated and seals its board, gate and source receipts', needsBinary, async t => {
   const root = project(t), canonical = join(root, 'hardware-design/boards/X/cad/X.kicad_pcb');
@@ -213,6 +213,9 @@ test('bad options stop at the command line, before any run exists', t => {
   const root = project(t);
   const rejected: [string[], RegExp][] = [
     [['edit', 'X', '--kind', 'place'], /requires --spec/],
+    [['edit', 'X', '--kind', 'place', '--spec', 'spec.json'], /is not a row of .*X-candidates\.json; run `tools\/pcb place X --seeds N`/],
+    [['edit', 'X', '--kind', 'route', '--spec', 'spec.json', '--origin', 'hand'], /--origin is only for --kind place/],
+    [['edit', 'X', '--kind', 'place', '--spec', 'spec.json', '--origin', 'guess'], /--origin must be hand or move/],
     [['edit', 'X', '--spec', 'spec.json', '--kind', 'other'], /--kind/],
     [['repair', 'X'], /requires --plan/],
     [['route', 'X', '--router', 'engine', '--spec', 'spec.json'], /--router must be one of/],
@@ -246,6 +249,7 @@ test('no operation of tools/pcb falls back to Python', t => {
 function iotroute(root: string, body: string): void {
   // A route run admits the gate first: a valid configuration, and the validator in the snapshot.
   writeFileSync(join(root, 'hardware-design/boards/X/gate.json'), JSON.stringify({ project: 'cad/X', stage: 'G4', checks: { erc: true, drc: true, paths: 'paths.json', viapads: {}, kicad_happy: {}, port_labels: true } }));
+  sealFixtureBoard(root, 'X');   // a person accepted the new gate.json
   mkdirSync(join(root, 'tools/lib'));
   writeFileSync(join(root, 'tools/lib/gate-core.mjs'), readFileSync(new URL('./gate-core.mjs', import.meta.url)));
   mkdirSync(join(root, 'tools/router'));
@@ -320,7 +324,7 @@ printf 'fab' > "$FAB_RELEASE_OUT/fab.zip"
 
 test('cancelling stops the running tool and its operation with confirmed cleanup', needsBinary, async t => {
   const root = project(t, WRITER(MOVED, 0, 'await new Promise(done => setTimeout(done, 60000));'));
-  const call = pcb(root, 'edit', 'X', '--kind', 'place', '--spec', 'spec.json', '--detach', '--json');
+  const call = pcb(root, 'edit', 'X', '--kind', 'place', '--origin', 'hand', '--spec', 'spec.json', '--detach', '--json');
   assert.equal(call.status, 0, call.stderr);
   const id = (JSON.parse(call.stdout) as Row).run_id as string, folder = join(root, '.gate/cli', id);
   for (let i = 0; i < 200 && !eventRows(folder).some(row => row.type === 'tool.output' || row.type === 'tool.start'); i++) await delay(50);
@@ -332,7 +336,7 @@ test('cancelling stops the running tool and its operation with confirmed cleanup
 
 test('a deadline ends the candidate as a timeout, never as a verdict', needsBinary, async t => {
   const root = project(t, WRITER(MOVED, 0, 'await new Promise(done => setTimeout(done, 60000));'));
-  const { result } = await run(root, 'edit', 'X', '--kind', 'place', '--spec', 'spec.json', '--timeout', '1');
+  const { result } = await run(root, 'edit', 'X', '--kind', 'place', '--origin', 'hand', '--spec', 'spec.json', '--timeout', '1');
   assert.equal(result.status, 'timeout');
   assert.equal(result.exit_code, 124);
   assert.equal(result.candidate_verified, undefined);
@@ -540,7 +544,7 @@ test('incomplete design prerequisites stop before the snapshot, with their repor
 
 test('a board with no design contract and no exemption stops before the snapshot', needsBinary, async t => {
   const root = project(t);
-  rmSync(join(root, 'hardware-design/registry/boards.json'));
+  writeFileSync(join(root, 'hardware-design/registry/boards.json'), JSON.stringify({ schema_version: 1, boards: [{ id: 'X', directory: 'X', layout_plan_exempt: { reason: 'the machine passes this board' } }] }));
   const { folder, result } = await edit(root);
   assert.equal(result.status, 'failed', String(result.cause));
   assert.equal(result.scope, 'design_preflight');
@@ -648,14 +652,14 @@ test('layout admission: an exempt board continues with one layout_plan.exempt ev
   assert.equal(stale.result?.blocker, 'layout_plan_stale');
 });
 
-test('a place run for a board with no approved layout plan fails before the snapshot', needsBinary, async t => {
+test('a place run for a board with no approved layout plan is refused before a run exists', needsBinary, t => {
   const root = project(t);
   exemptBoard(root, 'X', undefined, {}, false);
-  const { folder, result } = await edit(root);
-  assert.equal(result.status, 'failed', String(result.cause));
-  assert.equal(result.scope, 'layout_plan');
-  assert.match(String(result.cause), /tools\/pcb layout X --approve/);
-  assert.equal(existsSync(join(folder, 'workspace')), false);
+  const call = pcb(root, 'edit', 'X', '--kind', 'place', '--spec', join(root, 'spec.json'), '--detach', '--json');
+  assert.notEqual(call.status, 0);
+  assert.match(call.stdout + call.stderr, /place is refused at A7/);
+  assert.match(call.stdout + call.stderr, /layout_plan_missing/);
+  assert.equal(existsSync(join(root, '.gate/cli')) && readdirSync(join(root, '.gate/cli')).some(name => name.startsWith('run-')), false);
 });
 
 test('the candidate layout screen writes a blocked report for a contract it cannot judge', t => {
@@ -675,6 +679,7 @@ test('gate.json post_verify hooks run on the verified candidate, and a failing o
   writeFileSync(join(root, 'tools/semantic.mjs'), `import { readFileSync, writeFileSync } from 'node:fs';
 writeFileSync(process.argv[3], readFileSync(process.argv[2], 'utf8').length + '\\n'); process.exitCode = process.env.SEMANTIC_EXIT === '1' ? 1 : 0;`);
   writeFileSync(gate, JSON.stringify({ project: 'cad/X', checks: { drc: true }, post_verify: [{ stage: 'board-semantic-0', run: ['{node}', 'tools/semantic.mjs', '{candidate}', '{operation}/board-check.txt'] }] }));
+  sealFixtureBoard(root, 'X');   // a person accepted the new gate.json
   const { folder, result } = await edit(root);
   assert.equal(result.status, 'passed', String(result.cause));
   assert.ok(existsSync(join(folder, 'operation/board-semantic-0.log')));
@@ -690,6 +695,7 @@ test('gate.json place_check hooks stop a placement edit before the full gate', n
   const root = project(t), gate = join(root, 'hardware-design/boards/X/gate.json');
   writeFileSync(join(root, 'tools/rules.mjs'), `process.exitCode = process.env.RULES_EXIT === '1' ? 1 : 0;`);
   writeFileSync(gate, JSON.stringify({ project: 'cad/X', checks: { drc: true }, place_check: [{ stage: 'board-placement', run: ['{node}', 'tools/rules.mjs', '{candidate}'] }] }));
+  sealFixtureBoard(root, 'X');   // a person accepted the new gate.json
   const { folder, result } = await edit(root);
   assert.equal(result.status, 'passed', String(result.cause));
   assert.ok(existsSync(join(folder, 'operation/board-placement.log')));
@@ -705,6 +711,7 @@ test('gate.json place_check hooks stop a placement edit before the full gate', n
 test('a route edit does not run the place_check hooks', needsBinary, async t => {
   const root = project(t), gate = join(root, 'hardware-design/boards/X/gate.json');
   writeFileSync(gate, JSON.stringify({ project: 'cad/X', checks: { drc: true }, place_check: [{ stage: 'board-placement', run: ['{node}', 'tools/gone.mjs'] }] }));
+  sealFixtureBoard(root, 'X');   // a person accepted the new gate.json
   writeFileSync(join(root, 'spec.json'), '{"routes":[]}');
   const { folder, result } = await run(root, 'edit', 'X', '--kind', 'route', '--spec', join(root, 'spec.json'));
   assert.equal(existsSync(join(folder, 'operation/board-placement.log')), false, String(result.cause));

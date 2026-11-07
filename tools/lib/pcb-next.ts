@@ -5,6 +5,7 @@ import { basename, join, relative, resolve } from 'node:path';
 import { STAGES } from './design-contract-load.ts';
 import { designExemption } from './design-exemption.ts';
 import { sealStatus } from './cad-seal.ts';
+import { changeBlock, changePath } from './change-log.ts';
 import { checkPlacementRules } from './placement-rules.ts';
 import { layoutGate, layoutPlanStatus } from './layout-plan.ts';
 import { readObject as readSharedObject, sha256File } from './json-file.ts';
@@ -18,6 +19,7 @@ import { moveArgs, nextMove, NOTHING_REVIEWED, reviewedFrom } from './route-move
 import type { Move, Reviewed } from './route-moves.ts';
 import { STUCK_FILE } from './route-stuck.ts';
 import type { StuckReport } from './route-stuck.ts';
+import { STAGE_CONTRACTS, contractKey, contractProblem } from './stage-contracts.ts';
 import { timestamp } from './timing.ts';
 import type { ObservationReport, RunState } from './pcb-cycle.ts';
 
@@ -30,7 +32,7 @@ const ENGINEERING = new Set(['parts', 'placement', 'routing', 'schematic']);
 export interface Manifest {
   run_id: string; root: string; board?: string; operation?: string; project?: string | null; created_at: string;
   arguments?: string[]; from_run?: { folder: string; result_sha256: string }; gate_config_sha256?: string; router?: string;
-  design_contract?: { path: string; sha256: string }; design_stage?: string;
+  design_contract?: { path: string; sha256: string }; design_stage?: string; kind?: string;
 }
 export interface Receipt extends Fields {
   status: string; evidence_sha256: Record<string, string>; cause?: string; input_sha256?: string;
@@ -224,8 +226,21 @@ export async function nextAction(rootPath: string, board: string, options: NextO
   if (options.designContract || isFile(defaultDesign)) {
     const path = options.designContract ?? defaultDesign, identifier = readObject<{ identity: { design_id: string } }>(path).identity.design_id;
     if (options.designContract && identifier !== board) stale('explicit design next subject must be its design_id');
-    return designNext(root, identifier, path, base, options);
+    const decision = await designNext(root, identifier, path, base, options);
+    return { ...decision, board_state: await boardState(root, identifier, base, options) };
   }
+  return boardNext(root, board, base, options, false);
+}
+
+/** The board facts of a board with a design contract. They do not replace the design decision. A design with no board has a state that says why. */
+async function boardState(root: string, board: string, base: string, options: NextOptions): Promise<Fields> {
+  try {
+    const { state, blocker, next_action, observed_run, evidence, readiness_verified } = await boardNext(root, board, base, options, true);
+    return { state, blocker, next_action, observed_run, evidence, readiness_verified };
+  } catch (error) { return { state: 'unavailable', cause: messageOf(error) }; }
+}
+
+async function boardNext(root: string, board: string, base: string, options: NextOptions, contract: boolean): Promise<Decision> {
   const context = plain<Context>(boardContext(root, board)), { cfg, pending } = observedConfig(root, board), checkMode = cfg.get('stage') === 'G5' ? '--fresh' : '--changed';
   const { selected, rejected } = latestRun(root, board, cfg.get('project') as string, base, options.readers);
   const missing = context.blockers.find(row => ['missing_native_input', 'missing_context_source'].includes(row.rule));
@@ -238,7 +253,7 @@ export async function nextAction(rootPath: string, board: string, options: NextO
   };
   const check = (code: string, message: string, details: Fields = {}) => finish('needs_check', code, message, 'check', ['check', board, checkMode, '--follow', '--json'], details);
   if (pending) return finish('blocked', 'pending_gate', 'Board has only a pending gate' + (missing ? '; required board input is missing: ' + missing.path : ''), 'inspect_required_source', ['context', board, '--json']);
-  if (designExemption(root, board) === null) return finish('blocked', 'design_contract_missing', 'Board has no design contract. A person must decide how this board continues', 'inspect_required_source', ['context', board, '--json']);
+  if (!contract && designExemption(root, board) === null) return finish('blocked', 'design_contract_missing', 'Board has no design contract. A person must decide how this board continues', 'inspect_required_source', ['context', board, '--json']);
   let selectedState: RunState | null = null;
   if (selected) {
     const { folder, manifest } = selected;
@@ -258,6 +273,8 @@ export async function nextAction(rootPath: string, board: string, options: NextO
   const seal = sealStatus(root, board);   // never throws on a broken seal: the answer is a state and the command to settle it
   if (seal.state === 'missing') return finish('cad_unsealed', 'cad_seal_missing', 'Board CAD has no seal; create the first seal after you check the files are the intended ones', 'seal', ['seal', board], { evidence: { path: seal.seal, exists: false } });
   if (seal.state === 'changed') return finish('cad_unsealed', 'cad_changed', 'Board CAD changed outside our tools; undo the change, or accept it with --accept --reason TEXT', 'seal', ['seal', board], { evidence: { path: seal.seal }, changed: seal.changed, added: seal.added, removed: seal.removed });
+  const change = changeBlock(root, board);
+  if (change) return finish('blocked', change.code, change.message, 'record_change', ['change', board, '--kind', 'KIND', '--reason', 'TEXT', '--by', 'NAME'], { evidence: { path: changePath(root, board) } });
   const layout = layoutPlanStatus(root, board);   // place and route stop without an approved plan or an exemption
   if (layout.state !== 'approved' && layout.state !== 'exempt') {
     const approval = layout.state === 'unapproved' || layout.state === 'stale';
@@ -341,8 +358,11 @@ export async function nextAction(rootPath: string, board: string, options: NextO
     if (raw.exit !== 0 || result.status !== 'passed') return finish('blocked', 'operation_failed', result.cause ?? 'Operation did not pass after its native gate', 'inspect', explain, { evidence: { path: join(folder, 'operation', operation + '.log') } });
     if (CANDIDATE.has(operation)) {
       if (!result.candidate_verified || !result.identity_preserved) stale('candidate lacks verified design identity and gate evidence');
-      if (context.frozen) return finish('review', 'frozen_candidate_needs_named_defect', 'Frozen-board adoption requires a current failed baseline and exact defect ID', 'inspect_candidate', explain, { evidence: { path: join(folder, 'operation/result.json') }, required_inputs: ['baseline_run_id', 'finding_id'] });
-      return finish('review', 'candidate_not_adopted', 'Verified isolated candidate has not changed canonical CAD', 'explicit_adoption', ['adopt', basename(folder), '--json'], { evidence: { path: join(folder, 'operation/result.json') }, mutates_cad: true });
+      const stage = { operation, kind: manifest.kind }, broken = contractProblem(stage, folder, result.evidence_sha256);
+      if (broken) stale(`stage contract not met: ${broken}`);
+      const images = STAGE_CONTRACTS[contractKey(stage)!].outputs.map(name => join(folder, name));   // the person looks at these before adoption
+      if (context.frozen) return finish('review', 'frozen_candidate_needs_named_defect', 'Frozen-board adoption requires a current failed baseline and exact defect ID', 'inspect_candidate', explain, { evidence: { path: join(folder, 'operation/result.json') }, required_inputs: ['baseline_run_id', 'finding_id'], images });
+      return finish('review', 'candidate_not_adopted', 'Verified isolated candidate has not changed canonical CAD', 'explicit_adoption', ['adopt', basename(folder), '--json'], { evidence: { path: join(folder, 'operation/result.json') }, mutates_cad: true, images });
     }
     if (operation === 'release') return finish('needs_review', 'assembly_readiness_unverified', 'Fabrication candidate does not establish stock, assembly orientation or order readiness', 'readiness', ['readiness', '--json', board, join(folder, 'candidate')], { evidence: { path: join(folder, 'candidate/release-manifest.json') } });
     if (verified.release_supported) return finish('needs_release', 'release_evidence_missing', 'Configured checks passed; fabrication and assembly evidence remain separate', 'generate_release_candidate', ['release', board, '--follow', '--json'], { evidence: { path: join(gateDir, 'result.json') } });

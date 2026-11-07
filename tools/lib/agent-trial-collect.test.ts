@@ -199,6 +199,8 @@ test('seal: writes by tool, accepted edits, and a violation when the CAD differs
     assert.deepEqual(result.seal.writes_by_tool, { 'pcb-adopt': 2 });
     assert.deepEqual([result.seal.log_lines, result.seal.accepted_edits, result.seal.violations], [2, 0, null]);
     assert.deepEqual(result.outside_tools, { count: 0, changed: [], added: [], removed: [] }, 'a file that the seal log accounts for is not outside');
+    writeFileSync(join(project, 'hardware-design/boards/X/changes.jsonl'), 'an event\n');
+    assert.equal((await collectTrial(t.out, fresh)).outside_tools.count, 0, 'pcb change writes the log, and the chain checks a hand edit');
     reseal(project, 'X', { tool: 'seal-accept', run_id: null }, 'a person edited');
     writeFileSync(pcb, '(kicad_pcb C123 edited by hand)');
     result = await collectTrial(t.out, fresh);

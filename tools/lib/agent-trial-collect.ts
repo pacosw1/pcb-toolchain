@@ -14,7 +14,7 @@ import { summarize } from './pcb-benchmark.ts';
 import { jsonDumps } from './py-compat.mjs';
 import { verify } from './pcb-evidence.ts';
 import type { Gate } from './pcb-next.ts';
-import { SEAL_FILE } from './pcb-source-policy.ts';
+import { CHANGE_FILE, SEAL_FILE } from './pcb-source-policy.ts';
 
 export const RESULT_SCHEMA = 'iot-lab.agent-trial.v1';
 type Row = Record<string, any>;
@@ -146,10 +146,10 @@ function sealBlock(project: string, board: string, baselineLines: number): { blo
 
 /** Files under hardware-design that differ from the prepared baseline, minus the sealed CAD files whose current content the seal accepts. */
 function outsideTools(project: string, board: string, baseline: Record<string, string>, status: SealStatus): Row {
-  const now = Object.fromEntries(Object.entries(hashTree(project, 'hardware-design')).filter(([path]) => !path.split('/').includes('.gate'))), sealFile = `hardware-design/boards/${board}/${SEAL_FILE}`;
+  const now = Object.fromEntries(Object.entries(hashTree(project, 'hardware-design')).filter(([path]) => !path.split('/').includes('.gate'))), sealFile = `hardware-design/boards/${board}/${SEAL_FILE}`, changeFile = `hardware-design/boards/${board}/${CHANGE_FILE}`;
   const sealed = status.state === 'missing' || status.state === 'not_canonical' ? [] : Object.keys(readObject<{ files: Record<string, string> }>(join(project, sealFile)).files);
   const broken = new Set([...status.changed, ...status.added, ...status.removed]);
-  const accounted = new Set([...sealed, sealFile].filter(path => !broken.has(path) && (path === sealFile || status.state === 'sealed')));
+  const accounted = new Set([...sealed, sealFile, changeFile].filter(path => !broken.has(path) && (path === sealFile || path === changeFile || status.state === 'sealed')));
   const changed = Object.keys(now).filter(path => path in baseline && baseline[path] !== now[path] && !accounted.has(path));
   const added = Object.keys(now).filter(path => !(path in baseline) && !accounted.has(path)), removed = Object.keys(baseline).filter(path => !(path in now) && !accounted.has(path));
   return { count: changed.length + added.length + removed.length, changed, added, removed };

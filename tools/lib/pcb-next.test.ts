@@ -4,14 +4,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { exemptBoard } from './design-exempt-fixture.ts';
+import { reseal } from './cad-seal.ts';
 import { sealFixtureBoard } from './cad-seal-fixture.ts';
+import { recordChange } from './change-log.ts';
 import { atomicJson, readObject, sha256File } from './json-file.ts';
 import { approveFixture } from './layout-plan-fixture.ts';
 import { evidenceFiles } from './pcb-evidence.ts';
 import { context as boardContext } from './pcb-workflow.ts';
 import { jsonDumps, PyError } from './py-compat.mjs';
 import { nextAction, verifyCurrentInputs } from './pcb-next.ts';
-import type { NextOptions } from './pcb-next.ts';
+import { STUCK_FILE } from './route-stuck.ts';
+import type { Decision, NextOptions } from './pcb-next.ts';
 
 function fixture(t: { after: (fn: () => void) => void }) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'pcb-next-'))), board = join(root, 'hardware-design/boards/X');
@@ -54,6 +57,7 @@ function fixture(t: { after: (fn: () => void) => void }) {
     if (['build', 'edit', 'route', 'repair'].includes(operation)) {
       const candidate = join(folder, 'workspace/hardware-design/boards/X/cad/X.kicad_pcb'); mkdirSync(join(candidate, '..'), { recursive: true }); writeFileSync(candidate, 'candidate fixture');
       atomicJson(join(folder, 'operation/source.json'), sources); atomicJson(join(folder, 'operation/result.json'), { candidate });
+      for (const image of ['top', 'bottom']) { mkdirSync(join(folder, 'images'), { recursive: true }); writeFileSync(join(folder, 'images', image + '.svg'), `<svg>${image}</svg>`); }
       Object.assign(receipt, { candidate_verified: true, identity_preserved: true, source_unchanged: true });
     }
     seal(folder, receipt); return folder;
@@ -64,6 +68,46 @@ function fixture(t: { after: (fn: () => void) => void }) {
   }
   return { root, board, project, base, options, config, fingerprint, run, seal, engineering, probes: () => probes, next: () => nextAction(root, 'X', options) };
 }
+
+test('a board with a design contract also shows the seal, layout, stuck, adopt and release state', async t => {
+  const f = fixture(t);
+  atomicJson(join(f.root, 'hardware-design/registry/design-contracts/X.json'), { identity: { design_id: 'X' }, current_stage: 'requirements' });
+  const board = async () => { const decision = await f.next(); assert.equal(decision.blocker?.code, 'design_assessment_missing'); return decision.board_state as Decision; };
+  f.run('run-check');
+  const passed = await board();
+  assert.equal(passed.blocker?.code, 'release_evidence_missing');
+  assert.equal(passed.next_action?.kind, 'generate_release_candidate');
+  const candidate = f.run('run-edit', 'edit', 'passed', '2026-10-15T14:00:00Z');
+  const seen = await board();
+  assert.equal(seen.blocker?.code, 'candidate_not_adopted');
+  assert.equal(seen.next_action?.argv[1], 'adopt');
+  assert.equal((seen.observed_run as { evidence_dir: string }).evidence_dir, candidate);
+  const route = f.run('run-route', 'route', 'passed', '2026-10-15T15:00:00Z');
+  atomicJson(join(route, STUCK_FILE), { summary: ['stuck'], open_nets: ['N1'], blockers: { parts: ['U1'], rules: [], layers: [] }, failed_stage: null, repeat: 0 }); f.seal(route);
+  assert.equal((await board()).state, 'stuck');
+  rmSync(route, { recursive: true });
+  exemptBoard(f.root, 'X', 'no design contract needed in this fixture', {}, false);
+  assert.equal((await board()).blocker?.code, 'layout_plan_missing');
+  writeFileSync(f.project + '.kicad_sch', 'changed outside our tools');
+  assert.equal((await board()).blocker?.code, 'cad_changed');
+});
+
+test('a board with a contract and no exemption does not stop at design_contract_missing in the board state', async t => {
+  const f = fixture(t);
+  atomicJson(join(f.root, 'hardware-design/registry/design-contracts/X.json'), { identity: { design_id: 'X' }, current_stage: 'requirements' });
+  rmSync(join(f.root, 'hardware-design/registry/boards.json'));
+  assert.notEqual(((await f.next()).board_state as Decision).blocker?.code, 'design_contract_missing');
+});
+
+test('a contract with no board folder keeps its design decision and names why the board state is absent', async t => {
+  const f = fixture(t);
+  atomicJson(join(f.root, 'hardware-design/registry/design-contracts/X.json'), { identity: { design_id: 'X' }, current_stage: 'requirements' });
+  rmSync(join(f.board, 'gate.json'));
+  const decision = await f.next(), board = decision.board_state as { state: string; cause: string };
+  assert.equal(decision.blocker?.code, 'design_assessment_missing');
+  assert.equal(board.state, 'unavailable');
+  assert.ok(board.cause);
+});
 
 test('a board with no design contract and no exemption is blocked; a contract or an exemption is not', async t => {
   const f = fixture(t);
@@ -86,6 +130,7 @@ test('a board with no approved layout plan is blocked with the code and the comm
   writeFileSync(join(f.board, 'route.json'), JSON.stringify({ schema: 'iot-lab.route.v1', backend: 'tracemaker', layers: ['F.Cu', 'B.Cu'], stages: [{ name: 'main' }] }));
   writeFileSync(join(f.board, 'placement-constraints.json'), JSON.stringify({ schema: 'iot-lab.engineering-constraints.v1', rules: [{ id: 'near', kind: 'part_distance', source: { path: 'hardware-design/boards/X/SPEC.md', sha256: sha256File(join(f.board, 'SPEC.md')), page: 1 } }] }));
   writeFileSync(join(f.board, 'layout-plan.json'), JSON.stringify({ schema: 'iot-lab.layout-plan.v1', intents: [{ id: 'a', statement: 'U1 near the edge', rule_ids: ['near'] }], route_plan: 'hardware-design/boards/X/route.json', approval: null }));
+  writeFileSync(f.project + '.kicad_pcb', '(kicad_pcb)');
   sealFixtureBoard(f.root, 'X');
   const unapproved = await f.next();
   assert.deepEqual([unapproved.state, unapproved.blocker?.code, unapproved.next_action?.command], ['blocked', 'layout_plan_missing', 'tools/pcb layout X --approve --by NAME --reason TEXT --image FILE']);
@@ -115,10 +160,23 @@ test('CAD changed outside our tools is state cad_unsealed with the seal command,
   const missing = await f.next(); assert.equal(missing.state, 'cad_unsealed'); assert.equal(missing.blocker?.code, 'cad_seal_missing');
 });
 
+test('a change with no event stops next with the code and the command', async t => {
+  const f = fixture(t); f.run();
+  writeFileSync(f.project + '.kicad_pcb', '(kicad_pcb (general (thickness 1.6)))');
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  recordChange(f.root, 'X', { kind: 'baseline', reason: 'start', by: 'Ana', refs: [] });
+  assert.notEqual((await f.next()).blocker?.code, 'change_unrecorded');
+  writeFileSync(f.project + '.kicad_pcb', '(kicad_pcb (general (thickness 0.8)))');
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  const report = await f.next();
+  assert.equal(report.state, 'blocked'); assert.equal(report.blocker?.code, 'change_unrecorded');
+  assert.match(report.next_action?.command ?? '', /tools\/pcb change X --kind KIND/);
+});
+
 test('legacy receipts cannot become current and G5 requests a fresh check', async t => {
   const f = fixture(t); atomicJson(join(f.board, '.gate/latest.json'), { run: 'old' }); atomicJson(join(f.board, '.gate/old/result.json'), { exit: 1 });
   const legacy = await f.next(); assert.equal(legacy.evidence.freshness, 'unverified_legacy'); assert.equal(legacy.state, 'needs_check');
-  atomicJson(join(f.board, 'gate.json'), { ...f.config, stage: 'G5' });
+  atomicJson(join(f.board, 'gate.json'), { ...f.config, stage: 'G5' }); sealFixtureBoard(f.root, 'X');   // a person accepted the new gate.json
   assert.ok((await f.next()).next_action?.argv.includes('--fresh')); assert.equal(f.probes(), 0);
 });
 
@@ -143,7 +201,7 @@ test('completed failures expose their native finding and location', async t => {
 test('changed config and invalid native artifacts fail before tool verification', async t => {
   const f = fixture(t), folder = f.run(); writeFileSync(join(folder, 'gate/drc.json'), '{}');
   assert.equal((await f.next()).evidence.freshness, 'invalid'); assert.equal(f.probes(), 0);
-  f.seal(folder); atomicJson(join(f.board, 'gate.json'), { ...f.config, new_input: true });
+  f.seal(folder); atomicJson(join(f.board, 'gate.json'), { ...f.config, new_input: true }); sealFixtureBoard(f.root, 'X');
   const report = await f.next(); assert.equal(report.evidence.freshness, 'stale'); assert.match(String(report.blocker?.message), /gate changed/); assert.equal(f.probes(), 0);
 });
 
@@ -182,6 +240,17 @@ test('verified candidates require explicit adoption; frozen boards name required
   assert.deepEqual(frozen.blocker?.required_inputs, ['baseline_run_id', 'finding_id']);
   f.options.readers.sourceState = () => ({ changed: true });
   assert.equal((await f.next()).evidence.freshness, 'stale');
+});
+
+test('a candidate run shows its image paths and needs its stage contract files', async t => {
+  const f = fixture(t), folder = f.run('run-edit', 'edit');
+  const shown = await f.next();
+  assert.equal(shown.next_action?.kind, 'explicit_adoption');
+  assert.deepEqual(shown.blocker?.images, [join(folder, 'images/top.svg'), join(folder, 'images/bottom.svg')]);
+  rmSync(join(folder, 'images/bottom.svg')); f.seal(folder);   // a run sealed without its image
+  const broken = await f.next();
+  assert.equal(broken.evidence.freshness, 'stale'); assert.notEqual(broken.next_action?.kind, 'explicit_adoption');
+  assert.match(String(broken.evidence.cause), /stage contract not met: edit stage output images\/bottom\.svg is missing/);
 });
 
 test('routing repairs require current sources and current parent admission', async t => {

@@ -12,8 +12,11 @@ case "$command" in
   list|context|next|status|events|explain|cancel|note|benchmark|cycle|adopt|seal) exec node --experimental-strip-types --no-warnings "$here/pcb-observe.ts" "$@" ;;
   bench) exec node --experimental-strip-types --no-warnings "$here/bench.ts" "$@" ;;
   constraints) exec node --experimental-strip-types --no-warnings "$here/pcb-constraints.ts" "$@" ;;
+  unfreeze) exec node --experimental-strip-types --no-warnings "$here/pcb-unfreeze.ts" "$@" ;;
+  release-approval|release-order) exec node --experimental-strip-types --no-warnings "$here/pcb-release-record.ts" "$@" ;;
   layout) exec node --experimental-strip-types --no-warnings "$here/pcb-layout.ts" "$@" ;;
   place) exec node --experimental-strip-types --no-warnings "$here/pcb-place.ts" "$@" ;;
+  change|state|history) exec node --experimental-strip-types --no-warnings "$here/pcb-state.ts" "$@" ;;
   trial) exec node --experimental-strip-types --no-warnings "$here/agent-trial.ts" "$@" ;;
   project-check) exec node --experimental-strip-types --no-warnings "$here/pcb-project-check.ts" "$@" ;;
 esac
