@@ -3,8 +3,20 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {gateInputs,fingerprint,gateTools} from './gate-inputs.mjs';
+import {gateChecks,gateInputs,fingerprint,gateTools} from './gate-inputs.mjs';
+import {gateNeedsPcbnew} from './gate-core.mjs';
 import {fileURLToPath} from 'node:url';
+test('evidence readers see the placement check that the gate adds from rule data',t=>{
+ const r=mkdtempSync(join(tmpdir(),'placement-inputs-'));t.after(()=>rmSync(r,{recursive:true,force:true}));
+ const put=(p,v)=>{mkdirSync(join(r,p,'..'),{recursive:true});writeFileSync(join(r,p),v);};
+ put('hardware-design/boards/X/gate.json',JSON.stringify({project:'cad/X',checks:{erc:true}}));
+ assert.equal(gateNeedsPcbnew(gateInputs(r,'X').cfg.checks),false);
+ put('hardware-design/boards/X/placement-constraints.json',JSON.stringify({rules:[]}));
+ const checks=gateInputs(r,'X').cfg.checks;
+ assert.deepEqual(checks,gateChecks(join(r,'hardware-design/boards/X'),{erc:true}));
+ assert.equal(checks.placement,'placement-constraints.json');
+ assert.equal(gateNeedsPcbnew(checks),true,'the adopt probe must expect the pcbnew version that the gate records');
+});
 test('preserved copper policy source changes invalidate evidence',t=>{
  const r=mkdtempSync(join(tmpdir(),'preserved-inputs-'));t.after(()=>rmSync(r,{recursive:true,force:true}));
  const put=(p,v)=>{mkdirSync(join(r,p,'..'),{recursive:true});writeFileSync(join(r,p),v);};

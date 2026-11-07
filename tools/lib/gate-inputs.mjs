@@ -77,10 +77,16 @@ export function gateTools(root, entries = [join(root,'tools/gate.mjs')]) {
   return [...files].sort();
 }
 
+/** The checks the gate runs: rule data beside gate.json turns on the placement check. Evidence readers must use this too. */
+export function gateChecks(dir, checks) {
+  return existsSync(join(dir,'placement-constraints.json')) && !checks?.placement ? {...checks,placement:'placement-constraints.json'} : checks;
+}
+
 export function gateInputs(root, board, configName = 'gate.json', environment = {}) {
   const dir = join(root,'hardware-design/boards',board);
   const config = join(dir,configName);
   const cfg = JSON.parse(readFileSync(config,'utf8'));
+  cfg.checks = gateChecks(dir,cfg.checks);
   const project = resolve(dir,cfg.project);
   const files = new Set([config]);
   // cad-seal.json (tools/lib/cad-seal.ts) changes with each sealed write; it is no gate input, or a reseal would make evidence stale.
