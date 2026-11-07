@@ -81,14 +81,17 @@ function main(argv) {
   const ours = new Set(fs.existsSync(listing) ? read(listing).split('\n').filter(Boolean) : [])
   const collision = r => console.error(`FAIL: toolchain_sync: project file tools/${r} differs from pcb-toolchain ${stampText}; ` +
                                        'move it to the pcb-toolchain repo or rename it')
+  const theirs = new Set()                          // identical project files: not ours, so never listed
   for (const r of rels) {                           // check every path first: a collision changes nothing
     const src = path.join(bundle, 'tools', r), dst = path.join(tools, r)
-    if (!ours.has(r) && lexists(dst) && !(isFile(dst) && digest(dst) === digest(src))) { collision(r); return 1 }
+    if (ours.has(r) || !lexists(dst)) continue
+    if (!(isFile(dst) && digest(dst) === digest(src))) { collision(r); return 1 }
+    theirs.add(r)
   }
-  // The listing is written before any file changes, and holds the old and the new paths: a stop at any point leaves a
-  // listing that covers every file this script may have put there, so the next run owns them and does not call them a collision.
+  // The listing is written before any file changes, and holds the old and the new paths that this script may put there:
+  // a stop at any point leaves a listing that covers them, so the next run owns them and does not call them a collision.
   fs.mkdirSync(tools, { recursive: true })
-  put(listing, [...new Set([...ours, ...rels])].join('\n') + '\n')
+  put(listing, [...new Set([...ours, ...rels.filter(r => !theirs.has(r))])].join('\n') + '\n')
   for (const r of ours) {
     const p = path.join(tools, r)
     if (lexists(p)) { fs.chmodSync(p, 0o600); fs.unlinkSync(p) }

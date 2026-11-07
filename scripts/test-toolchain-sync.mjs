@@ -102,6 +102,19 @@ test('a sync that stopped half way does not turn the next upgrade into a collisi
   assert.equal(fs.readFileSync(path.join(project, 'tools/a.py'), 'utf8'), 'a2')
 })
 
+test('a sync that stopped half way does not list an identical project file', t => {
+  const { project, bundle } = setup(t)
+  write(path.join(project, 'tools/b.py'), 'same')
+  const dir = path.join(path.dirname(project), 'broken')
+  const run = bundle('broken', '1.0.0 aaa', { 'a.py': 'a', 'b.py': 'same' })
+  fs.symlinkSync(path.join(dir, 'nowhere'), path.join(dir, 'tools/z.link'))
+  assert.notEqual(run([project]).status, 0)
+  assert.doesNotMatch(fs.readFileSync(path.join(project, 'tools/.toolchain-files'), 'utf8'), /b\.py/)
+  const next = bundle('b2', '2.0.0 bbb', { 'a.py': 'a2' })([project])
+  assert.equal(next.status, 0, next.stderr)
+  assert.equal(fs.readFileSync(path.join(project, 'tools/b.py'), 'utf8'), 'same', 'the upgrade does not delete the project file')
+})
+
 test('a block written by the Python version is replaced', t => {
   const { project, bundle, exclude } = setup(t)
   write(path.join(project, '.git/info/exclude'), '# pcb-toolchain begin (bin/toolchain_sync.py)\n/tools/gone.py\n# pcb-toolchain end\n')
