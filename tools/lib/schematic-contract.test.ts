@@ -11,13 +11,32 @@ import { sha256File } from './json-file.ts';
 import { fakePdfinfo, writeReviewed } from './part-fixture.ts';
 import { Atom, dump, item, items, parse, type CadList } from './pq-cadlib.ts';
 import { Float } from './py-compat.mjs';
-import { canonicalValue, checkContract, dependencyFiles, number, parseExport, RESULT, type Exporter, type SchematicReport } from './schematic-contract.ts';
+import { canonicalValue, checkContract, checkNativeIdentity, dependencyFiles, number, parseExport, RESULT, type Exporter, type SchematicReport } from './schematic-contract.ts';
 import { changeProperty, makeFunctionalFixture, placed, type FunctionalFixture } from './schematic-fixture.ts';
 
 type Json = Record<string, any>;
 const d = (text: string) => Decimal.of(text);
 const jsonFile = (path: string): Json => JSON.parse(readFileSync(path, 'utf8'));
 const esc = (text: string) => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;');
+
+describe('native export identity', () => {
+  const part = (fields: Record<string, unknown>) => new Map([['TP1', { mpn: '', pin_map: new Map(), pad_net_map: new Map(), ...fields }]]) as never;
+  const exported = (value: string, fields: Record<string, string> = {}) => ({
+    comps: new Map([['TP1', fields.MPN || value]]), fields: new Map([['TP1', new Map(Object.entries(fields))]]), pins: new Map(),
+  }) as never;
+  const free = { identity_free: { basis: 'single_bare_copper_pad_outside_bom_and_placement' } };
+
+  test('an identity-free pad may export its net name as the value', () => {
+    assert.doesNotThrow(() => checkNativeIdentity(part(free), exported('USB_VBUS')));
+  });
+
+  test('a part with no proof, a real MPN or a missing export row still differs', () => {
+    assert.throws(() => checkNativeIdentity(part({}), exported('USB_VBUS')), /native export part identity differs: TP1/);
+    assert.throws(() => checkNativeIdentity(part(free), exported('USB_VBUS', { MPN: 'PART' })), /native export part identity differs: TP1/);
+    assert.throws(() => checkNativeIdentity(part(free), exported('USB_VBUS', { LCSC: 'C1' })), /native export part identity differs: TP1/);
+    assert.throws(() => checkNativeIdentity(part(free), { comps: new Map(), fields: new Map(), pins: new Map() } as never), /native export part identity differs: TP1/);
+  });
+});
 
 describe('quantities', () => {
   test('equivalent units and resistor notation are exact', () => {
