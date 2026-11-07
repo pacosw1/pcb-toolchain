@@ -1,6 +1,7 @@
-// tools/pcb change and state: the event and the view of a board.
+// tools/pcb change, state and history: the event, the view and the log of a board.
 import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { boardHistory, historyText } from './lib/board-history.ts';
 import { boardView, viewText } from './lib/board-view.ts';
 import { recordChange } from './lib/change-log.ts';
 import { parseFlags, runMain, UsageError } from './lib/cli.ts';
@@ -10,7 +11,8 @@ import { projectRoot } from './lib/project-root.mjs';
 import { jsonDumps } from './lib/py-compat.mjs';
 
 const USAGE = `usage: pcb [--project DIR] change BOARD --kind KIND --reason TEXT --by NAME [--refs A,B] [--json]
-       pcb [--project DIR] state BOARD [--runs-dir DIR] [--json]`;
+       pcb [--project DIR] state BOARD [--runs-dir DIR] [--json]
+       pcb [--project DIR] history BOARD [--runs-dir DIR] [--json]`;
 
 function runsBase(root: string, given: string | undefined): string {
   const base = resolve(given ?? process.env.PCB_RUNS_DIR ?? resolve(root, '.gate/cli'));
@@ -34,6 +36,11 @@ async function main(given: string[]): Promise<number> {
     const view = await boardView(root, board, base, (where, name) => nextAction(where, name, { base, readers: nextReaders }));
     console.log(json ? jsonDumps(view) : viewText(view));
     return 0;
+  }
+  if (command === 'history') {
+    const history = boardHistory(root, board, runsBase(root, values['runs-dir'] as string | undefined));
+    console.log(json ? jsonDumps(history) : historyText(history));
+    return history.problems.length ? 1 : 0;
   }
   const { kind, reason, by, refs } = values as Record<string, string | undefined>;
   if (command !== 'change' || kind === undefined || reason === undefined || by === undefined) throw new UsageError(USAGE);
