@@ -180,6 +180,13 @@ test('adoption requires its source, operation and gate evidence to be bound', as
   assert.deepEqual(readFileSync(f.target), before);
 });
 
+test('adoption into a board with a frozen registry field is refused until a person records an unfreeze', { skip: iotrouteMissing() }, async t => {
+  const f = candidateFixture(t), before = readFileSync(f.target);
+  put(join(f.root, 'hardware-design/registry/boards.json'), JSON.stringify({ schema_version: 1, boards: [{ id: 'X', directory: 'X', frozen: { reason: 'sent to the fab' } }] }));
+  await assert.rejects(adopt(f.root, f.folder), /X is frozen: sent to the fab/);
+  assert.deepEqual(readFileSync(f.target), before);
+});
+
 test('adoption rejects stale candidate and frozen board without a named baseline', { skip: iotrouteMissing() }, async t => {
   const f = candidateFixture(t), before = readFileSync(f.target);
   f.operation.candidate_sha256 = '0'.repeat(64); f.save();

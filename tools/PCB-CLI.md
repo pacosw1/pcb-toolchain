@@ -266,7 +266,11 @@ Rule: canonical CAD changes only through our tools. Do not edit `.kicad_pcb`, `.
 
 `hardware-design/boards/BOARD/cad-seal.json` (schema `iot-lab.cad-seal.v1`, committed) holds the sha256 of each
 CAD file of the board, the total hash, and the last writer (`tool`, `run_id`). It has no timestamp. The file list
-comes from the gate inputs of the board. Each tool that writes CAD updates the seal. The local log
+comes from the gate inputs of the board. It also covers `gate.json`, `reference-planes.json`, `diff-pairs.json`,
+`current-paths.json`, `rf-lines.json`, `placement-constraints.json` and each JSON rule file that `gate.json` names.
+A change of one of them stops the next command like a change of the board. A seal made by an older toolchain does
+not list these files. It fails closed and names them as `added`: run `tools/pcb seal BOARD --accept --reason TEXT` once.
+Each tool that writes CAD updates the seal. The local log
 `.gate/cad-seal/BOARD.jsonl` gets one line per write or accepted edit: tool, before hash, after hash, reason.
 
 If the CAD does not agree with the seal, `check`, `build`, `edit`, `route`, `repair`, `release`, the passthrough
@@ -286,7 +290,7 @@ accept it or restore it.
 
 To make a Claude Code agent follow the rule, enable the hook in the `.claude/settings.json` of the project. The hook
 denies `Edit`, `Write`, `MultiEdit` and `NotebookEdit` on CAD files under `hardware-design/`, and it asks a person
-before a `pcb seal ... --accept` command runs:
+before an edit of `gate.json` or a check data file of a board and before a `pcb seal ... --accept` command runs:
 
 ```json
 {
@@ -361,6 +365,43 @@ that record, is sealed as `error` with the file named.
 actual Gerber/BOM/CPL checks, atomic publication and separate current stock,
 complete-assembly and supplier-orientation readiness. Producing a fabrication
 candidate does not declare G5 approval or order boards.
+
+### Release approval
+
+`tools/pcb release-approval BOARD --candidate DIR` shows the G5 state of a release candidate and exits 1 unless it is
+`approved`. A person approves with `--approve --by NAME --reason TEXT --report FILE --image FILE`. The report is the
+`ready_for_user_review` report of the same board and the same candidate manifest. The image is a PNG or an SVG (the
+content is checked). The command needs a canonical project and an intact CAD seal. It writes
+`hardware-design/boards/BOARD/release-approval.json` (schema `iot-lab.release-approval.v1`) with `by`, `reason`
+and the sha256 of the candidate manifest, the report and the image. It also keeps a copy of the report and the image
+next to it, and one line in `.gate/release-approval/BOARD.jsonl`. The states are `missing`, `invalid`, `stale` and
+`approved`. A changed candidate, report or image makes the record `stale`. These files are no gate input.
+`check-release-readiness.mjs` reports `g5_release_approved: true` only for `approved`. The manifest keeps
+`g5_ready: false`. `--by` is any text: the tool does not check who the person is. The `claude-cad-guard.mjs` hook
+asks a person before `--approve` and before an edit of a `release-approval*` file.
+
+### Frozen board
+
+A row of `hardware-design/registry/boards.json` can carry `frozen: {reason}`. The reason must be non-empty: `pcb project-check --layout`
+reports a bad field as `registry_schema`, and a write command stops on it. A frozen board refuses each write of its
+canonical CAD: a sealed write, `pcb adopt`, `pcb seal --accept` and `pcb constraints --add/--remove`. The message names the
+reason and the command to unfreeze. `tools/pcb unfreeze BOARD` shows the state and exits 1 while the board is frozen.
+A person records an unfreeze with `--record --by NAME --reason TEXT`. The record is
+`hardware-design/boards/BOARD/unfreeze.json` (schema `iot-lab.unfreeze.v1`). It stays until a person removes it.
+It is no gate input. `--by` is any text. The `FOCUS.md` `## Frozen` list is a different rule: it only asks for
+`--baseline` and `--defect` at adopt. The hook asks a person before an edit that adds or removes a `frozen` field in the
+registry, before `--record` and before an edit of `unfreeze.json`. No lab board has the field.
+
+### Order record
+
+`tools/pcb release-order BOARD` lists the recorded orders of a board. A person records an order after they place it,
+with `--record --candidate DIR --by NAME --what TEXT --quantity N --reference TEXT`. The tool never orders and never
+uploads: it only records. The command stops unless the release approval for the candidate is `approved`. It stops on a
+quantity that is not a positive whole number and on an order reference that exists. It appends one line to
+`hardware-design/boards/BOARD/release-orders.jsonl` (schema `iot-lab.release-order.v1`) with `by`, `what`, `quantity`,
+`reference`, the sha256 of the candidate manifest (the release) and the sha256 of the approval record. A damaged line
+is an error, not an empty list. The file is no gate input. The hook asks a person before `--record` and before an edit
+of this file.
 
 [Block qualification](BLOCK-QUALIFICATION.md) describes native inventory and
 source/target-bound receipts. Draft, verified applicability and measured bench

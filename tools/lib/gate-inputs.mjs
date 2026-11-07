@@ -90,7 +90,8 @@ export function gateInputs(root, board, configName = 'gate.json', environment = 
   const project = resolve(dir,cfg.project);
   const files = new Set([config]);
   // cad-seal.json (tools/lib/cad-seal.ts) changes with each sealed write; it is no gate input, or a reseal would make evidence stale.
-  const add = p => { if (p.split('/').at(-1)==='cad-seal.json') return; files.add(p); if (existsSync(p) && lstatSync(p).isSymbolicLink()) files.add(realpathSync(p)); };
+  // The release approval and order files (tools/lib/release-approval.mjs) and unfreeze.json (tools/lib/board-freeze.ts) are written after the gate run for the same reason.
+  const add = p => { if (p.split('/').at(-1)==='cad-seal.json' || /^(?:release-(?:approval|orders?)[.\w-]*|unfreeze\.json)$/.test(p.split('/').at(-1))) return; files.add(p); if (existsSync(p) && lstatSync(p).isSymbolicLink()) files.add(realpathSync(p)); };
   const native = p => /\.(kicad_(sch|pcb|pro|dru|sym|mod)|json)$/.test(p) || ['fp-lib-table','sym-lib-table'].includes(p.split('/').at(-1));
   for (const p of walkFiles(dirname(project),native)) add(p);
   for (const p of readdirSync(dir)) if (p.endsWith('.json') && !['gate-metrics.json','gate-waivers.json'].includes(p)) add(join(dir,p));
@@ -184,7 +185,7 @@ export function gateInputs(root, board, configName = 'gate.json', environment = 
     }
   }
   for(const repo of environment.repositories ?? []) for(const p of walkFiles(repo,p=>p.endsWith('.py'))) add(p);
-  return {cfg, project, files:[...files].sort()};
+  return {cfg, project, files:[...files].sort(), rules:[...new Set(rules)].sort()};
 }
 
 export function fingerprint(root, files, versions = {}, externalRoots = {}) {

@@ -32,6 +32,28 @@ test('MultiEdit on a .kicad_pro and NotebookEdit on a .kicad_dru are denied', ()
   ]) assert.equal(decisionOf(run({tool_name, tool_input})).permissionDecision, 'deny');
 });
 
+test('Edit on gate.json or a check data file of a board asks a person, and an unrelated json passes', () => {
+  for (const name of ['gate.json', 'reference-planes.json', 'diff-pairs.json', 'current-paths.json', 'rf-lines.json']) {
+    const out = decisionOf(run({tool_name: 'Edit', tool_input: {file_path: `/work/proj/hardware-design/boards/B/${name}`, old_string: 'a', new_string: 'b'}}));
+    assert.equal(out.permissionDecision, 'ask', name);
+    assert.match(out.permissionDecisionReason, /seal/);
+  }
+  const other = run({tool_name: 'Edit', tool_input: {file_path: '/work/proj/hardware-design/boards/B/gate-metrics.json'}});
+  assert.equal(other.stdout, '');
+  assert.equal(run({tool_name: 'Edit', tool_input: {file_path: '/work/proj/tools/gate.json'}}).stdout, '');
+});
+
+test('an edit of a release approval or order file, and the approve and record commands, ask a person', () => {
+  for (const name of ['release-approval.json', 'release-approval.report.json', 'release-approval.png', 'release-orders.jsonl']) {
+    const out = decisionOf(run({tool_name: 'Write', tool_input: {file_path: `/work/proj/hardware-design/boards/B/${name}`, content: '{}'}}));
+    assert.equal(out.permissionDecision, 'ask', name);
+  }
+  for (const command of ['tools/pcb release-approval B --candidate /c --approve --by Ana --reason x --report r.json --image i.png', 'tools/pcb release-order B --record --candidate /c --by Ana --what w --quantity 5 --reference R1']) {
+    assert.equal(decisionOf(run({tool_name: 'Bash', tool_input: {command}})).permissionDecision, 'ask', command);
+  }
+  for (const command of ['tools/pcb release-approval B --candidate /c', 'tools/pcb release-order B']) assert.equal(run({tool_name: 'Bash', tool_input: {command}}).stdout, '', command);
+});
+
 test('Edit on tools/foo.ts passes with no output', () => {
   const result = run({tool_name: 'Edit', tool_input: {file_path: '/work/proj/tools/foo.ts'}});
   assert.equal(result.status, 0);
@@ -83,6 +105,21 @@ test('pcb layout --approve asks a person, and so does a direct edit of a layout 
   for (const tool_name of ['Edit', 'Write']) assert.equal(decisionOf(run({tool_name, tool_input: {file_path: '/p/hardware-design/boards/X/layout-plan.json'}})).permissionDecision, 'ask');
   for (const command of ['tools/pcb layout X', 'tools/pcb layout X --json']) assert.equal(run({tool_name: 'Bash', tool_input: {command}}).stdout, '');
   assert.equal(run({tool_name: 'Edit', tool_input: {file_path: '/p/scratch/layout-plan.json'}}).stdout, '');
+});
+
+test('an edit of the frozen field, an unfreeze record or the unfreeze command asks a person', () => {
+  const REGISTRY = '/p/hardware-design/registry/boards.json';
+  for (const input of [
+    {tool_name: 'Edit', tool_input: {file_path: REGISTRY, old_string: '"frozen": {"reason": "x"},', new_string: ''}},
+    {tool_name: 'Edit', tool_input: {file_path: REGISTRY, old_string: '"id": "X"', new_string: '"id": "X", "frozen": {"reason": "x"}'}},
+    {tool_name: 'Write', tool_input: {file_path: '/p/hardware-design/boards/B/unfreeze.json', content: '{}'}},
+    {tool_name: 'Bash', tool_input: {command: 'tools/pcb unfreeze B --record --by Ana --reason x'}},
+    {tool_name: 'Bash', tool_input: {command: `sed -i 's/"id": "X"/"id": "X", "frozen": {"reason": "x"}/' hardware-design/registry/boards.json`}},
+  ]) assert.equal(decisionOf(run(input)).permissionDecision, 'ask', JSON.stringify(input));
+  for (const input of [
+    {tool_name: 'Edit', tool_input: {file_path: REGISTRY, old_string: '"id": "X"', new_string: '"id": "Y"'}},
+    {tool_name: 'Bash', tool_input: {command: 'tools/pcb unfreeze B'}},
+  ]) assert.equal(run(input).stdout, '', JSON.stringify(input));
 });
 
 test('an edit of boards.json that writes an exemption asks a person; other edits pass', () => {
