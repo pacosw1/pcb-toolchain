@@ -49,7 +49,7 @@ function operationFiles(folder: string): string[] {
 
 export function evidenceFiles(folderPath: string): Record<string, string> {
   const folder = resolvePath(folderPath);
-  const sealed = ['operation', 'gate'].flatMap(name => walk(joinPath(folder, name)).filter(isFile));
+  const sealed = ['operation', 'gate', 'images'].flatMap(name => walk(joinPath(folder, name)).filter(isFile));
   const paths = [joinPath(folder, 'run.json'), ...sealed, ...operationFiles(folder)];
   const names = [...new Set(paths)].sort();
   return Object.fromEntries(names.map(path => [relativeTo(path, folder), sha(path)]));

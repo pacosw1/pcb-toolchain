@@ -261,7 +261,7 @@ export async function nextAction(rootPath: string, board: string, options: NextO
   if (layout.state !== 'approved' && layout.state !== 'exempt') {
     const approval = layout.state === 'unapproved' || layout.state === 'stale';
     return finish('blocked', layout.state === 'stale' ? 'layout_plan_stale' : 'layout_plan_missing', layoutGate(root, board, () => {})!.message, approval ? 'approve_layout_plan' : 'write_layout_plan',
-      approval ? ['layout', board, '--approve', '--by', 'NAME', '--reason', 'TEXT'] : ['layout', board], { evidence: { path: layout.path }, problems: layout.problems, stale: layout.stale, requires_person: approval });
+      approval ? ['layout', board, '--approve', '--by', 'NAME', '--reason', 'TEXT', '--image', 'FILE'] : ['layout', board], { evidence: { path: layout.path }, problems: layout.problems, stale: layout.stale, requires_person: approval });
   }
   if (!selected) { output.evidence = { freshness: context.previous_gate ? 'unverified_legacy' : 'missing', ...(context.previous_gate ? { legacy_observation: context.previous_gate } : {}) }; return check('current_check_missing', 'No current unified run evidence for this board revision'); }
   const { folder, manifest } = selected, operation = manifest.operation ?? 'check';

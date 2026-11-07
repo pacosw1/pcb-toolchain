@@ -2,7 +2,9 @@
 // changes only in adoption. Runs as the owned child of tools/pcb-check-worker.ts, which reads operation/result.json.
 import { copyFileSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { renderImages } from './board-images.ts';
 import { dependencyFiles } from './design-contract-load.ts';
+import { contractKey } from './stage-contracts.ts';
 import { designServices } from './design-services.ts';
 import { validateExplicitSpec } from './explicit-spec.ts';
 import { atomicJson, plainJson, readObject, sha256File } from './json-file.ts';
@@ -249,6 +251,14 @@ async function gate(run: Candidate, changed: string[], identity: boolean): Promi
     metrics: report?.metrics ?? null, input_sha256: (report?.provenance as Row | undefined)?.input_sha256 ?? null };
 }
 
+/** The stage contract of a passed run: the images of its candidate. A failed renderer fails the run and is named. */
+function drawBoard(run: Candidate, result: Row, render: typeof renderImages): void {
+  try { render(run.native, join(run.folder, 'images')); }
+  catch (error) {
+    Object.assign(result, { status: 'failed', exit_code: 1, candidate_verified: false, cause: `image renderer: ${error instanceof Error ? error.message : String(error)}` });
+  }
+}
+
 const filesIn = (folder: string): string[] => {
   try {
     return readdirSync(folder).map(name => join(folder, name)).filter(isFile);
@@ -267,7 +277,8 @@ function workEnvironment(root: string, workspace: string, folder: string, manife
   return env;
 }
 
-async function candidateOperation(folder: string, root: string, manifest: OperationManifest, design: Row | null, parent: { candidate: string; dependencies: Record<string, string> } | null, emit: Emit): Promise<number> {
+async function candidateOperation(folder: string, root: string, manifest: OperationManifest, design: Row | null, parent: { candidate: string; dependencies: Record<string, string> } | null, emit: Emit,
+  render: typeof renderImages): Promise<number> {
   const { board, operation } = manifest;
   const extra = await extraInputs(root, manifest, design, parent?.dependencies ?? {});
   const stopped = reviewParts(root, folder, manifest, extra);
@@ -315,6 +326,7 @@ async function candidateOperation(folder: string, root: string, manifest: Operat
     if (screened !== null) return screened;
     result = await gate(run, changed, identity);
   }
+  if (result.status === 'passed' && contractKey(manifest)) drawBoard(run, result, render);
   Object.assign(result, { scope: 'candidate_board_gate', operation, board, source_sha256: sources.sha256, source_unchanged: sourceUnchanged(run), workspace });
   if (!result.source_unchanged) Object.assign(result, { status: 'error', exit_code: 2, cause: 'canonical source changed during candidate operation' });
   const kept = [...filesIn(join(folder, 'gate')), ...filesIn(join(folder, 'operation')), ...(isFile(native) ? [native] : [])];
@@ -329,7 +341,8 @@ async function release(folder: string, root: string, manifest: OperationManifest
     cause: `release ${code === 0 ? 'completed' : 'failed; inspect original tool evidence'}`, scope: 'fabrication_candidate', operation: 'release', tool_exit: code, artifact_directory: join(folder, 'candidate') });
 }
 
-export async function runOperation(folderPath: string): Promise<number> {
+/** `render` draws the images of the stage contract. A test passes a stand-in; the worker uses kicad-cli and rsvg-convert. */
+export async function runOperation(folderPath: string, render: typeof renderImages = renderImages): Promise<number> {
   const folder = resolvePath(folderPath), manifest = readObject<OperationManifest>(join(folder, 'run.json')), root = resolvePath(manifest.root);
   const emit: Emit = (kind, data) => operationEvent(folder, kind, data);
   mkdirSync(join(folder, 'operation'), { recursive: true });
@@ -340,5 +353,5 @@ export async function runOperation(folderPath: string): Promise<number> {
   if (layoutAdmission(root, folder, manifest, emit)) return 1;
   if (manifest.operation === 'release') return release(folder, root, manifest);
   const parent = manifest.from_run ? parentCandidate(root, manifest.board, manifest.from_run) : null;
-  return candidateOperation(folder, root, manifest, design as unknown as Row | null, parent, emit);
+  return candidateOperation(folder, root, manifest, design as unknown as Row | null, parent, emit, render);
 }

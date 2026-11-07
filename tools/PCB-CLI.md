@@ -315,12 +315,14 @@ with the route plan schema) and the `approval`, which is `null` until a person a
 
 ```sh
 tools/pcb layout BOARD [--json]
-tools/pcb layout BOARD --approve --by NAME --reason TEXT
+tools/pcb layout BOARD --approve --by NAME --reason TEXT --image FILE
 ```
 
-The first form is read-only. It exits 1 when the plan is missing, not valid, not approved or stale. The second form
-records `by`, `reason`, and the sha256 of `placement-constraints.json` and of the route plan. It needs a valid plan and
-an intact CAD seal. A change to the rules or to the route plan after the approval makes the approval stale.
+The first form is read-only. It exits 1 when the plan is missing, not valid, not approved or stale. It prints
+`image: PATH`: the approved image, or else the top image of the newest run of the board. The second form
+records `by`, `reason`, the sha256 of `placement-constraints.json` and of the route plan, and the `image` (a PNG
+file inside the project) with its `image_sha256`: the image that the person saw. It needs a valid plan and
+an intact CAD seal. A change to the rules, to the route plan or to the image after the approval makes the approval stale.
 A stale or missing plan stops the command with the code `layout_plan_stale` or `layout_plan_missing`. The message names
 the board and the next command. `tools/pcb next BOARD` returns the state `blocked` with the same code and command.
 
@@ -328,6 +330,16 @@ A board can carry `layout_plan_exempt: {reason}` in its row of `hardware-design/
 continues, and each run writes one `layout_plan.exempt` event. A row with an empty reason stops the command.
 The `claude-cad-guard.mjs` hook asks a person before `pcb layout ... --approve` and before a direct edit of a
 `layout-plan.json`.
+
+## Stage contracts
+
+`tools/lib/stage-contracts.ts` is the one table of what the stages `place` (an `edit --kind place`), `edit` and
+`route` need and write. A passed run of these stages draws its candidate: `images/top.png` and `images/bottom.png`
+in the run folder (`kicad-cli pcb export svg`, then `rsvg-convert` with a white background). The programs come from
+`KICAD_CLI` and `RSVG_CONVERT`, or else the KiCad of the machine and `rsvg-convert` on the PATH. If a renderer is
+missing or fails, the run fails and the cause names it. A run that failed before it had a board keeps its own cause.
+The sealed run record (`evidence_sha256`) binds the images. A passed run whose declared file is missing, or is not in
+that record, is sealed as `error` with the file named.
 
 ## Release, blocks and measurement
 

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { reseal } from './lib/cad-seal.ts';
-import { approveLayoutPlan } from './lib/layout-plan.ts';
+import { approveFixture } from './lib/layout-plan-fixture.ts';
 import { footprints } from './lib/native-board.ts';
 import { sha256File } from './lib/json-file.ts';
 import { admitPlace, placeBoard, placeCandidates, showCandidates } from './pcb-place.ts';
@@ -224,7 +224,7 @@ test('place stops for a board with no approved layout plan, and continues for an
   writeFileSync(join(folder, 'layout-plan.json'), JSON.stringify({ schema: 'iot-lab.layout-plan.v1', intents: [{ id: 'a', statement: 'U1 near the edge', rule_ids: ['near'] }], route_plan: 'hardware-design/boards/X/route.json', approval: null }));
   reseal(root, 'X', { tool: 'fixture', run_id: null });
   assert.throws(() => admitPlace(root, 'X'), /not approved/);
-  await approveLayoutPlan(root, 'X', 'Ana', 'reviewed');
+  await approveFixture(root, 'X');
   admitPlace(root, 'X');
   const events = (): Record<string, unknown>[] => readFileSync(log, 'utf8').trim().split('\n').map(row => JSON.parse(row) as Record<string, unknown>).filter(row => row.type === 'layout_plan.exempt');
   assert.equal(events().length, 0, 'an approved board writes no exemption event');

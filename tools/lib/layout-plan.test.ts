@@ -8,6 +8,7 @@ import test, { type TestContext } from 'node:test';
 import { reseal } from './cad-seal.ts';
 import { SCHEMA } from './engineering-constraints.ts';
 import { approveLayoutPlan, layoutGate, layoutPlanPath, layoutPlanStatus } from './layout-plan.ts';
+import { PNG } from './layout-plan-fixture.ts';
 import { sha256File } from './json-file.ts';
 import { placementRulesPath } from './placement-rules.ts';
 
@@ -31,7 +32,8 @@ function fixture(t: TestContext, plan: Row = {}) {
   writeFileSync(path, JSON.stringify({ schema: 'iot-lab.layout-plan.v1', intents: INTENTS, route_plan: 'hardware-design/boards/X/route.json', approval: null, ...plan }));
   return { root, folder, path, rules: placementRulesPath(root, 'X'), route: join(folder, 'route.json') };
 }
-const approve = (root: string) => approveLayoutPlan(root, 'X', 'Ana', 'reviewed the edge intents');
+const imageOf = (root: string): string => join(root, 'layout-image.png');
+const approve = (root: string) => { writeFileSync(imageOf(root), PNG); return approveLayoutPlan(root, 'X', 'Ana', 'reviewed the edge intents', imageOf(root)); };
 const events = (): { log: Row[]; emit: (kind: string, data?: Row) => void } => { const log: Row[] = []; return { log, emit: (kind, data) => { log.push({ kind, ...data }); } }; };
 
 test('a plan without approval is not approved, and approval records the person, the reason and both hashes', async t => {
@@ -42,7 +44,9 @@ test('a plan without approval is not approved, and approval records the person, 
   assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved');
   assert.equal(layoutGate(f.root, 'X', () => {}), null);
   const saved = JSON.parse(readFileSync(f.path, 'utf8')) as { approval: Row; intents: unknown };
-  assert.deepEqual(saved.approval, { by: 'Ana', reason: 'reviewed the edge intents', rules_sha256: sha256File(f.rules), route_plan_sha256: sha256File(f.route) });
+  assert.deepEqual(saved.approval, { by: 'Ana', reason: 'reviewed the edge intents', rules_sha256: sha256File(f.rules), route_plan_sha256: sha256File(f.route),
+    image: 'layout-image.png', image_sha256: sha256File(imageOf(f.root)) });
+  assert.equal(layoutPlanStatus(f.root, 'X').image, 'layout-image.png');
   assert.deepEqual(saved.intents, INTENTS);
 });
 
@@ -79,6 +83,33 @@ test('a changed route plan makes the approval stale', async t => {
   assert.equal(layoutGate(f.root, 'X', () => {})!.code, 'layout_plan_stale');
 });
 
+test('a changed or missing approved image makes the approval stale', async t => {
+  const f = fixture(t);
+  await approve(f.root);
+  writeFileSync(imageOf(f.root), Buffer.concat([PNG, Buffer.from('redrawn')]));
+  const status = layoutPlanStatus(f.root, 'X');
+  assert.equal(status.state, 'stale');
+  assert.deepEqual(status.stale, ['the approved image changed since the approval']);
+  assert.equal(layoutGate(f.root, 'X', () => {})!.code, 'layout_plan_stale');
+  rmSync(imageOf(f.root));
+  assert.deepEqual(layoutPlanStatus(f.root, 'X').stale, ['the approved image is missing']);
+  await approve(f.root);
+  assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved');
+});
+
+test('the approved image must be a PNG file inside the project', async t => {
+  const f = fixture(t), by = (image: string) => approveLayoutPlan(f.root, 'X', 'Ana', 'ok', image);
+  await assert.rejects(by(join(f.root, 'none.png')), /image .* is not a file/);
+  writeFileSync(join(f.root, 'text.png'), 'not a png');
+  await assert.rejects(by(join(f.root, 'text.png')), /is not a PNG file/);
+  const outside = mkdtempSync(join(tmpdir(), 'layout-outside-'));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  writeFileSync(join(outside, 'a.png'), PNG);
+  await assert.rejects(by(join(outside, 'a.png')), /image must be inside the project/);
+  await assert.rejects(approveLayoutPlan(f.root, 'X', 'Ana', 'ok', ''), /--image FILE/);
+  assert.equal((JSON.parse(readFileSync(f.path, 'utf8')) as Row).approval, null);
+});
+
 test('an intent with an unknown rule id, or with no rule id, is invalid and cannot be approved', async t => {
   const unknown = fixture(t, { intents: [{ id: 'usb-top', statement: 'USB-C on top edge', rule_ids: ['distance', 'nope'] }] });
   assert.deepEqual(layoutPlanStatus(unknown.root, 'X').problems, ['intent usb-top: rule id nope is not in placement-constraints.json']);
@@ -108,13 +139,13 @@ test('the route plan is checked with the route plan schema and stays inside the 
 
 test('a malformed approval is invalid, not approved', t => {
   const f = fixture(t, { approval: { by: 'Ana', reason: 'ok', rules_sha256: 'x' } });
-  assert.deepEqual(layoutPlanStatus(f.root, 'X').problems, ['approval needs by, reason, rules_sha256 and route_plan_sha256']);
+  assert.deepEqual(layoutPlanStatus(f.root, 'X').problems, ['approval needs by, reason, rules_sha256, route_plan_sha256, image and image_sha256']);
 });
 
 test('approval needs a person and a reason, and a sealed board', async t => {
   const f = fixture(t);
-  await assert.rejects(approveLayoutPlan(f.root, 'X', ' ', 'why'), /--by NAME/);
-  await assert.rejects(approveLayoutPlan(f.root, 'X', 'Ana', ''), /--reason TEXT/);
+  await assert.rejects(approveLayoutPlan(f.root, 'X', ' ', 'why', imageOf(f.root)), /--by NAME/);
+  await assert.rejects(approveLayoutPlan(f.root, 'X', 'Ana', '', imageOf(f.root)), /--reason TEXT/);
   writeFileSync(join(f.folder, 'X.kicad_pcb'), '(kicad_pcb changed)');
   await assert.rejects(approve(f.root), /changed outside our tools/);
   assert.equal((JSON.parse(readFileSync(f.path, 'utf8')) as Row).approval, null);
@@ -131,14 +162,26 @@ test('the dispatcher shows the status, exits 1 until the plan is approved, and a
   writeFileSync(f.path, '{not json');
   assert.equal(JSON.parse(layout('--json').stdout).state, 'invalid');
   writeFileSync(f.path, JSON.stringify({ schema: 'iot-lab.layout-plan.v1', intents: INTENTS, route_plan: 'hardware-design/boards/X/route.json', approval: null }));
-  const partial = layout('--approve', '--by', 'Ana');
+  // The image of the newest run that has one is shown, so a person knows what to look at.
+  const older = join(f.root, '.gate/cli/run-a'), newer = join(f.root, '.gate/cli/run-b');
+  for (const [folder, created] of [[older, '2026-11-01T00:00:00Z'], [newer, '2026-11-02T00:00:00Z']] as const) {
+    mkdirSync(join(folder, 'images'), { recursive: true });
+    writeFileSync(join(folder, 'run.json'), JSON.stringify({ board: 'X', created_at: created }));
+    writeFileSync(join(folder, 'images/top.png'), PNG);
+  }
+  assert.equal(JSON.parse(layout('--json').stdout).image, '.gate/cli/run-b/images/top.png');
+  assert.match(layout().stdout, /\nimage: \.gate\/cli\/run-b\/images\/top\.png\n/);
+  const partial = layout('--approve', '--by', 'Ana', '--reason', 'reviewed');
   assert.equal(partial.status, 2);
-  assert.match(partial.stderr, /usage: pcb .* layout BOARD/);
+  assert.match(partial.stderr, /usage: pcb .* layout BOARD .*--image FILE/);
   assert.equal(layout('--by', 'Ana').status, 2);
-  const done = layout('--approve', '--by', 'Ana', '--reason', 'reviewed', '--json');
+  assert.equal(layout('--image', imageOf(f.root)).status, 2);
+  writeFileSync(imageOf(f.root), PNG);
+  const done = layout('--approve', '--by', 'Ana', '--reason', 'reviewed', '--image', imageOf(f.root), '--json');
   assert.equal(done.status, 0, done.stderr);
   assert.equal(JSON.parse(done.stdout).state, 'approved');
-  assert.match(layout().stdout, /^PASS: X layout plan approved by Ana/);
+  assert.equal(JSON.parse(done.stdout).image, 'layout-image.png');
+  assert.match(layout().stdout, /^PASS: X layout plan approved by Ana\nimage: layout-image\.png/);
   writeFileSync(f.route, JSON.stringify({ ...ROUTE, stages: [{ name: 'other' }] }));
   const stale = layout();
   assert.equal(stale.status, 1);

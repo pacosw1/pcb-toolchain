@@ -6,14 +6,15 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { sealFixtureBoard } from './cad-seal-fixture.ts';
+import { fakeRenderer } from './fake-renderer-fixture.ts';
 import { iotrouteMissing } from './iotroute-bin.ts';
 import { exemptBoard } from './design-exempt-fixture.ts';
 import { BOARD as FIXTURE_BOARD, makeFixture } from './part-fixture.ts';
 import { verify } from './pcb-evidence.ts';
 import { postVerifyCommands } from './pcb-candidate-run.ts';
-import { approveLayoutPlan } from './layout-plan.ts';
+import { approveFixture } from './layout-plan-fixture.ts';
 import { candidateLayoutCheck, designAdmission, layoutAdmission, type OperationManifest } from './pcb-candidate-screens.ts';
 import { EscapeStageReceipts } from './route-decision-escape.ts';
 import { status } from './pcb-runs.ts';
@@ -59,7 +60,10 @@ function project(t: { after(fn: () => void): void }, writer = WRITER(MOVED), gat
   return root;
 }
 
-let fixtureEnv: NodeJS.ProcessEnv = {};
+// A place, edit or route run draws its board: the stand-ins write the two images, so no KiCad is needed.
+const RENDERER_DIR = mkdtempSync(join(tmpdir(), 'pcb-operation-renderer-')), RENDERER_ENV = fakeRenderer(RENDERER_DIR);
+after(() => rmSync(RENDERER_DIR, { recursive: true, force: true }));
+let fixtureEnv: NodeJS.ProcessEnv = RENDERER_ENV;
 const pcb = (root: string, ...args: string[]) => spawnSync(join(tools, 'pcb'), ['--project', root, ...args], { encoding: 'utf8', cwd: root, env: { ...process.env, ...fixtureEnv } });
 
 async function settled(folder: string): Promise<Row> {
@@ -102,6 +106,42 @@ test('a verified candidate stays isolated and seals its board, gate and source r
   for (const type of ['tool.start', 'tool.output', 'tool.exit', 'gate.start', 'gate.end', 'run.end']) assert.ok(types.includes(type), type);
   assert.ok(rows.some(row => row.type === 'stage.end' && row.stage === 'snapshot'));
   assert.equal(rows.filter(row => row.type === 'gate.end').length, 1);
+});
+
+test('a passed place, edit or route run writes top and bottom images and seals them in its record', needsBinary, async t => {
+  const placed = await edit(project(t));
+  assert.equal(placed.result.status, 'passed', String(placed.result.cause));
+  for (const name of ['images/top.png', 'images/bottom.png']) {
+    assert.ok(existsSync(join(placed.folder, name)), name);
+    assert.equal(placed.result.evidence_sha256[name], sha(join(placed.folder, name)), name);
+  }
+  const root = project(t);
+  iotroute(root, `writeFileSync(routed, ${JSON.stringify(MOVED)});
+writeFileSync(record + '/result.json', JSON.stringify({ status: 'PASS', board_file: routed, drc_errors: 0, unconnected: 0, parity: 0 }));`);
+  const routed = await run(root, 'route', 'X', '--router', 'iotroute');
+  assert.equal(routed.result.status, 'passed', String(routed.result.cause));
+  assert.ok(routed.result.evidence_sha256['images/top.png'] && routed.result.evidence_sha256['images/bottom.png']);
+  assert.equal(verify(routed.folder).get('status'), 'passed');
+});
+
+test('a missing or failing renderer fails the run and names the renderer; a candidate that failed keeps its own cause', needsBinary, async t => {
+  t.after(() => { fixtureEnv = RENDERER_ENV; });
+  fixtureEnv = { ...RENDERER_ENV, KICAD_CLI: '/missing/kicad-cli' };
+  const noCli = await edit(project(t));
+  assert.equal(noCli.result.status, 'failed');
+  assert.match(String(noCli.result.cause), /image renderer: kicad-cli could not start/);
+  assert.equal(noCli.result.candidate_verified, false);
+  assert.equal(noCli.result.exit_code, 1);
+  fixtureEnv = { ...RENDERER_ENV, RSVG_CONVERT: '/missing/rsvg-convert' };
+  const noRsvg = await edit(project(t));
+  assert.match(String(noRsvg.result.cause), /image renderer: rsvg-convert could not start/);
+  // The tool fails before there is a board to draw: the original failure is reported, and no image exists.
+  const stopped = await edit(project(t, WRITER(BOARD, 3)));
+  assert.equal(stopped.result.cause, 'edit tool failed');
+  assert.equal(existsSync(join(stopped.folder, 'images')), false);
+  const gateFailed = await edit(project(t, WRITER(MOVED), GATE(1)));
+  assert.equal(gateFailed.result.cause, 'candidate does not meet configured gate targets');
+  assert.equal(existsSync(join(gateFailed.folder, 'images')), false);
 });
 
 test('a failing gate keeps the candidate as a failed, sealed observation', needsBinary, async t => {
@@ -158,8 +198,8 @@ test('a candidate continues from its sealed parent; changed canonical inputs ref
   const parent = await edit(root), id = parent.folder.split('/').at(-1)!;
   assert.equal(parent.result.status, 'passed', String(parent.result.cause));
   const second = MOVED.replace('(start 1 1)', '(start 3 3)');
-  t.after(() => { fixtureEnv = {}; });
-  fixtureEnv = { FIXTURE_EXPECT: MOVED, FIXTURE_BOARD: second };
+  t.after(() => { fixtureEnv = RENDERER_ENV; });
+  fixtureEnv = { ...RENDERER_ENV, FIXTURE_EXPECT: MOVED, FIXTURE_BOARD: second };
   const child = await edit(root, '--from-run', id);
   assert.equal(child.result.status, 'passed', String(child.result.cause));
   assert.equal(readFileSync(child.result.candidate, 'utf8'), second);
@@ -600,7 +640,7 @@ test('layout admission: an exempt board continues with one layout_plan.exempt ev
   writeFileSync(join(folder, 'layout-plan.json'), JSON.stringify({ schema: 'iot-lab.layout-plan.v1', intents: [{ id: 'a', statement: 'U1 near the edge', rule_ids: ['near'] }], route_plan: 'hardware-design/boards/X/route.json', approval: null }));
   sealFixtureBoard(root, 'X');
   assert.match(String(layoutStop(root, 'route').result?.cause), /not approved/);
-  await approveLayoutPlan(root, 'X', 'Ana', 'reviewed');
+  await approveFixture(root, 'X');
   assert.deepEqual(layoutStop(root, 'route'), { stopped: false, events: [], result: null });
   writeFileSync(join(folder, 'route.json'), JSON.stringify({ schema: 'iot-lab.route.v1', backend: 'tracemaker', layers: ['F.Cu'], stages: [{ name: 'main' }] }));
   const stale = layoutStop(root, 'route');
@@ -639,8 +679,8 @@ writeFileSync(process.argv[3], readFileSync(process.argv[2], 'utf8').length + '\
   assert.equal(result.status, 'passed', String(result.cause));
   assert.ok(existsSync(join(folder, 'operation/board-semantic-0.log')));
   assert.equal(readFileSync(join(folder, 'operation/board-check.txt'), 'utf8').trim(), String(MOVED.length));
-  t.after(() => { fixtureEnv = {}; });
-  fixtureEnv = { SEMANTIC_EXIT: '1' };
+  t.after(() => { fixtureEnv = RENDERER_ENV; });
+  fixtureEnv = { ...RENDERER_ENV, SEMANTIC_EXIT: '1' };
   const failed = await edit(root);
   assert.equal(failed.result.status, 'failed');
   assert.equal(failed.result.candidate_verified, false);
@@ -653,8 +693,8 @@ test('gate.json place_check hooks stop a placement edit before the full gate', n
   const { folder, result } = await edit(root);
   assert.equal(result.status, 'passed', String(result.cause));
   assert.ok(existsSync(join(folder, 'operation/board-placement.log')));
-  t.after(() => { fixtureEnv = {}; });
-  fixtureEnv = { RULES_EXIT: '1' };
+  t.after(() => { fixtureEnv = RENDERER_ENV; });
+  fixtureEnv = { ...RENDERER_ENV, RULES_EXIT: '1' };
   const failed = await edit(root);
   assert.equal(failed.result.status, 'failed');
   assert.equal(failed.result.candidate_verified, false);
