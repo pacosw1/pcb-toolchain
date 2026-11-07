@@ -8,6 +8,16 @@ import { durableJson, durableAppend } from './pcb-check-durable.ts';
 export type Fields = Record<string, unknown>;
 export const LOOP_SCHEMA = 'iot-lab.route-loop.v1';
 export const LOOP_TERMINAL = new Set(['passed', 'stopped', 'blocked', 'error', 'cancelled', 'expired']);
+export type LoopOpenStatus = 'starting' | 'launching' | 'running' | 'stopping' | 'decision_required';
+export type LoopStatus = LoopOpenStatus | 'passed' | 'stopped' | 'blocked' | 'error' | 'cancelled' | 'expired';
+/** The open statuses and the open statuses each may become. Every open status may also become a terminal one; a terminal status has no next. */
+export const LOOP_OPEN_NEXT: Record<LoopOpenStatus, readonly LoopOpenStatus[]> = {
+  starting: ['launching'],
+  launching: ['running', 'stopping', 'decision_required'],
+  running: ['stopping', 'decision_required'],
+  stopping: [],
+  decision_required: ['launching']
+};
 export interface LoopPolicy {
   experimental: true;
   max_rounds: number;
@@ -61,7 +71,7 @@ export interface LoopState {
   source_sha256: string;
   binding_sha256: string;
   revision: number;
-  status: string;
+  status: LoopStatus;
   cause: string;
   created_clock_ms?: number;
   deadline_clock_ms?: number;
@@ -156,6 +166,7 @@ function read(folder: string, root: string): LoopState {
     !idOK(s.id) ||
     s.id !== basename(folder) ||
     s.binding_sha256 !== loopHash(immutable(s)) ||
+    !(s.status in LOOP_OPEN_NEXT || LOOP_TERMINAL.has(s.status)) ||
     !Number.isSafeInteger(s.revision) ||
     s.rounds.length > s.policy.max_rounds
   )
@@ -186,8 +197,15 @@ export function validateLoopPolicy(value: unknown, b: LoopBackend): LoopPolicy {
   b.validatePolicy(p.route);
   return p;
 }
-function stop(folder: string, s: LoopState, status: string, cause: string): LoopState {
-  s.status = status;
+/** The only writer of `status`. A terminal loop never becomes active again, and an open status takes only the steps in LOOP_OPEN_NEXT. */
+function move(s: LoopState, next: LoopStatus): void {
+  const open = s.status in LOOP_OPEN_NEXT ? LOOP_OPEN_NEXT[s.status as LoopOpenStatus] : null;
+  if (!open || !(s.status === next || LOOP_TERMINAL.has(next) || open.includes(next as LoopOpenStatus)))
+    throw Error(`Loop ${s.id} cannot change from ${s.status} to ${next}.`);
+  s.status = next;
+}
+function stop(folder: string, s: LoopState, status: LoopStatus, cause: string): LoopState {
+  move(s, status);
   s.cause = cause;
   save(folder, s, 'loop.end');
   return s;
@@ -235,7 +253,7 @@ async function reconcile(folder: string, s: LoopState, b: LoopBackend): Promise<
         'A round launch was interrupted. Inspect its recorded launch before starting another loop.'
       );
     last.child = recovered;
-    s.status = 'running';
+    move(s, 'running');
     save(folder, s, 'loop.recovered');
   }
   if (b.source(s.root, s.board) !== s.source_sha256) {
@@ -252,7 +270,7 @@ async function reconcile(folder: string, s: LoopState, b: LoopBackend): Promise<
     const evidence = b.inspect(s, last.child);
     if (!['passed', 'failed', 'error', 'cancelled', 'timeout'].includes(evidence.state)) {
       if (s.stop_requested && s.status !== 'stopping') {
-        s.status = 'stopping';
+        move(s, 'stopping');
         save(folder, s, 'loop.stopping');
       }
       return s;
@@ -310,7 +328,7 @@ async function reconcile(folder: string, s: LoopState, b: LoopBackend): Promise<
         s.best_verified === null ? 'stopped' : 'passed',
         'Round limit reached. Verified and search results remain separate.'
       );
-    s.status = 'decision_required';
+    move(s, 'decision_required');
     s.cause = 'Choose a validated move or stop, and record the reason.';
     save(folder, s, 'loop.decision_required');
   } else if (s.stop_requested) return stop(folder, s, s.stop_requested, s.cause);
@@ -322,8 +340,10 @@ async function launch(
   b: LoopBackend,
   policy: Fields,
   from?: LoopChild,
-  decision?: LoopDecision
+  decision?: LoopState['decisions'][number]
 ): Promise<LoopState> {
+  // Memory only until the first save below: a launch that throws first leaves no decision record.
+  if (decision) s.decisions.push(decision);
   const remaining = Math.floor(remainingMs(s, b) / 1000) - 8;
   if (remaining < 10)
     return stop(
@@ -354,23 +374,22 @@ async function launch(
     launch_id: randomBytes(12).toString('hex'),
     policy: route,
     ...(from ? { from } : {}),
-    ...(decision ? { decision } : {})
+    ...(decision ? { decision: { reason: decision.reason, move: decision.move } } : {})
   };
   s.rounds.push(round);
-  s.status = 'launching';
+  move(s, 'launching');
   s.cause = 'Starting a supervised candidate round.';
   save(folder, s, 'loop.round.intent');
   try {
     round.child = await b.start(s, round, remaining);
-    s.status = 'running';
-    s.cause = `Round ${round.round} is running.`;
-    save(folder, s, 'loop.round.start');
   } catch (e) {
-    s.status = 'launching';
     s.cause = `Round launch needs recovery: ${e instanceof Error ? e.message : String(e)}`;
     save(folder, s, 'loop.launch_uncertain');
     throw e;
   }
+  move(s, 'running');
+  s.cause = `Round ${round.round} is running.`;
+  save(folder, s, 'loop.round.start');
   return s;
 }
 export async function startLoop(rootPath: string, board: string, value: unknown, b: LoopBackend): Promise<LoopState> {
@@ -403,8 +422,11 @@ export async function startLoop(rootPath: string, board: string, value: unknown,
     decisions: []
   };
   s.binding_sha256 = loopHash(immutable(s));
-  save(folder, s, 'loop.start');
-  return b.lock(join(folder, 'controller.lock'), () => launch(folder, s, b, policy.route));
+  // The first state is saved under the controller lock: a status poll cannot reconcile a loop that is still starting.
+  return b.lock(join(folder, 'controller.lock'), () => {
+    save(folder, s, 'loop.start');
+    return launch(folder, s, b, policy.route);
+  });
 }
 export async function statusLoop(root: string, id: string, b: LoopBackend): Promise<LoopState> {
   const folder = loopFolder(root, id);
@@ -440,10 +462,11 @@ export async function decideLoop(
     if (s.revision !== revision || s.status !== 'decision_required')
       throw Error('The loop changed. Read its current decision boundary.');
     const current = s.rounds.at(-1)!;
-    s.decisions.push({ revision, sha256: hash, ...decision });
-    save(folder, s, 'loop.decision');
+    // The decision is recorded in the same save as its action, after every check: a refused decision leaves no record.
+    const recorded = { revision, sha256: hash, ...decision };
     if (decision.move.kind === 'stop') {
       if (Object.keys(decision.move).some((k) => k !== 'kind')) throw Error('Stop takes no additional fields.');
+      s.decisions.push(recorded);
       return stop(folder, s, s.best_verified === null ? 'stopped' : 'passed', decision.reason);
     }
     if (decision.move.kind === 'ask_user') {
@@ -453,19 +476,23 @@ export async function decideLoop(
         !decision.move.question.trim()
       )
         throw Error('Ask one clear question.');
+      s.decisions.push(recorded);
       return stop(folder, s, 'blocked', decision.move.question);
     }
     const choice = s.best_search === null ? current : s.rounds[s.best_search - 1]!;
     if (!choice.child || !choice.evidence) throw Error('No retained candidate is available for this move.');
     const proposed = await b.propose(s, choice, decision.move);
     if (proposed.status === 'rejected') {
-      s.status = 'decision_required';
+      s.decisions.push(recorded);
+      move(s, 'decision_required');
       s.cause = proposed.cause ?? 'Move rejected. Choose another validated action or stop.';
       save(folder, s, 'loop.decision.rejected');
       return s;
     }
-    if (proposed.status !== 'accepted' || !proposed.policy)
+    if (proposed.status !== 'accepted' || !proposed.policy) {
+      s.decisions.push(recorded);
       return stop(folder, s, 'blocked', proposed.cause ?? 'This move requires review outside the routing loop.');
+    }
     const base = s.policy.route,
       next = proposed.policy;
     for (const key of new Set([...Object.keys(base), ...Object.keys(next)]))
@@ -491,7 +518,7 @@ export async function decideLoop(
       )
         throw Error('A model decision cannot expand or silently change the admitted sprint resource policy.');
     }
-    return launch(folder, s, b, next, choice.child, decision);
+    return launch(folder, s, b, next, choice.child, recorded);
   });
 }
 export async function cancelLoop(root: string, id: string, b: LoopBackend): Promise<LoopState> {
@@ -504,7 +531,7 @@ export async function cancelLoop(root: string, id: string, b: LoopBackend): Prom
     const last = s.rounds.at(-1);
     if (last?.child && !last.evidence) {
       b.cancel(last.child);
-      s.status = 'stopping';
+      move(s, 'stopping');
       save(folder, s, 'loop.stopping');
       return s;
     }

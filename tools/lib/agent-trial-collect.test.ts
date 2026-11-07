@@ -140,6 +140,20 @@ test('an agent that could not start is a failure', async () => {
   } finally { t.cleanup(); }
 });
 
+test('a runner that died before it wrote run.json ends in a failed verdict, not a dead end', async () => {
+  const t = finished({}, undefined, '');
+  try {
+    rmSync(join(t.out, 'run.json'));
+    writeFileSync(join(t.out, 'run.pending.json'), JSON.stringify({ schema: 'iot-lab.agent-trial-pending.v1', case_id: 'fixture', board: 'X', argv: ['x'],
+      started_at: '2026-11-06T10:00:00.000Z', runner_pid: 111, agent_pid: 222 }));
+    const alive = [111];
+    await assert.rejects(collectTrial(t.out, { ...fresh, processes: { alive: pid => alive.includes(pid), kill: () => {}, clock: () => Date.parse('2026-11-06T10:01:00.000Z') } }), /has no run.json/);
+    alive.length = 0;
+    const result = await collectTrial(t.out, { ...fresh, processes: { alive: pid => alive.includes(pid), kill: () => {}, clock: () => Date.parse('2026-11-06T10:01:00.000Z') } });
+    assert.deepEqual([result.verdict, result.cause, result.wall_s], ['failed', 'runner_aborted', 60]);
+  } finally { t.cleanup(); }
+});
+
 test('stale_inputs: the gate passed but its inputs changed, or the gate config did', async () => {
   const t = finished();
   try {

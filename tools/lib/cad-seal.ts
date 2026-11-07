@@ -2,10 +2,9 @@
 // hardware-design/boards/BOARD/cad-seal.json (committed) holds the sha256 of each sealed file and the last writer. The local
 // log .gate/cad-seal/BOARD.jsonl gets one line per write or accepted edit. Run workspaces and candidate copies (a .gate/ segment
 // in the root path) are not canonical and are never sealed.
-import { existsSync, mkdirSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { sha256Text } from './fingerprint.ts';
-import { holdLock } from './file-lock.ts';
 import { gateInputs } from './gate-inputs.mjs';
 import { readObject, sha256File } from './json-file.ts';
 import { durableAppend, durableJson } from './pcb-check-durable.ts';
@@ -77,10 +76,50 @@ export function reseal(rootPath: string, board: string, writer: Writer, reason: 
   durableAppend(logPath(root, board), JSON.stringify({ tool: writer.tool, run_id: writer.run_id, before, after: sha256, reason }) + '\n');
 }
 
-/** reseal under the board's seal lock, for callers that run async: an adoption or a person's accepted edit. */
-export async function resealLocked(root: string, board: string, writer: Writer, reason: string | null = null): Promise<void> {
-  const lock = await holdLock(join(resolve(root), '.gate/cad-seal', `${board}.lock`), { waitS: LOCK_WAIT_S });
-  try { reseal(root, board, writer, reason); } finally { await lock.release(); }
+/** The calls of the seal lock, injected so a test needs no second process and no real wait. */
+export interface SealLockDeps { pid: number; alive(pid: number): boolean; now(): number; sleep(ms: number): void; waitMs: number }
+const pidAlive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; } };
+const sealLockDeps: SealLockDeps = { pid: process.pid, alive: pidAlive, now: Date.now, sleep: ms => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }, waitMs: LOCK_WAIT_S * 1000 };
+const heldHere = new Set<string>();
+
+function lockOwner(lock: string): number | null {
+  try { const pid = (JSON.parse(readFileSync(join(lock, 'owner.json'), 'utf8')) as { pid?: unknown }).pid; return Number.isInteger(pid) ? (pid as number) : null; } catch { return null; }
+}
+
+/**
+ * Runs `work` while this process holds the seal lock of BOARD: a directory .gate/cad-seal/BOARD.write-lock that holds owner.json.
+ * It is synchronous because sealedWrite is. A lock whose owner pid is gone is taken over; one without a readable owner never is.
+ * A nested call for the same board in this process joins the lock it holds.
+ */
+export function withSealLock<T>(rootPath: string, board: string, work: () => T, deps: SealLockDeps = sealLockDeps): T {
+  const lock = join(resolve(rootPath), '.gate/cad-seal', `${board}.write-lock`);
+  if (heldHere.has(lock)) return work();
+  mkdirSync(dirname(lock), { recursive: true });
+  const deadline = deps.now() + deps.waitMs;
+  for (;;) {
+    // The owner record exists before the lock does: a rename onto a non-empty lock fails, so a crash never leaves a lock without an owner.
+    const staging = mkdtempSync(`${lock}.new-`);
+    writeFileSync(join(staging, 'owner.json'), JSON.stringify({ pid: deps.pid }));
+    try { renameSync(staging, lock); break; } catch (error) {
+      rmSync(staging, { recursive: true, force: true });
+      if (!['EEXIST', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+    }
+    const owner = lockOwner(lock);
+    if (owner !== null && !deps.alive(owner)) {
+      const dead = `${lock}.dead-${deps.pid}`;
+      try { renameSync(lock, dead); rmSync(dead, { recursive: true, force: true }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      continue;
+    }
+    if (deps.now() >= deadline) throw new Error(`CAD seal of ${board} is locked by pid ${owner ?? 'unknown'} (${lock}). Wait for that tool to end. If it died and left no owner record, remove that folder.`);
+    deps.sleep(25);
+  }
+  heldHere.add(lock);
+  try { return work(); } finally { heldHere.delete(lock); rmSync(lock, { recursive: true, force: true }); }
+}
+
+/** reseal under the board's seal lock: an adoption or a person's accepted edit. */
+export async function resealLocked(root: string, board: string, writer: Writer, reason: string | null = null, deps?: SealLockDeps): Promise<void> {
+  withSealLock(root, board, () => reseal(root, board, writer, reason), deps);
 }
 
 /** `tools/pcb seal BOARD --accept --reason TEXT`: a person's edit in KiCad becomes the sealed state, and so does the first seal. */
@@ -110,13 +149,18 @@ function targetsOf(path: string): { root: string; boards: string[] } | null {
 }
 
 /** Runs `write`. When PATH is canonical CAD it checks the seal first and records the new state after, so a tool cannot break the seal. */
-export function sealedWrite<T>(path: string, writer: Writer, write: () => T): T {
+export function sealedWrite<T>(path: string, writer: Writer, write: () => T, deps?: SealLockDeps): T {
   const targets = targetsOf(path);
   if (!targets) return write();
-  for (const board of targets.boards) verifySeal(targets.root, board);
-  const result = write();   // a write that throws leaves the old seal: a partial write is then caught, not hidden
-  for (const board of targets.boards) reseal(targets.root, board, writer);
-  return result;
+  // The seal lock of every covering board is held from the check to the new seal: no second writer is absorbed into this seal.
+  const locked = (boards: string[]): T => {
+    if (boards.length) return withSealLock(targets.root, boards[0]!, () => locked(boards.slice(1)), deps);
+    for (const board of targets.boards) verifySeal(targets.root, board);
+    const result = write();   // a write that throws leaves the old seal: a partial write is then caught, not hidden
+    for (const board of targets.boards) reseal(targets.root, board, writer);
+    return result;
+  };
+  return locked([...targets.boards].sort());
 }
 
 /** After an interrupted adoption: reseal only when PATH is the single file that differs from the seal. Anything else stays for a person. */

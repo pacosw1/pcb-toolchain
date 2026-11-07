@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { holdLock } from './file-lock.ts';
 import { iotrouteMissing } from './iotroute-bin.ts';
+import { evidenceFiles } from './pcb-evidence.ts';
 import { backendOption, compactTerminal, controllerAlive, eventLine, events, explain, gateDirectory, liveStages, requestCancel, runDir, stageStatus, status, utc } from './pcb-runs.ts';
 import { jsonDumps, jsonLoads, PyError } from './py-compat.mjs';
 const needsBinary = { skip: iotrouteMissing() };   // runs for real in CI job tools-iotroute
@@ -17,6 +18,11 @@ const put = (name: string, text: string) => {
   return path;
 };
 const state = (fields: object) => put('state.json', JSON.stringify({ schema_version: 1, seq: 0, ...fields }));
+const seal = (extra: object = {}) => {   // a receipt as pcb-check-finalize writes it: bound to the evidence files on disk
+  put('run.json', '{"board":"X","operation":"check"}');
+  put('gate/result.json', '{"exit":0}');
+  put('result.json', JSON.stringify({ status: 'passed', exit_code: 0, cause: 'gate passed', cleanup: { complete: true }, evidence_sha256: evidenceFiles(folder), ...extra }));
+};
 const row = (text: string) => jsonLoads(text) as Map<string, unknown>;
 const valueError = (error: unknown) => error instanceof PyError && (error as PyError).type === 'ValueError';
 
@@ -75,6 +81,62 @@ test('a running supervisor adds its wall time; a free lock means it stopped', ne
   assert.equal(stopped.get('exit_code'), 2n);
   assert.match(stopped.get('cause') as string, /cleanup unconfirmed/);
   assert.equal(stopped.has('elapsed_clock'), false);
+});
+
+test('a sealed receipt wins over a state a crash left open', () => {
+  state({ status: 'stopping', updated_unix: 1000.0, elapsed_s: 5.0 });
+  seal();
+  const view = status(folder, 1002);
+  assert.deepEqual([view.get('status'), view.get('exit_code'), view.get('cause'), view.has('elapsed_clock')], ['passed', 0n, 'gate passed', false]);
+});
+
+test('a sealed receipt wins when the supervisor lock is already free', needsBinary, async () => {
+  state({ status: 'stopping', updated_unix: 1000.0, elapsed_s: 5.0 });
+  seal();
+  const lock = await holdLock(join(folder, 'worker.lock'));
+  await lock.release();
+  const view = status(folder, 1002);
+  assert.deepEqual([view.get('controller_alive'), view.get('status'), view.get('exit_code')], [false, 'passed', 0n]);
+});
+
+test('a non-terminal result.json does not end a run', () => {
+  state({ status: 'running', updated_unix: 1000.0, elapsed_s: 5.0 });
+  seal({ status: 'running' });
+  assert.equal(status(folder, 1002).get('status'), 'error');
+});
+
+test('a terminal result.json whose seal does not verify does not end a run', () => {
+  const cases: Array<[string, () => void]> = [
+    ['no evidence binding', () => put('result.json', JSON.stringify({ status: 'passed', exit_code: 0, cause: 'forged' }))],
+    ['evidence changed after the seal', () => { seal(); put('gate/result.json', '{"exit":1}'); }],
+    ['cleanup not confirmed', () => seal({ cleanup: { complete: false } })],
+    ['unreadable receipt', () => put('result.json', '{not json')],
+  ];
+  for (const [name, setup] of cases) {
+    rmSync(folder, { recursive: true, force: true });
+    mkdirSync(folder);
+    state({ status: 'stopping', updated_unix: 1000.0, elapsed_s: 5.0 });
+    setup();
+    const view = status(folder, 1002);
+    assert.deepEqual([name, view.get('status'), view.get('cause')], [name, 'error', 'supervisor lock is missing; cleanup unconfirmed']);
+  }
+});
+
+test('a sealed error, cancelled or timeout receipt also wins over an open state', () => {
+  for (const verdict of ['error', 'cancelled', 'timeout']) {
+    state({ status: 'stopping', updated_unix: 1000.0, elapsed_s: 5.0 });
+    seal({ status: verdict, exit_code: 1, cause: `sealed ${verdict}` });
+    const view = status(folder, 1002);
+    assert.deepEqual([view.get('status'), view.get('cause')], [verdict, `sealed ${verdict}`]);
+  }
+});
+
+test('a run past startup with no supervisor lock is stopped, not running forever', () => {
+  state({ status: 'running', updated_unix: 1000.0, elapsed_s: 5.0 });
+  const view = status(folder, 1002);
+  assert.equal(view.get('controller_alive'), null);
+  assert.equal(view.get('status'), 'error');
+  assert.match(view.get('cause') as string, /lock is missing/);
 });
 
 test('a clock behind the update gives the int 0, as max(0, x) does', () => {

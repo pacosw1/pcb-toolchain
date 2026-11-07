@@ -5,6 +5,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { hashTree } from './agent-trial-prepare.ts';
 import { readCase, type AgentCase, type Parser } from './agent-trial-case.ts';
+import { settleCrashedTrial, type Processes } from './agent-trial-run.ts';
 import { canonicalJson, sha256Text } from './bench-analyze.ts';
 import { sealStatus, type SealStatus } from './cad-seal.ts';
 import { designExemption } from './design-exemption.ts';
@@ -25,6 +26,8 @@ export interface AgentUsage {
 export interface CollectServices {
   /** Throws when the gate inputs of the run changed since the run. Production: verifyCurrentInputs of pcb-next.ts. */
   verifyInputs(root: string, board: string, gateDir: string): Promise<unknown>;
+  /** The process calls that settle a trial whose runner died. Default: the operating system. */
+  processes?: Processes;
 }
 
 const num = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -179,6 +182,7 @@ function prefixed(agentCase: AgentCase): CollectServices {
 }
 
 async function judge(project: string, board: string, run: Row, services: CollectServices): Promise<Verdict> {
+  if (run.aborted) return failure('runner_aborted', String(run.aborted));
   if (run.spawn_error) return failure('agent_not_started', String(run.spawn_error));
   if (run.timed_out === true) return failure('timeout', `the agent reached its deadline (${run.wall_s} s)`);
   if (designExemption(project, board) === null && !existsSync(join(project, 'hardware-design/registry/design-contracts', `${board}.json`))) {
@@ -200,6 +204,7 @@ async function judge(project: string, board: string, run: Row, services: Collect
 export async function collectTrial(dirPath: string, services: CollectServices): Promise<Row> {
   const dir = resolve(dirPath), project = join(dir, 'project');
   for (const name of ['prepare.json', 'case.json']) if (!existsSync(join(dir, name))) throw new Error(`${dir} is not prepared (no ${name})`);
+  settleCrashedTrial(dir, services.processes);   // a runner that died leaves an aborted run.json, not a dead end
   if (!existsSync(join(dir, 'run.json'))) throw new Error(`${dir} has no run.json; the agent has not run: tools/pcb trial run ${dir}`);
   const prepare = readObject<Row>(join(dir, 'prepare.json')), run = readObject<Row>(join(dir, 'run.json')), agentCase = readCase(join(dir, 'case.json')).case, board = agentCase.board;
   const stream = join(dir, 'agent.stdout.jsonl');

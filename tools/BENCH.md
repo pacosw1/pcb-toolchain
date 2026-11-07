@@ -155,6 +155,6 @@ and writes `DIR/run.json` (wall seconds, exit code, signal, `timed_out`, timesta
 | `outside_tools` | Files under `hardware-design/` that changed, were added or were removed since `prepare`, minus the sealed CAD files that the seal accounts for. Listed by path. |
 | `verdict`, `cause`, `detail`, `final_run` | `passed` only when the newest sealed `check` run verifies (`verify`), its inputs are fresh (`verifyCurrentInputs`) and the full configured gate passed. Otherwise `failed`. |
 
-Causes, in the order they are checked: `agent_not_started`, `timeout`, `design_contract_missing`, `no_sealed_run`, `evidence_invalid`, `gate_failed`, `stale_inputs`.
+Causes, in the order they are checked: `runner_aborted` (the runner died before it wrote `run.json`; `trial run` or `trial collect` then writes `run.json` with an `aborted` field and kills the orphaned agent), `agent_not_started`, `timeout`, `design_contract_missing`, `no_sealed_run`, `evidence_invalid`, `gate_failed`, `stale_inputs`.
 A candidate run (`edit`, `route`, `repair`) does not decide: only a `check` run of the canonical board does. Files that a gate or release step writes
 under `hardware-design/` also show in `outside_tools`; read the list before you blame the agent.
