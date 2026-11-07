@@ -4,7 +4,7 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { rewriteCase, trialFixture, type Trial } from './agent-trial-fixture.ts';
 import { prepareTrial } from './agent-trial-prepare.ts';
-import { runTrial } from './agent-trial-run.ts';
+import { runTrial, settleCrashedTrial, type Processes } from './agent-trial-run.ts';
 
 const read = (path: string) => readFileSync(path, 'utf8');
 const json = (path: string) => JSON.parse(read(path)) as Record<string, any>;
@@ -90,5 +90,62 @@ test('an agent command that cannot start is a recorded failure, not a silent suc
     assert.equal(record.exit_code, null);
     assert.match(record.spawn_error ?? '', /ENOENT/);
     assert.equal(json(join(t.out, 'run.json')).spawn_error, record.spawn_error);
+  } finally { t.cleanup(); }
+});
+
+/** Fake process calls: only the listed pids are alive; every kill is recorded. */
+const fakeProcesses = (alive: number[], now = 5_000_000): Processes & { killed: number[] } => {
+  const killed: number[] = [];
+  return { alive: pid => alive.includes(pid), kill: pid => { killed.push(pid); }, clock: () => now, killed };
+};
+const crashed = (t: Trial, pending: Record<string, any> = {}) => {
+  writeFileSync(join(t.out, 'agent.stdout.jsonl'), '{"type":"system"}\n');
+  writeFileSync(join(t.out, 'run.pending.json'), JSON.stringify({ schema: 'iot-lab.agent-trial-pending.v1', case_id: 'fixture', board: 'X', argv: ['/bin/sh', 'agent.sh'],
+    started_at: new Date(1_000_000).toISOString(), runner_pid: 111, agent_pid: 222, ...pending }));
+};
+
+test('the runner records its pid before the agent starts, and the agent pid after', async () => {
+  const t = prepared('cp "$1/../run.pending.json" "$1/../seen.json"');
+  try {
+    await runTrial(t.out, { lock: noLock });
+    assert.equal(json(join(t.out, 'seen.json')).runner_pid, process.pid);
+    const pending = json(join(t.out, 'run.pending.json'));
+    assert.equal(pending.runner_pid, process.pid);
+    assert.equal(typeof pending.agent_pid, 'number');
+  } finally { t.cleanup(); }
+});
+
+test('a runner that died mid-run leaves an aborted run.json and the orphaned agent is killed', async () => {
+  const t = prepared('exit 0');
+  try {
+    crashed(t);
+    const processes = fakeProcesses([222]);
+    await assert.rejects(runTrial(t.out, { lock: noLock, processes }), /already ran/);
+    assert.deepEqual(processes.killed, [222]);
+    const record = json(join(t.out, 'run.json'));
+    assert.match(record.aborted, /runner ended/);
+    assert.deepEqual([record.case_id, record.board, record.exit_code, record.signal, record.timed_out, record.spawn_error, record.wall_s], ['fixture', 'X', null, null, false, null, 4000]);
+    assert.equal(record.ended_at, new Date(5_000_000).toISOString());
+  } finally { t.cleanup(); }
+});
+
+test('a runner that is still alive keeps its trial', () => {
+  const t = prepared('exit 0');
+  try {
+    crashed(t);
+    const processes = fakeProcesses([111, 222]);
+    assert.equal(settleCrashedTrial(t.out, processes), null);
+    assert.deepEqual(processes.killed, []);
+    assert.ok(!existsSync(join(t.out, 'run.json')));
+  } finally { t.cleanup(); }
+});
+
+test('a finished run is never settled again', () => {
+  const t = prepared('exit 0');
+  try {
+    crashed(t);
+    writeFileSync(join(t.out, 'run.json'), '{"done":true}');
+    assert.equal(settleCrashedTrial(t.out, fakeProcesses([])), null);
+    assert.deepEqual(json(join(t.out, 'run.json')), { done: true });
   } finally { t.cleanup(); }
 });

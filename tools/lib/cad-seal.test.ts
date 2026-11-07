@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
-import { acceptSeal, isCanonicalRoot, reseal, sealedWrite, sealStatus, verifySeal } from './cad-seal.ts';
+import { acceptSeal, isCanonicalRoot, reseal, resealLocked, sealedWrite, sealStatus, verifySeal, withSealLock } from './cad-seal.ts';
 import { sealFixtureBoard } from './cad-seal-fixture.ts';
 import { gateInputs } from './gate-inputs.mjs';
 import { iotrouteMissing } from './iotroute-bin.ts';
@@ -120,6 +120,77 @@ test('sealedWrite fails closed when a canonical board has no seal, and skips non
   sealedWrite(p.put('hardware-design/boards/_art/a.kicad_sch', 'x'), writer, () => { ran++; });
   sealedWrite(join(p.root, 'elsewhere.kicad_pcb'), writer, () => { ran++; });
   assert.equal(ran, 3);
+});
+
+/** Seal lock calls with a fake clock: sleeping moves the clock and nothing waits. */
+function fakeLock(alive: number[], pid = 1000, waitMs = 100) {
+  let clock = 0;
+  const sleeps: number[] = [];
+  return { pid, alive: (other: number) => alive.includes(other), now: () => clock, sleep: (ms: number) => { sleeps.push(ms); clock += ms; }, waitMs, sleeps };
+}
+const lockFolder = (p: { root: string }) => join(p.root, '.gate/cad-seal/X.write-lock');
+const takeLock = (p: { root: string }, pid: number) => { mkdirSync(lockFolder(p), { recursive: true }); writeFileSync(join(lockFolder(p), 'owner.json'), JSON.stringify({ pid })); };
+
+test('sealedWrite holds the seal lock while it verifies, writes and reseals, and frees it after', t => {
+  const p = project(t);
+  sealFixtureBoard(p.root, 'X');
+  let heldDuring = false;
+  sealedWrite(p.pcb, writer, () => { heldDuring = existsSync(lockFolder(p)); writeFileSync(p.pcb, 'new stackup'); });
+  assert.equal(heldDuring, true);
+  assert.equal(existsSync(lockFolder(p)), false);
+  assert.throws(() => sealedWrite(p.pcb, writer, () => { throw new Error('boom'); }), /boom/);
+  assert.equal(existsSync(lockFolder(p)), false, 'a failed write frees the lock too');
+});
+
+test('sealedWrite refuses to run while another live process holds the seal lock', t => {
+  const p = project(t);
+  sealFixtureBoard(p.root, 'X');
+  takeLock(p, 4242);
+  const locks = fakeLock([4242]);
+  let ran = false;
+  assert.throws(() => sealedWrite(p.pcb, writer, () => { ran = true; }, locks), /locked by pid 4242/);
+  assert.equal(ran, false);
+  assert.equal(locks.sleeps.reduce((sum, ms) => sum + ms, 0) >= 100, true, 'it waited the whole wait first');
+  assert.equal(existsSync(lockFolder(p)), true, 'the other holder keeps its lock');
+});
+
+test('a seal lock whose owner died is taken over', t => {
+  const p = project(t);
+  sealFixtureBoard(p.root, 'X');
+  takeLock(p, 4242);
+  let ran = false;
+  sealedWrite(p.pcb, writer, () => { ran = true; writeFileSync(p.pcb, 'after a crash'); }, fakeLock([]));
+  assert.equal(ran, true);
+  verifySeal(p.root, 'X');
+  assert.equal(existsSync(lockFolder(p)), false);
+});
+
+test('a seal lock without an owner record is never taken over', t => {
+  const p = project(t);
+  sealFixtureBoard(p.root, 'X');
+  mkdirSync(lockFolder(p), { recursive: true });
+  writeFileSync(join(lockFolder(p), 'owner.json'), 'not json');
+  assert.throws(() => sealedWrite(p.pcb, writer, () => {}, fakeLock([])), /locked by pid unknown/);
+});
+
+test('a write inside a write of the same board does not wait for its own lock', t => {
+  const p = project(t);
+  sealFixtureBoard(p.root, 'X');
+  const locks = fakeLock([]);
+  let inner = false;
+  withSealLock(p.root, 'X', () => withSealLock(p.root, 'X', () => { inner = true; }, locks), locks);
+  assert.equal(inner, true);
+  assert.deepEqual(locks.sleeps, []);
+  assert.equal(existsSync(lockFolder(p)), false);
+});
+
+test('resealLocked waits on the same lock that sealedWrite takes', async t => {
+  const p = project(t);
+  sealFixtureBoard(p.root, 'X');
+  takeLock(p, 4242);
+  const before = readFileSync(p.seal, 'utf8');
+  await assert.rejects(resealLocked(p.root, 'X', writer, 'x', fakeLock([4242])), /locked by pid 4242/);
+  assert.equal(readFileSync(p.seal, 'utf8'), before);
 });
 
 test('the seal file is not a gate input', t => {

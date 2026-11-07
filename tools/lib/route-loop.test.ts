@@ -1,9 +1,19 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, realpathSync, rmSync, readFileSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, realpathSync, rmSync, readFileSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { startLoop, statusLoop, decideLoop, cancelLoop, listLoops, loopFolder, loopHash } from './route-loop.ts';
+import { basename, dirname, join } from 'node:path';
+import {
+  startLoop,
+  statusLoop,
+  decideLoop,
+  cancelLoop,
+  listLoops,
+  loopFolder,
+  loopHash,
+  LOOP_TERMINAL,
+  LOOP_OPEN_NEXT
+} from './route-loop.ts';
 import type { LoopBackend, LoopEvidence, LoopPolicy, LoopState } from './route-loop.ts';
 function fixture(t: TestContext) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'route-loop-')));
@@ -319,4 +329,70 @@ test('loop IDs must match completely and unknown geometry is not a zero-quality 
   s = await statusLoop(f.root, s.id, f.backend);
   assert.equal(s.best_verified, 1, 'an unknown incumbent cannot be claimed worse on invented zero metrics');
   assert.equal(s.rounds[1]!.evidence!.wire_mm, 1);
+});
+test('startLoop saves the first state inside the controller lock', async (t) => {
+  const f = fixture(t);
+  const inner = f.backend.lock;
+  let stateBeforeLock: boolean | null = null;
+  f.backend.lock = (path, work) => {
+    stateBeforeLock ??= existsSync(join(dirname(path), 'state.json'));
+    return inner(path, work);
+  };
+  await startLoop(f.root, 'X', f.policy, f.backend);
+  assert.equal(stateBeforeLock, false);
+});
+test('a status poll between admission and launch cannot turn a terminal loop active again', async (t) => {
+  const f = fixture(t);
+  const inner = f.backend.lock;
+  let polled = false;
+  f.backend.lock = async (path, work) => {
+    if (!polled) {
+      polled = true;
+      // Studio polls every loop in the store while a start is still admitting.
+      await statusLoop(f.root, basename(dirname(path)), { ...f.backend, lock: (_p, w) => w() }).catch(() => undefined);
+    }
+    return inner(path, work);
+  };
+  const s = await startLoop(f.root, 'X', f.policy, f.backend);
+  const events = readFileSync(join(loopFolder(f.root, s.id), 'events.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.equal(s.status, 'running');
+  const reopened = events.some((e, i) => LOOP_TERMINAL.has(e.status) && events.slice(i + 1).some((n) => !LOOP_TERMINAL.has(n.status)));
+  assert.equal(reopened, false);
+});
+test('the transition table has no way out of a terminal status', () => {
+  for (const next of Object.values(LOOP_OPEN_NEXT)) for (const to of next) assert.ok(to in LOOP_OPEN_NEXT);
+  for (const terminal of LOOP_TERMINAL) assert.equal(terminal in LOOP_OPEN_NEXT, false);
+});
+test('a rejected decision is not recorded, so the same revision can take a valid one', async (t) => {
+  const f = fixture(t);
+  let s = await startLoop(f.root, 'X', f.policy, f.backend);
+  f.fail(s);
+  s = await statusLoop(f.root, s.id, f.backend);
+  const revision = s.revision;
+  const propose = f.backend.propose;
+  f.backend.propose = async (state, round, move) => {
+    const proposed = await propose(state, round, move);
+    return move.kind === 'bad' ? { ...proposed, policy: { ...proposed.policy!, keep: 'none' } } : proposed;
+  };
+  await assert.rejects(
+    decideLoop(f.root, s.id, revision, { reason: 'Change an admitted field.', move: { kind: 'bad' } }, f.backend),
+    /admitted keep policy/
+  );
+  const after = JSON.parse(readFileSync(join(loopFolder(f.root, s.id), 'state.json'), 'utf8')) as LoopState;
+  assert.equal(after.decisions.length, 0);
+  assert.equal(after.revision, revision);
+  assert.equal(f.started(), 1);
+  const next = await decideLoop(
+    f.root,
+    s.id,
+    revision,
+    { reason: 'Continue the preserved candidate.', move: { kind: 'reroute_stuck' } },
+    f.backend
+  );
+  assert.equal(next.decisions.length, 1);
+  assert.equal(next.rounds.length, 2);
+  assert.equal(f.started(), 2);
 });

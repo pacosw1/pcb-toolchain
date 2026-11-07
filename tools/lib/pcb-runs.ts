@@ -3,6 +3,7 @@
 import { closeSync, fstatSync, openSync, readdirSync, readSync } from 'node:fs';
 import { atomicJson } from './json-file.ts';
 import { lockHeld } from './file-lock.ts';
+import { verifySettled } from './pcb-evidence.ts';
 import { sha } from './pcb-workflow.ts';
 import { fixed, Float, get, item, jsonDumps, jsonLoads, number, PyError, pyStr, sorted, strip, truthy } from './py-compat.mjs';
 import { round } from './py-numbers.ts';
@@ -96,6 +97,14 @@ function markStopped(state: Dict, cause: string): void {
   state.set('cleanup', null);
 }
 
+/** result.json is written before the terminal state.json. After a crash between the two, a receipt whose seal verifies says how the run ended. */
+function adoptReceipt(state: Dict, folder: string): void {
+  let receipt: Dict;
+  try { receipt = verifySettled(folder) as Dict; } catch { return; }   // a receipt that does not verify cannot end a run: the checks below fail closed
+  if (!TERMINAL.has(receipt.get('status') as string)) return;
+  for (const [key, value] of receipt) state.set(key, value);
+}
+
 function addLiveTiming(state: Dict, age: number, now: number): void {
   const previous = get(state, 'elapsed_s', 0n);
   // Python keeps an integer when max(0, negative_age) returns integer zero.
@@ -122,11 +131,15 @@ export function status(folder: string, now = wallClock()): Dict {
   const age = Math.max(0, sinceUpdate);
   state.set('heartbeat_age_s', sinceUpdate > 0 ? float(sinceUpdate) : 0n);   // max(0, x) keeps the int 0
   const current = () => item(state, 'status') as string;
+  if (!TERMINAL.has(current())) adoptReceipt(state, folder);
   if (current() === 'starting' && alive !== true) {
     // Creating the lock and acquiring it are separate calls: the startup budget covers an absent and a new lock.
     if (now - updated > STARTUP_BUDGET_S) markStopped(state, 'supervisor did not start; inspect worker.log');
   } else if (!TERMINAL.has(current()) && alive === false) {
     markStopped(state, 'supervisor stopped without a terminal result; cleanup unconfirmed');
+  } else if (!TERMINAL.has(current()) && alive === null) {
+    // The supervisor creates its lock before the worker writes any state past starting; a missing lock is no proof of life.
+    markStopped(state, 'supervisor lock is missing; cleanup unconfirmed');
   }
   if (!TERMINAL.has(current())) addLiveTiming(state, age, now);
   return state;
