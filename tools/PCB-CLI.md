@@ -371,7 +371,9 @@ measurements, limits and margins. Rules live in
   placement spec for each candidate. The search optimizes the rule misses, but a
   candidate can still miss a rule. It is kept, with `legal: false` and
   `misses: [{id, miss_mm}]`. Legal candidates sort first. The table includes
-  legality, moved parts, smallest rule margin, reported wirelength and misses.
+  legality, moved parts, smallest rule margin, reported wirelength, the search
+  estimates (congestion, crossings, blocked vias, pin escape) and misses. An
+  estimate only predicts routing. Escape is 0 on a board with no escape model.
   It prints an edit command for legal candidates only. With no legal candidate,
   the command prints the report and `NO LEGAL CANDIDATE`, and exits 3.
 

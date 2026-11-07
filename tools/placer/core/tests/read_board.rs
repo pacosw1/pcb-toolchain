@@ -2,11 +2,11 @@
 
 mod common;
 
-use common::board::{ANY_RULE, Fixture, buck, class, default_classes, footprint, is_fixed, label, locked, rect_shape, rounded_row, rule_area, unit_of};
+use common::board::{ANY_RULE, Fixture, buck, class, default_classes, footprint, is_fixed, label, locked, rect_shape, rounded_row, rule_area, two_pads, unit_of};
 use common::{terms, within};
 use iotplace::dru;
 use iotplace::evaluator::Evaluator;
-use iotplace::kicad::doc::{Board, Copper, Geometry, Graphic, Pad, PadKind};
+use iotplace::kicad::doc::{Board, Copper, Geometry, Graphic, Pad, PadKind, PtMm};
 use iotplace::model::Model;
 use iotplace::params::Params;
 use iotplace::read::extras::net_codes;
@@ -464,6 +464,22 @@ fn decap_tie_joins_caps_near_an_ic_power_pin_and_reports_distance() {
     }
     assert_eq!(near_pins, 1);
     assert!(seen.contains_key("C1") && !seen.contains_key("C2"));
+}
+
+#[test]
+fn a_tie_does_not_freeze_a_part_that_overlaps_its_ic() {
+    let mut board = buck();
+    let at = board.footprints.iter().find(|f| f.reference == "U1").unwrap().position.mm();
+    let cap = board.footprints.iter_mut().find(|f| f.reference == "C1").unwrap();
+    *cap = two_pads("C1", at, "GND", "/VIN");
+    let fx = Fixture::new(board.clone());
+    for options in [Options { decap_tie: 3.0, ..plain() }, Options { tie: 1.5, ..plain() }] {
+        let pr = fx.read(&options);
+        assert!(!pr.units[unit_of(&pr, "U1")].refs.contains(&"C1".to_string()), "the search does not check the parts of one unit");
+    }
+    board.footprints.iter_mut().find(|f| f.reference == "C1").unwrap().layer = "B.Cu".to_string();
+    let pr = Fixture::new(board).read(&Options { decap_tie: 3.0, ..plain() });
+    assert!(pr.units[unit_of(&pr, "U1")].refs.contains(&"C1".to_string()), "a part on the other side does not overlap");
 }
 
 #[test]

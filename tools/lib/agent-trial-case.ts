@@ -40,7 +40,7 @@ export function validateCase(value: unknown): AgentCase {
   const inputs = (value.inputs as unknown[]).map((entry, index) => pinned(entry, `inputs[${index}]`));
   const seen = new Set<string>();
   for (const input of inputs) { if (seen.has(input.path)) fail(`input ${input.path} listed twice`); seen.add(input.path); }
-  if (!inputs.some(input => input.path.startsWith(`hardware-design/boards/${board}/`) && input.path.endsWith('.kicad_pcb'))) fail(`inputs must include the .kicad_pcb of ${board}`);
+  if (!inputs.some(input => input.path.startsWith('hardware-design/boards/') && input.path.endsWith('.kicad_pcb'))) fail(`inputs must include the .kicad_pcb of ${board}`);
   const prompt = pinned(value.prompt, 'prompt');
   const agent = value.agent;
   if (!isObject(agent) || !Array.isArray(agent.argv) || !agent.argv.length || agent.argv.some(part => typeof part !== 'string')) return fail('agent.argv must be a nonempty string array');

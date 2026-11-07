@@ -88,6 +88,29 @@ test('multiple seeds keep a candidate with rule misses, report its misses, and l
   assert.deepEqual(writes.map(args => args.includes('--keep-misses')), [true, true, true]);
 });
 
+test('a candidate reports the search estimates, and null when the placer gave none', t => {
+  const root = project(t, [['U1', 1, 2, 0]]);
+  const components = { hpwl: 10, cong: 2.5, crossing: 7, via: 1, escape: 0.5 };
+  let seed = 0;
+  const report = placeCandidates(root, 'X', { seed: 1, epochs: 1, steps: 1 }, 2, args => {
+    if (args[0] === 'run') {
+      seed = Number(args[args.indexOf('--seed') + 1]);
+      writeFileSync(args[args.indexOf('-o') + 1]!, JSON.stringify({ candidates: [seed === 1 ? { components } : {}] }));
+    }
+    if (args[0] === 'write') {
+      const folder = join(args[args.indexOf('--outdir') + 1]!, 'cand0'); mkdirSync(folder, { recursive: true });
+      writeFileSync(join(folder, 'X.kicad_pcb'), board([['U1', seed + 5, 2, 0]]));
+    }
+  });
+  assert.deepEqual(report.candidates.map(row => row.estimates), [{ congestion: 2.5, crossings: 7, blocked_vias: 1, escape: 0.5 }, null]);
+  const lines: string[] = [], log = console.log;
+  console.log = (line: string) => { lines.push(line); };
+  try { showCandidates(report, false); } finally { console.log = log; }
+  assert.match(lines[0]!, /wirelength  congestion  crossings  blocked_vias  escape  misses/);
+  assert.match(lines[1]!, /10  2\.5  7  1  0\.5  -/);
+  assert.match(lines[2]!, /-  -  -  -  -  -/);
+});
+
 test('a candidate with no legal seed is still reported, and the command result is a failure', t => {
   const root = project(t, [['U1', 1, 2, 0]]);
   const report = placeCandidates(root, 'X', { seed: 1, epochs: 1, steps: 1 }, 2, args => {
@@ -112,6 +135,27 @@ test('a candidate with no legal seed is still reported, and the command result i
   assert.equal(lines.some(line => line.startsWith('tools/pcb edit')), false, 'no edit command for a candidate with misses');
   assert.equal(JSON.parse(lines.at(-1)!).candidates[0].misses[0].miss_mm, 1.5);
   assert.throws(() => placeCandidates(root, 'X', { seed: 1, epochs: 1, steps: 1 }, 0), /positive integer/);
+});
+
+test('a candidate that is illegal with no rule miss is reported by the names of the illegal items', t => {
+  const root = project(t, [['U1', 1, 2, 0]]);
+  const report = placeCandidates(root, 'X', { seed: 1, epochs: 1, steps: 1 }, 1, args => {
+    if (args[0] === 'run') {
+      writeFileSync(args[args.indexOf('-o') + 1]!, JSON.stringify({ candidates: [{ illegal: ['U1', 'edge:U1'], engineering: { blockers: [] } }] }));
+      throw new Error('failed');
+    }
+    if (args[0] === 'write') {
+      const folder = join(args[args.indexOf('--outdir') + 1]!, 'cand0'); mkdirSync(folder, { recursive: true });
+      writeFileSync(join(folder, 'X.kicad_pcb'), board([['U1', 4, 2, 0]]));
+    }
+  });
+  assert.equal(report.candidates[0]!.legal, false);
+  assert.deepEqual(report.candidates[0]!.misses, [{ id: 'U1', miss_mm: null }, { id: 'edge:U1', miss_mm: null }]);
+});
+
+test('a placer failure with no result is still an error', t => {
+  const root = project(t, [['U1', 1, 2, 0]]);
+  assert.throws(() => placeCandidates(root, 'X', { seed: 1, epochs: 1, steps: 1 }, 1, args => { if (args[0] === 'run') throw new Error('crashed'); }), /crashed/);
 });
 
 test('one seed with a legal result gives the exit code 0 and an edit command', t => {

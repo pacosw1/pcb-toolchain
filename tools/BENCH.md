@@ -118,7 +118,7 @@ the case, never changed. The lab is not at a fixed place (`~/Documents/iot-lab` 
   The lab is not changed. The result records `design_contract_exempt_applied`. Without it, a board with no design contract fails with `design_contract_missing`.
 - `setup` (optional): `{"argv": [...], "env": {...}}`, a step that `prepare` runs in the project to make the start board. Placeholders: `{root}`, `{board}`. A failed step stops `prepare`.
   `prepare` seals the result and hashes it as the baseline, so the setup's changes do not count against the agent. `prepare.json` records the step.
-  `tools/trial-start-unplaced.sh INPUT.kicad_pcb SEED` is the step for a trial from the complete schematic: footprints and outline stay, the placement is scrambled from the seed, all tracks and vias go. It runs in the route image, so its `env` needs `BENCH_TOOLCHAIN`.
+  `tools/trial-start-unplaced.sh INPUT.kicad_pcb SEED [KEEP_REFS]` is the step for a trial from the complete schematic: footprints and outline stay, the placement is scrambled from the seed, all tracks and vias go, the `User.1` block drawings go, and each lock goes except on KEEP_REFS (a comma list of the `fixed` rule parts). It runs in the route image, so its `env` needs `BENCH_TOOLCHAIN`.
 
 - Lab scripts: `prepare` archives the `tools/` folder of the lab, then copies the toolchain over it, so that a board's semantic checks run. The toolchain copy wins for a file that both hold. It also archives the datasheets that the schematic names.
 - `verify_prefix` (optional): a command prefix such as `["tools/bench-in-route.sh", "."]`. `collect` runs the freshness check of the final gate run through it, with `agent.env`.

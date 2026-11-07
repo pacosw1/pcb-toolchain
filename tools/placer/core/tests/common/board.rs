@@ -84,7 +84,7 @@ pub fn footprint(reference: &str, lib_id: &str, (x, y): (f64, f64), courtyard: B
 }
 
 /// A part with two pads, one to each side of its centre.
-fn two_pads(reference: &str, (x, y): (f64, f64), first: &str, second: &str) -> Footprint {
+pub fn two_pads(reference: &str, (x, y): (f64, f64), first: &str, second: &str) -> Footprint {
     let smd = |n: &str, net: &str, at: f64| pad(n, net, PadKind::Smd, (at, y), (1.0, 1.0));
     footprint(reference, "Device:Two", (x, y), (x - 2.0, y - 1.0, x + 2.0, y + 1.0), vec![smd("1", first, x - 1.0), smd("2", second, x + 1.0)])
 }

@@ -161,6 +161,7 @@ also declare it explicitly. Boards without the file keep their existing checks.
 rule misses is kept: it reports `legal: false` and `misses: [{id, miss_mm}]`, and
 legal candidates sort first. With no legal candidate the command exits 3 after
 the report. It reports each rule margin, the smallest margin,
-and the placer's `components.hpwl` as wirelength (null if absent). Non-distance
+the placer's `components.hpwl` as wirelength (null if absent), and `estimates`
+with its congestion, crossing, blocked-via and escape terms (null if absent). Non-distance
 rules without a millimetre margin report null. Without `--seeds`, the existing
 single-spec output and filename stay unchanged. `--out` is only for that mode.
