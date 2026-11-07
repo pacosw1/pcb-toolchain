@@ -18,7 +18,10 @@ unknown conditions and changed source inputs cannot enter a reviewed search.
 The manifest's `layout_constraints` entries use
 `{schema: "iot-lab.engineering-constraints.v1", rules: [...]}` after verification.
 Every rule contains a distinct `id`, a `kind`, and
-`source: {path, sha256, page}`. Authored source paths must be repository-relative
+`source: {path, sha256, page}`. A non-PDF source may replace `page` with one locator:
+`key` for a `.json` file (a dotted path that must exist) or `section` for a `.md` file
+(a heading that must exist, alone or followed by `: detail`). A PDF source always needs `page`.
+Authored source paths must be repository-relative
 and resolve within the supplied project root, including isolated workspaces.
 Runtime/report bindings may use absolute paths. A source may also include a section locator.
 Limits are numeric values taken from the cited reviewed source and its applicable
