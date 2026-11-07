@@ -72,6 +72,47 @@ function pinlessFixture(t: TestContext, kind: 'npth' | 'electrical' | 'connected
   return { root, manifest, before, schematic };
 }
 
+function testPadFixture(t: TestContext, edit: (symbol: CadList, footprint: CadList, prop: (form: CadList, name: string) => CadList) => void = () => {}) {
+  const root = mkdtempSync(join(tmpdir(), 'test-pad-'));t.after(() => rmSync(root, { recursive: true, force: true }));
+  makeFixture(root);
+  const schematic = join(root, FOLDER, 'fixture.kicad_sch'), pcb = join(root, FOLDER, 'fixture.kicad_pcb');
+  const sch = parse(readFileSync(schematic, 'utf8')), board = parse(readFileSync(pcb, 'utf8'));
+  const prop = (form: CadList, name: string) => items(form, 'property').find(row => row[1] === name)!;
+  const symbol = items(sch, 'symbol').find(row => prop(row, 'Reference')[2] === 'J1')!;
+  const footprint = items(board, 'footprint').find(row => prop(row, 'Reference')[2] === 'J1')!;
+  for (const form of [symbol, footprint]) for (const name of ['MPN', 'LCSC']) if (items(form, 'property').some(row => row[1] === name)) prop(form, name)[2] = '';
+  items(symbol, 'in_bom')[0]![1] = new Atom('no');
+  for (const row of items(footprint, 'attr')) footprint.splice(footprint.indexOf(row), 1);
+  footprint.push(parse('(attr exclude_from_pos_files exclude_from_bom)'));
+  for (const row of items(footprint, 'pad')) if (row[1] !== '1') footprint.splice(footprint.indexOf(row), 1);
+  for (const row of items(footprint, 'model')) footprint.splice(footprint.indexOf(row), 1);
+  const pad = items(footprint, 'pad')[0]!;
+  pad[2] = new Atom('smd');
+  items(pad, 'layers')[0]!.splice(1, Infinity, 'F.Cu', 'F.Mask');
+  for (const row of items(pad, 'drill')) pad.splice(pad.indexOf(row), 1);
+  edit(symbol, footprint, prop);
+  writeFileSync(schematic, dump(sch));writeFileSync(pcb, dump(board));
+  return readBoard(root, BOARD).parts.get('J1')!;
+}
+
+test('a bare copper pad outside the BOM and the placement file is identity-free', t => {
+  assert.ok(testPadFixture(t).identity_free);
+});
+
+test('a test point loses identity-free when anything suggests a purchased part', t => {
+  const cases: [string, Parameters<typeof testPadFixture>[1]][] = [
+    ['an MPN', (symbol, footprint, prop) => { for (const form of [symbol, footprint]) if (items(form, 'property').some(row => row[1] === 'MPN')) prop(form, 'MPN')[2] = 'PART'; }],
+    ['an LCSC number', (symbol, footprint, prop) => { for (const form of [symbol, footprint]) if (items(form, 'property').some(row => row[1] === 'LCSC')) prop(form, 'LCSC')[2] = 'C1'; }],
+    ['BOM inclusion', symbol => { items(symbol, 'in_bom')[0]![1] = new Atom('yes'); }],
+    ['a placement file row', (_symbol, footprint) => { items(footprint, 'attr')[0]!.splice(1, 1); }],
+    ['a 3D model', (_symbol, footprint) => { footprint.push(parse('(model "part.step")')); }],
+    ['solder paste', (_symbol, footprint) => { items(items(footprint, 'pad')[0]!, 'layers')[0]!.push('F.Paste'); }],
+    ['a drilled pad', (_symbol, footprint) => { items(footprint, 'pad')[0]![2] = new Atom('thru_hole'); }],
+    ['a second pad', (_symbol, footprint) => { footprint.push(parse('(pad "2" smd circle (at 3 0) (size 1 1) (layers "F.Cu" "F.Mask"))')); }],
+  ];
+  for (const [name, edit] of cases) assert.equal(testPadFixture(t, edit).identity_free, undefined, name);
+});
+
 test('pinless non-H references classify from unconnected NPTH geometry without review approval', t => {
   const { root, manifest, before, schematic } = pinlessFixture(t, 'npth');
   const native = readBoard(root, BOARD), hole = native.parts.get('J1')!;

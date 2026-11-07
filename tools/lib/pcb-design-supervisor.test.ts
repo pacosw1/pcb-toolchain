@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,18 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import { iotrouteMissing } from './iotroute-bin.ts';
 import { status } from './pcb-runs.ts';
+
+test('a project without its release tools stops before a run and names the sync', t => {
+  const root = mkdtempSync(join(tmpdir(), 'pcb-design-no-tools-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const tools = fileURLToPath(new URL('..', import.meta.url));
+  const file = join(root, 'design.json'); writeFileSync(file, JSON.stringify({ identity: { design_id: 'IDEA', board: null } }));
+  const call = spawnSync(join(tools, 'pcb'), ['--project', root, 'design', '--detach', '--json', 'check', 'IDEA', '--contract', file], { encoding: 'utf8' });
+  assert.equal(call.status, 2);
+  const cause = String(JSON.parse(call.stdout).cause);
+  assert.match(cause, /tools\/design_contract\.ts/); assert.match(cause, /pcb toolchain-sync/);
+  assert.ok(!existsSync(join(root, '.gate/cli')) || readdirSync(join(root, '.gate/cli')).filter(name => name.startsWith('run-')).length === 0, 'no run record');
+});
 
 test('design CLI evaluates an actual sourced pre-CAD contract under supervision', { skip: iotrouteMissing() }, async t => {
   const root = mkdtempSync(join(tmpdir(), 'pcb-design-run-'));

@@ -3,7 +3,7 @@
 //
 // The placer's problem-level screens are in tools/placer/engineering-problem.ts and, for the search,
 // tools/placer/core/src/engineering.rs.
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, relative } from 'node:path';
 import { verifyBinding, type Binding } from './block-bindings.ts';
 import { readBlock } from './block-reuse.ts';
@@ -20,7 +20,7 @@ import { isDict, need, pyFloat, sameValue, type Dict } from './py-values.ts';
 import { field, forms, type SList } from './sexpr.ts';
 
 export const SCHEMA = 'iot-lab.engineering-constraints.v1';
-const KINDS = ['fixed', 'rigid_group', 'pin_distance', 'part_distance', 'region', 'clearance', 'connector_access', 'escape'];
+export const KINDS = ['fixed', 'rigid_group', 'pin_distance', 'part_distance', 'region', 'clearance', 'connector_access', 'escape'];
 const CORE_FIELDS = ['schema', 'root', 'board', 'manifest', 'native', 'inputs', 'rules', 'geometry', 'bindings'] as const;
 export const RULE_FIELDS: Record<string, string[]> = {
   fixed: ['refs'], rigid_group: ['refs', 'binding'], pin_distance: ['a', 'b', 'metric', 'min_mm', 'max_mm'],
@@ -97,14 +97,43 @@ function numeric(value: unknown): number {
 
 const limit = (rule: Rule, key: string, otherwise: number): number => (key in rule ? numeric(rule[key]) : otherwise);
 
+function jsonKeyFound(path: string, key: string): boolean {
+  let node: unknown = JSON.parse(readFileSync(path, 'utf8'));
+  for (const segment of key.split('.')) {
+    const usable = Array.isArray(node) ? /^\d+$/.test(segment) : isDict(node);
+    if (!usable || !Object.hasOwn(node as object, segment)) return false;
+    node = (node as Record<string, unknown>)[segment];
+  }
+  return true;
+}
+
+/** A citation is a Markdown heading, alone or followed by ": detail". */
+function headingFound(path: string, section: string): boolean {
+  return readFileSync(path, 'utf8').split('\n').some(line => {
+    const heading = /^#{1,6}\s+(.+?)\s*$/.exec(line)?.[1];
+    return heading !== undefined && (section === heading || section.startsWith(`${heading}: `));
+  });
+}
+
+function checkLocator(path: string, source: Dict): void {
+  const { key, section } = source;
+  if (path.endsWith('.json') && typeof key === 'string' && key && section === undefined) {
+    if (!jsonKeyFound(path, key)) throw new Error(`constraint source key not found: ${key}`);
+  } else if (path.endsWith('.md') && typeof section === 'string' && section && key === undefined) {
+    if (!headingFound(path, section)) throw new Error(`constraint source section not found: ${section}`);
+  } else throw new Error('constraint source without a page requires a key in JSON or a section heading in Markdown');
+}
+
 function sourceDocument(base: string, source: unknown): string {
+  const located = isDict(source) && source.page === undefined && typeof source.path === 'string' && !/\.pdf$/i.test(source.path);
   const whole = isDict(source) && (typeof source.page === 'bigint' || Number.isInteger(source.page));
-  if (!whole || Number(source.page) < 1) {
+  if (!isDict(source) || (!located && (!whole || Number(source.page) < 1))) {
     throw new Error('constraint requires a reviewed document and one-based page');
   }
   if (typeof source.path !== 'string' || isAbsolute(source.path) || source.path.split(/[\\/]/).includes('..') || relative(realpathSync(base), realpathSync(resolveIn(base, source.path))).startsWith('..')) throw new Error('constraint source must stay inside project root');
   const path = resolveIn(base, need(source, 'path'));
   if (sha256File(path) !== source.sha256) throw new Error(`constraint source changed: ${path}`);
+  if (located) checkLocator(path, source);
   return path;
 }
 

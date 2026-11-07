@@ -35,6 +35,8 @@ export interface PartFacts extends NativeSymbol {
   pose: Tree;
   /** Native classification only; it grants no part, package, stock or engineering approval. */
   mechanical_only?: { basis: string; pad_count: number; locations: NativeLocation[] };
+  /** The footprint proves that no part is bought: an MPN cannot exist. It waives only the export MPN comparison. */
+  identity_free?: { basis: string };
 }
 
 export interface NativeBoard {
@@ -270,6 +272,15 @@ function identityBlockers(ref: string, symbol: NativeSymbol, footprint: NativeFo
   return blockers;
 }
 
+/** One bare copper SMD pad: no paste, no 3D model, no part number, and outside the BOM and the placement file. */
+function bareCopperPad(metadata: NativeSymbol, form: Tree): boolean {
+  const [pad, ...others] = children(form, 'pad');
+  const attr = single(form, 'attr') ?? [];
+  return pad !== undefined && !others.length && pad[2] === 'smd' && !metadata.mpn && !metadata.lcsc && !metadata.in_bom
+    && attr.includes('exclude_from_bom') && attr.includes('exclude_from_pos_files') && !children(form, 'model').length
+    && !(single(pad, 'layers') ?? []).some(layer => typeof layer === 'string' && layer.endsWith('.Paste'));
+}
+
 /** Installed package identity is independent of translation, rotation and net assignment. */
 function partFacts(metadata: NativeSymbol, form: Tree, path: string, binding: SymbolBinding): PartFacts {
   const { geometry, nets } = pads(form);
@@ -291,6 +302,7 @@ function partFacts(metadata: NativeSymbol, form: Tree, path: string, binding: Sy
     footprint_sha256: digest(encoded(packageIdentity)), land_geometry_sha256: digest(encoded(geometry)), pad_net_map: nets,
     pad_numbers: [...nets.keys()], required: metadata.in_bom && !metadata.dnp, pose: (single(form, 'at') ?? ['at']).slice(1),
     ...(mechanical ? { mechanical_only: mechanical } : {}),
+    ...(bareCopperPad(metadata, form) ? { identity_free: { basis: 'single_bare_copper_pad_outside_bom_and_placement' } } : {}),
   };
 }
 

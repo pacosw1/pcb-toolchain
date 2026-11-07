@@ -62,6 +62,40 @@ const candidate = (body: string) => {
 const check = (path?: string, escapeEvidence?: string): Row => checkManifest(root, 'X', manifest, services, { candidate: path, escapeEvidence });
 const pads = { a: { ref: 'U1', pad: '1' }, b: { ref: 'C1', pad: '1' } };
 
+test('a JSON source needs a key that exists, a Markdown source needs a heading that exists, a PDF needs a page', () => {
+  const cite = (name: string, body: string, locator: Row): Row => {
+    writeFileSync(join(root, name), body);
+    return { path: name, sha256: sha256File(join(root, name)), ...locator };
+  };
+  const pass = rule('pin_distance', { ...pads, metric: 'pad_center_euclidean', max_mm: 9 });
+  const withSource = (value: Row) => { rules({ ...pass, source: value }); return check(); };
+  const refused = (value: Row, cause: RegExp) => {
+    const report = withSource(value);
+    assert.notEqual(report.status, 'passed');
+    assert.match(jsonDumps(report), cause);
+  };
+  const json = '{"link":{"position":[1,2]},"flat.key":1}\n', markdown = '# Title\n\n### D1 Power zone\n\nD2 is only text.\n';
+
+  assert.equal(withSource(cite('stack.json', json, { key: 'link.position' })).status, 'passed');
+  assert.equal(withSource(cite('stack.json', json, { key: 'link.position.0' })).status, 'passed');
+  assert.equal(withSource(cite('notes.md', markdown, { section: 'D1 Power zone' })).status, 'passed');
+  assert.equal(withSource(cite('notes.md', markdown, { section: 'D1 Power zone: U2 in box 1,2,3,4' })).status, 'passed');
+
+  refused(cite('stack.json', json, { key: 'link.missing' }), /constraint source key not found: link\.missing/);
+  refused(cite('stack.json', json, { key: 'flat.key' }), /constraint source key not found/);
+  refused(cite('stack.json', json, { key: 'constructor' }), /constraint source key not found/);
+  refused(cite('stack.json', json, { section: 'link' }), /requires a key in JSON/);
+  refused(cite('stack.json', json, {}), /requires a key in JSON/);
+  refused(cite('notes.md', markdown, { section: 'D2 is only text.' }), /constraint source section not found/);
+  refused(cite('notes.md', markdown, { section: 'D1 Power' }), /constraint source section not found/);
+  refused(cite('notes.md', markdown, { key: 'D1' }), /a section heading in Markdown/);
+  refused(cite('notes.txt', 'plain', { section: 'x' }), /requires a key in JSON/);
+  refused(cite('stack.json', json, { page: 0 }), /one-based page/);
+  refused({ ...structuredClone(source), page: undefined }, /one-based page/);
+  const { page: _page, ...noPage } = source;
+  refused({ ...noPage, section: 'Page 1', key: 'a' }, /one-based page/);
+});
+
 test('pin distance uses actual pad centers and the native candidate', () => {
   rules(rule('pin_distance', { ...pads, metric: 'pad_center_euclidean', max_mm: 3 }));
   assert.equal(check().status, 'passed');

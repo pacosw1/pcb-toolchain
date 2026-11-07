@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseIso } from './iso-time.ts';
+import { KINDS } from './engineering-constraints.ts';
 import { atomicJson } from './json-file.ts';
 import { digest, encoded, owned, readBoard, type Blocker as NativeBlocker, type PartFacts } from './part-native.ts';
 import { registryRevision, sha } from './pcb-workflow.ts';
@@ -23,7 +24,6 @@ export const CONSTRAINTS = 'iot-lab.engineering-constraints.v1';
 const BOARD_ID = /^[A-Z0-9][A-Z0-9-]*$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const LCSC = /^C[0-9]+$/;
-const KINDS = new Set(['fixed', 'rigid_group', 'pin_distance', 'clearance', 'connector_access', 'escape']);
 const DEPENDENCY_KINDS = new Set(['mate', 'contact', 'harness', 'battery', 'other']);
 const REGISTRY = 'hardware-design/registry/boards.json';
 const MANIFEST_FIELDS = ['schema', 'board', 'revision', 'project', 'spec', 'review', 'parts', 'budgets'];
@@ -375,7 +375,7 @@ function checkLayout(review: Review, part: Dict, ref: unknown): void {
   for (const rule of rules) {
     if (!isDict(rule)) throw valueError('layout constraint must be an object');
     review.source(rule.get('source'));
-    review.need(KINDS.has(text(rule.get('kind'))) && isString(rule.get('id')) && rule.get('id'), 'unsupported_constraint', 'unrecognized or unnamed layout constraint', ref);
+    review.need(KINDS.includes(text(rule.get('kind'))) && isString(rule.get('id')) && rule.get('id'), 'unsupported_constraint', 'unrecognized or unnamed layout constraint', ref);
     review.report.constraints.rules.push(rule);
   }
 }

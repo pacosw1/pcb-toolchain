@@ -98,6 +98,16 @@ describe('part contract', () => {
     assert.equal(result.stock_current, false);
   });
 
+  test('a part review takes each rule kind that the constraint checker measures, and no other', () => {
+    for (const kind of ['fixed', 'rigid_group', 'pin_distance', 'part_distance', 'region', 'clearance', 'connector_access', 'escape']) {
+      change(value => { value.parts[0].layout_constraints[0].kind = kind; }, true);
+      const result = verify();
+      assert.equal(result.status, 'passed', `${kind}: ${JSON.stringify(result.blockers)}`);
+    }
+    change(value => { value.parts[0].layout_constraints[0].kind = 'zone'; }, true);
+    hasCode(verify(), 'unsupported_constraint');
+  });
+
   test('a changed pin name blocks even with the same number', () => {
     editTree(board('kicad_sch'), tree => {
       const pin = walk(item(tree, 'lib_symbols') as CadList, 'pin').next().value as CadList;

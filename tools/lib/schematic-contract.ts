@@ -577,9 +577,11 @@ function pcbForms(text: string): Tree {
   return stack[0] as Tree;
 }
 
-function checkNativeIdentity(native: Map<string, PartFacts>, exported: Exported): void {
+export function checkNativeIdentity(native: Map<string, PartFacts>, exported: Exported): void {
   for (const [ref, part] of native) {
-    need(exported.comps.get(ref) === part.mpn, `native export part identity differs: ${ref}`);
+    const fields = exported.fields.get(ref);
+    const noPart = part.identity_free && exported.comps.has(ref) && !fields?.get('MPN') && !fields?.get('LCSC');
+    need(noPart || exported.comps.get(ref) === part.mpn, `native export part identity differs: ${ref}`);
     for (const pin of part.pin_map.keys()) {
       const net = part.pad_net_map.get(pin);
       if (net && !net.startsWith('unconnected-')) need(exported.pins.get(pinKey(ref, pin))?.net === net, `actual schematic/PCB connected pin differs: ${ref}.${pin}`);

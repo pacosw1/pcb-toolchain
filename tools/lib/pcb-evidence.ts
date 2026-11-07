@@ -66,7 +66,12 @@ function verifyWithVerdicts(folderPath: string, verdicts: ReadonlySet<string>): 
     if (!isRelativeTo(path, folder) || !isFile(path) || sha(path) !== digest) throw new PyError('ValueError', `verified run evidence changed: ${name}`);
   }
   const complete = get(get(result, 'cleanup', new Map()), 'complete');
-  if (!verdicts.has(get(result, 'status') as string) || !truthy(complete)) throw new PyError('ValueError', 'run did not finish with confirmed process cleanup');
+  const status = get(result, 'status') as string;
+  if (!verdicts.has(status)) {
+    const cause = get(result, 'cause');
+    throw new PyError('ValueError', `run ended with status ${status}${truthy(cause) ? `: ${String(cause)}` : ''}${truthy(complete) ? '' : '; process cleanup is not confirmed'}`);
+  }
+  if (!truthy(complete)) throw new PyError('ValueError', 'run did not finish with confirmed process cleanup');
   return result as Map<string, unknown>;
 }
 
