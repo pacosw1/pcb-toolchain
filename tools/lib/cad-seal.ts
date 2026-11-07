@@ -37,7 +37,7 @@ const logPath = (root: string, board: string): string => join(root, '.gate/cad-s
 const posix = (path: string): string => path.split(sep).join('/');
 
 /** The sealed files of BOARD: its gate inputs with a CAD extension or a data name, and the JSON rule files of its checks, inside the root. The list comes from gateInputs, not a second finder. */
-function sealedFiles(root: string, board: string): Record<string, string> {
+export function sealedFiles(root: string, board: string): Record<string, string> {
   boardConfig(root, board);   // a clear error for an unknown board, before gateInputs reads its gate.json
   const inputs = gateInputs(root, board), rules = new Set(inputs.rules.filter(path => path.endsWith('.json')));
   const found = inputs.files.filter(path => (SEALED.test(path) || rules.has(path)) && existsSync(path) && !relative(root, path).startsWith('..'));
@@ -45,8 +45,8 @@ function sealedFiles(root: string, board: string): Record<string, string> {
 }
 
 /** One hash of the sealed schematic files of BOARD (.kicad_sch and .kicad_pro), from the same file list as the seal. */
-export function schematicSha256(root: string, board: string): string {
-  return sha256Text(JSON.stringify(Object.fromEntries(Object.entries(sealedFiles(root, board)).filter(([path]) => /\.kicad_(?:sch|pro)$/.test(path)))));
+export function schematicSha256(root: string, board: string, files: Record<string, string> = sealedFiles(root, board)): string {
+  return sha256Text(JSON.stringify(Object.fromEntries(Object.entries(files).filter(([path]) => /\.kicad_(?:sch|pro)$/.test(path)))));
 }
 
 /** The sealed schematic files of BOARD as full paths. */
@@ -55,8 +55,38 @@ export function schematicFiles(root: string, board: string): string[] {
 }
 
 /** The sealed JSON files of BOARD with their hashes: the gate data files and each rule file that gate.json names. */
-export function sealedJson(root: string, board: string): Record<string, string> {
-  return Object.fromEntries(Object.entries(sealedFiles(root, board)).filter(([path]) => path.endsWith('.json')));
+export function sealedJson(root: string, board: string, files: Record<string, string> = sealedFiles(root, board)): Record<string, string> {
+  return Object.fromEntries(Object.entries(files).filter(([path]) => path.endsWith('.json')));
+}
+
+/** The file hashes that the seal of BOARD holds, or null with no seal. */
+export const heldFiles = (root: string, board: string): Record<string, string> | null => readSeal(root, board)?.files ?? null;
+
+/** gate.json may differ from its sealed bytes in the project path only: with the old path back it must have the sealed hash. */
+function assertGateMoved(root: string, board: string, pairs: string[][], sealed: string): void {
+  const home = `${BOARDS}/${board}`, text = readFileSync(join(root, home, 'gate.json'), 'utf8'), now = String(JSON.parse(text).project);
+  const pair = pairs.find(([, to]) => posix(relative(home, to!)).startsWith(`${now}.kicad_`));
+  const old = pair && posix(relative(home, pair[0]!.replace(/\.kicad_\w+$/, '')));
+  if (!old || sha256Text(text.replace(JSON.stringify(now), JSON.stringify(old))) !== sealed) throw new Error(`cad_moved refuses ${board}: gate.json changed more than the project path`);
+}
+
+/** The moves that the seal and the files now prove, as `old -> new`. Each sealed path that is gone needs one new path with the same bytes. Any other difference is an error. */
+export function movedFiles(root: string, board: string): string[] {
+  const sealed = heldFiles(root, board), now = sealedFiles(root, board);
+  if (!sealed) throw new Error(`${board} has no CAD seal`);
+  const added = Object.keys(now).filter(path => !(path in sealed)), pairs: string[][] = [];
+  for (const path of Object.keys(sealed).filter(row => !(row in now))) {
+    const match = added.findIndex(other => now[other] === sealed[path]);
+    if (match < 0) throw new Error(`cad_moved refuses ${board}: ${path} has no new path with the same bytes. A change of content needs its own kind.`);
+    pairs.push([path, ...added.splice(match, 1)]);
+  }
+  if (added.length) throw new Error(`cad_moved refuses ${board}: ${added.join(', ')} has no sealed file with the same bytes`);
+  if (!pairs.length) throw new Error(`cad_moved refuses ${board}: no file moved since the seal. Run it before seal --accept.`);
+  for (const path of Object.keys(now).filter(row => row in sealed && now[row] !== sealed[row])) {
+    if (path !== `${BOARDS}/${board}/gate.json`) throw new Error(`cad_moved refuses ${board}: ${path} changed in place`);
+    assertGateMoved(root, board, pairs, sealed[path]!);
+  }
+  return pairs.map(([from, to]) => `${from} -> ${to}`);
 }
 
 function readSeal(root: string, board: string): Seal | null {

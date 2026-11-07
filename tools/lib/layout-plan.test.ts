@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +8,7 @@ import test, { type TestContext } from 'node:test';
 import { boardShapeSha256 } from './board-shape.ts';
 import { reseal, schematicSha256 } from './cad-seal.ts';
 import { sealFixtureBoard } from './cad-seal-fixture.ts';
+import { recordChange } from './change-log.ts';
 import { SCHEMA } from './engineering-constraints.ts';
 import { approveLayoutPlan, layoutGate, layoutPlanPath, layoutPlanStatus, type NetSource } from './layout-plan.ts';
 import { approveFixture, NO_NETS, PNG } from './layout-plan-fixture.ts';
@@ -162,6 +163,24 @@ test('a sealed change of the schematic or the project file makes the approval st
   assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved', 'a new approval binds the new schematic');
   writeFileSync(join(f.folder, 'X.kicad_pro'), '{"changed": true}');
   reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  assert.deepEqual(layoutPlanStatus(f.root, 'X').stale, ['the schematic changed since the approval']);
+});
+
+test('cad_moved keeps the approval of the same bytes, and a later edit makes it stale', async t => {
+  const f = fixture(t);
+  writeFileSync(join(f.folder, 'X.kicad_sch'), '(kicad_sch)');
+  sealFixtureBoard(f.root, 'X');
+  await approve(f.root);
+  mkdirSync(join(f.folder, 'cad'));
+  for (const name of ['X.kicad_pcb', 'X.kicad_sch']) renameSync(join(f.folder, name), join(f.folder, 'cad', name));
+  writeFileSync(join(f.folder, 'gate.json'), JSON.stringify({ project: 'cad/X', checks: {} }));
+  assert.deepEqual(layoutPlanStatus(f.root, 'X').stale, ['the schematic changed since the approval']);
+  recordChange(f.root, 'X', { kind: 'cad_moved', reason: 'new folder', by: 'Ana', refs: [] });
+  assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved');
+  writeFileSync(join(f.folder, 'cad/X.kicad_sch'), '(kicad_sch (edit))');
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  assert.deepEqual(layoutPlanStatus(f.root, 'X').stale, ['the schematic changed since the approval']);
+  recordChange(f.root, 'X', { kind: 'net_change', reason: 'edit', by: 'Ana', refs: [] });
   assert.deepEqual(layoutPlanStatus(f.root, 'X').stale, ['the schematic changed since the approval']);
 });
 

@@ -99,6 +99,11 @@ test('a change goes back to its earliest state and never goes forward', () => {
   if (!edit.ok) assert.equal(edit.code, 'kind_names_no_move');
 });
 
+test('cad_moved stays in its state: it moves no stage back', () => {
+  const moved = transition(TABLE, 'A18', { type: 'change', kind: 'cad_moved' }, OPEN);
+  assert.deepEqual([moved.ok, moved.ok && moved.to], [true, 'A18']);
+});
+
 test('the position is the first state with no proof', () => {
   const at = (found: Evidenced) => position(TABLE, found);
   assert.equal(at({ schematic: 'missing' }).state, 'A4');

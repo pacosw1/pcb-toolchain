@@ -6,7 +6,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { boardFacts, boardShapeSha256 } from './board-shape.ts';
-import { bindChangeLog, isCanonicalRoot, schematicFiles, schematicSha256, sealedChangeLog, sealedJson, verifySeal, withSealLock } from './cad-seal.ts';
+import { bindChangeLog, heldFiles, isCanonicalRoot, movedFiles, reseal, schematicFiles, schematicSha256, sealedChangeLog, sealedFiles, sealedJson, verifySeal, withSealLock } from './cad-seal.ts';
 import { sha256Text } from './fingerprint.ts';
 import { sha256File } from './json-file.ts';
 import { durableAppend } from './pcb-check-durable.ts';
@@ -40,18 +40,17 @@ const eventId = (index: number): string => `c-${String(index + 1).padStart(4, '0
 
 export const changePath = (root: string, board: string): string => join(root, 'hardware-design/boards', board, CHANGE_FILE);
 
-function rulesSha256(root: string, board: string, files: readonly string[]): string {
-  const folder = join(root, 'hardware-design/boards', board);
-  const named = Object.fromEntries(files.map(file => [file, existsSync(join(folder, file)) ? sha256File(join(folder, file)) : null]));
-  return sha256Text(JSON.stringify({ ...named, ...sealedJson(root, board) }));   // a missing file is a value, and each rule file of a check joins the fixed names
+function rulesSha256(root: string, board: string, names: readonly string[], files: Record<string, string>): string {
+  const named = Object.fromEntries(names.map(file => [file, files[`hardware-design/boards/${board}/${file}`] ?? null]));
+  return sha256Text(JSON.stringify({ ...named, ...sealedJson(root, board, files) }));   // a missing file is a value, and each rule file of a check joins the fixed names
 }
 
-/** The hash of each group of the table, in table order. A group with no hash here is an error: the table and the code must agree. */
-export function groupHashes(root: string, board: string, table: TransitionTable = TABLE): Record<string, string> {
+/** The hash of each group of the table, in table order, from FILES: the files now, or the files of a seal. A group with no hash here is an error: the table and the code must agree. */
+export function groupHashes(root: string, board: string, table: TransitionTable = TABLE, sealed: Record<string, string> = sealedFiles(root, board)): Record<string, string> {
   return Object.fromEntries(Object.entries(table.groups).map(([group, files]) => {
-    if (group === 'schematic') return [group, schematicSha256(root, board)];
+    if (group === 'schematic') return [group, schematicSha256(root, board, sealed)];
     if (group === 'board_shape') return [group, boardShapeSha256(root, board)];
-    if (group === 'rules') return [group, rulesSha256(root, board, files)];
+    if (group === 'rules') return [group, rulesSha256(root, board, files, sealed)];
     throw new Error(`group ${group} has no hash`);
   }));
 }
@@ -147,8 +146,15 @@ function approvalSha256(root: string, board: string, target: string): string {
 }
 
 /** The refs of the event. A kind that names a release or an approval must name a real one. The reason and the facts of a defect stay the claim of a person. */
-function eventRefs(root: string, board: string, kind: string, refs: string[], events: ChangeEvent[]): string[] {
+function eventRefs(root: string, board: string, kind: string, refs: string[], events: ChangeEvent[], table: TransitionTable): string[] {
   const [first, second] = refs;
+  if (kind === 'cad_moved') {
+    if (refs.length) throw new Error('cad_moved takes no --refs: the seal and the files give the paths');
+    const paths = movedFiles(root, board), last = recorded(events), held = groupHashes(root, board, table, heldFiles(root, board)!);
+    const open = Object.keys(held).filter(group => held[group] !== last[group]);   // a move must not carry a change that has no event
+    if (open.length) throw new Error(`${board} has a change with no event in ${open.join(', ')}. Name that change before the move`);
+    return paths;
+  }
   if (kind === 'approval_withdrawn') {
     if (refs.length !== 1 || (first !== 'layout' && first !== 'release')) throw new Error('approval_withdrawn requires --refs layout or --refs release');
     return [first, approvalSha256(root, board, first)];
@@ -177,6 +183,17 @@ function assertBound(root: string, board: string, path: string): void {
   const bound = sealedChangeLog(root, board), head = existsSync(path) ? sha256File(path) : null;
   if (bound === undefined || bound === head) return;
   throw new Error(head === null ? 'the seal holds a change log, and the file is gone' : 'the change log is not the one that the seal holds');
+}
+
+/** True when HASH is an earlier hash of GROUP and only cad_moved events lie after it: the bytes are the same at new paths. An unrecorded change or a bad log gives false. */
+export function movedSince(root: string, board: string, group: string, hash: string): boolean {
+  const status = changeStatus(root, board);
+  if (status.state !== 'recorded') return false;
+  for (const event of status.events.filter(row => group in row.groups).reverse()) {
+    if (event.kind !== 'cad_moved') return false;
+    if (event.groups[group]!.before === hash) return true;
+  }
+  return false;
 }
 
 /** Where the log of BOARD stands. A broken, missing or unbound log or a board that cannot be read is `invalid`: it never reads as recorded. */
@@ -218,15 +235,16 @@ export function recordChange(root: string, board: string, request: ChangeRequest
     if (kind.role === 'baseline' && status.state !== 'not_started') throw new Error(`${board} already has a baseline`);
     if (kind.role !== 'baseline' && status.state === 'not_started') throw new Error(`${board} has no change log. Start it: tools/pcb change ${board} --kind baseline --reason TEXT --by NAME`);
     if (kind.role === 'baseline' || kind.group) verifySeal(root, board);
-    const hashes = kind.role === 'baseline' || kind.group ? groupHashes(root, board, table) : {}, last = recorded(status.events);
+    const hashes = kind.role === 'change' && !kind.group ? {} : groupHashes(root, board, table), last = recorded(status.events);
     if (kind.group && last[kind.group] === hashes[kind.group]) throw new Error(`no change in group ${kind.group} since the last event`);
-    const names = kind.role === 'baseline' ? Object.keys(hashes) : kind.group ? [kind.group] : [];
+    const names = kind.role === 'baseline' ? Object.keys(hashes) : kind.group ? [kind.group] : Object.keys(hashes).filter(group => last[group] !== hashes[group]);
     const groups = Object.fromEntries(names.map(group => [group, { before: last[group] ?? null, after: hashes[group]!, facts: factsOf(root, board, group, hashes[group]!) }]));
     if (kind.group) assertExplained(kind, recordedFacts(status.events, kind.group), groups[kind.group]!.facts, table);
-    const named = eventRefs(root, board, kind.id, refs, status.events);
+    const named = eventRefs(root, board, kind.id, refs, status.events, table);
     const path = changePath(root, board), previous = existsSync(path) ? readFileSync(path, 'utf8').slice(0, -1).split('\n').at(-1)! : null;
     const event: ChangeEvent = { id: eventId(status.events.length), at: now().toISOString(), by: by.trim(), kind: kind.id, reason: reason.trim(), refs: named, groups, prev_sha256: previous === null ? null : sha256Text(previous) };
     durableAppend(path, JSON.stringify(event) + '\n');
+    if (kind.role === 'move') reseal(root, board, { tool: 'pcb change', run_id: null }, reason.trim());
     bindChangeLog(root, board, sha256File(path));   // a crash before this line leaves a log that fails closed
     return event;
   });

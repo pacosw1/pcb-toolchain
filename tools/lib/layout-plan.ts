@@ -6,7 +6,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { boardShapeSha256 } from './board-shape.ts';
 import { isCanonicalRoot, schematicSha256, verifySeal, withSealLock } from './cad-seal.ts';
-import { changeBlock, withdrawnBy, type ChangeBlock } from './change-log.ts';
+import { changeBlock, movedSince, withdrawnBy, type ChangeBlock } from './change-log.ts';
 import { sha256Text } from './fingerprint.ts';
 import { registryExemption } from './design-exemption.ts';
 import { atomicJson, readObject, sha256File } from './json-file.ts';
@@ -140,7 +140,7 @@ export function layoutPlanStatus(root: string, board: string): LayoutStatus {
   const stale = [
     ...(found.approval.rules_sha256 === found.rulesSha ? [] : ['placement-constraints.json changed since the approval']),
     ...(found.approval.route_plan_sha256 === found.routeSha ? [] : ['the route plan changed since the approval']),
-    ...(found.approval.schematic_sha256 === schematicSha256(root, board) ? [] : ['the schematic changed since the approval']),
+    ...(found.approval.schematic_sha256 === schematicSha256(root, board) || movedSince(root, board, 'schematic', found.approval.schematic_sha256) ? [] : ['the schematic changed since the approval']),
     ...shapeProblems(root, board, found.approval.board_shape_sha256),
     ...[withdrawnBy(root, board, 'layout', sha256Text(JSON.stringify(found.approval)))].filter(line => line !== null),
     ...(found.imageSha === null ? ['the approved image is missing'] : found.approval.image_sha256 === found.imageSha ? [] : ['the approved image changed since the approval']),

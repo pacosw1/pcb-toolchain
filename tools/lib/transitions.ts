@@ -8,7 +8,7 @@ export const TRANSITIONS_SCHEMA = 'iot-lab.transitions.v1';
 export const STATUSES = ['enforced', 'recorded', 'implicit'] as const;
 export const EVIDENCE = ['design_assessment', 'part_review', 'schematic', 'bom', 'stackup', 'rules', 'route_plan', 'layout_approval', 'placement', 'copper', 'gate', 'release', 'release_approval', 'readiness', 'order', 'bringup'] as const;
 export const APPROVALS = ['part_review', 'layout_approval', 'seal_accept', 'substitute_choice', 'route_move', 'defect_decision', 'assessment_review', 'new_revision'] as const;
-export const ROLES = ['change', 'delegate', 'baseline'] as const;
+export const ROLES = ['change', 'delegate', 'baseline', 'move'] as const;
 export const COMMANDS = ['check', 'edit', 'build', 'place', 'route', 'repair', 'release'] as const;
 export const GUARDS = ['change_recorded'] as const;
 

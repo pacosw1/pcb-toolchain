@@ -177,6 +177,7 @@
       "redo": [],
       "keep": ["release", "order"], "approve": ["new_revision"] },
     { "id": "defect_closed", "doc": "T21", "role": "change", "group": null, "reenter": ["A21"], "redo": [], "keep": ["release", "order"], "approve": ["defect_decision"] },
+    { "id": "cad_moved", "doc": "T22", "role": "move", "group": null, "reenter": [], "redo": [], "keep": [], "approve": [] },
     { "id": "baseline", "doc": "J", "role": "baseline", "group": null, "reenter": [],
       "redo": [],
       "keep": [], "approve": [] }

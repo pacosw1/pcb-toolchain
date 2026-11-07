@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { reseal } from './cad-seal.ts';
+import { reseal, sealStatus } from './cad-seal.ts';
 import { ORDERED_HASH, orderFixture } from './cad-seal-fixture.ts';
 import { changeBlock, changePath, changeStatus, groupHashes, readChanges, recordChange } from './change-log.ts';
 import { sha256Text } from './fingerprint.ts';
@@ -206,6 +206,64 @@ test('a board shape kind must fit the shape diff', t => {
   f.write('X.kicad_pcb', BOARD.replace('(thickness 1.5)', '(thickness 1.2)').replace('(end 50 0)', '(end 60 0)'));
   assert.throws(() => f.record('design_rule_change', 'false'), /cannot explain the change of outline/);
   f.record('outline_change', 'true');
+});
+
+/** A person moves the CAD to cad/ and points gate.json at it. */
+function moveCad(folder: string): void {
+  mkdirSync(join(folder, 'cad'));
+  for (const extension of ['kicad_pcb', 'kicad_sch', 'kicad_pro']) renameSync(join(folder, `X.${extension}`), join(folder, 'cad', `X.${extension}`));
+  writeFileSync(join(folder, 'gate.json'), JSON.stringify({ project: 'cad/X', checks: {} }));
+}
+
+test('cad_moved with the same bytes records each path, reseals and names the person', t => {
+  const f = fixture(t);
+  f.record('baseline');
+  const before = groupHashes(f.root, 'X');
+  moveCad(f.folder);
+  assert.equal(changeStatus(f.root, 'X').state, 'unrecorded');
+  const event = f.record('cad_moved');
+  const paths = (extension: string) => `hardware-design/boards/X/X.${extension} -> hardware-design/boards/X/cad/X.${extension}`;
+  assert.deepEqual([...event.refs].sort(), ['kicad_pcb', 'kicad_pro', 'kicad_sch'].map(paths));
+  assert.equal(event.by, 'Ana');
+  assert.deepEqual(Object.keys(event.groups).sort(), ['rules', 'schematic']);
+  assert.equal(event.groups.schematic!.before, before.schematic);
+  assert.equal(changeStatus(f.root, 'X').state, 'recorded');
+  assert.equal(sealStatus(f.root, 'X').state, 'sealed');
+  assert.equal(groupHashes(f.root, 'X').board_shape, before.board_shape);
+});
+
+test('cad_moved refuses one changed byte and writes nothing', t => {
+  const f = fixture(t);
+  f.record('baseline');
+  moveCad(f.folder);
+  writeFileSync(join(f.folder, 'cad/X.kicad_sch'), '(kicad_sch )');
+  const log = readFileSync(f.log, 'utf8'), seal = readFileSync(join(f.folder, 'cad-seal.json'), 'utf8');
+  assert.throws(() => f.record('cad_moved'), /cad_moved.*X\.kicad_sch/s);
+  assert.equal(readFileSync(f.log, 'utf8'), log);
+  assert.equal(readFileSync(join(f.folder, 'cad-seal.json'), 'utf8'), seal);
+});
+
+test('cad_moved refuses a gate.json that changed more than the project path', t => {
+  const f = fixture(t);
+  f.record('baseline');
+  moveCad(f.folder);
+  writeFileSync(join(f.folder, 'gate.json'), JSON.stringify({ project: 'cad/X', checks: {}, extra: 1 }));
+  assert.throws(() => f.record('cad_moved'), /cad_moved.*gate\.json/s);
+});
+
+test('cad_moved needs a move, takes no refs, and hides no unrecorded change', t => {
+  const f = fixture(t);
+  f.record('baseline');
+  assert.throws(() => f.record('cad_moved'), /no file moved/);
+  moveCad(f.folder);
+  assert.throws(() => recordChange(f.root, 'X', { kind: 'cad_moved', reason: 'a move', by: 'Ana', refs: ['a'], now: NOW }), /cad_moved takes no --refs/);
+  f.record('cad_moved');
+  writeFileSync(join(f.folder, 'cad/X.kicad_sch'), '(kicad_sch (edit))');
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  mkdirSync(join(f.folder, 'next'));
+  for (const extension of ['kicad_pcb', 'kicad_sch', 'kicad_pro']) renameSync(join(f.folder, `cad/X.${extension}`), join(f.folder, `next/X.${extension}`));
+  writeFileSync(join(f.folder, 'gate.json'), JSON.stringify({ project: 'next/X', checks: {} }));
+  assert.throws(() => f.record('cad_moved'), /no event in schematic/);
 });
 
 test('placement and copper are not an unrecorded change', t => {

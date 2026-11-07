@@ -9,7 +9,7 @@ import { runsBase } from './pcb-runs.ts';
 import { loadTransitions, type Command, type Evidence, type Freshness, type Guard, type StateId, type TransitionTable } from './transitions.ts';
 
 export const BOARD_STATES = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'A10', 'A11', 'A12', 'A13', 'A14', 'A15', 'A16', 'A17', 'A18', 'A19', 'A20', 'A21', 'A22', 'A23', 'A24', 'A25'] as const;
-export const CHANGE_KINDS = ['part_swap_new_footprint', 'part_swap_same_footprint', 'part_value_change', 'net_change', 'stackup_change', 'outline_change', 'design_rule_change', 'rule_change', 'approval_withdrawn', 'fab_defect', 'bringup_failure', 'human_edit', 'cad_after_order', 'defect_closed', 'baseline'] as const;
+export const CHANGE_KINDS = ['part_swap_new_footprint', 'part_swap_same_footprint', 'part_value_change', 'net_change', 'stackup_change', 'outline_change', 'design_rule_change', 'rule_change', 'approval_withdrawn', 'fab_defect', 'bringup_failure', 'human_edit', 'cad_after_order', 'defect_closed', 'cad_moved', 'baseline'] as const;
 
 export type BoardState = typeof BOARD_STATES[number];
 export type ChangeKind = typeof CHANGE_KINDS[number];

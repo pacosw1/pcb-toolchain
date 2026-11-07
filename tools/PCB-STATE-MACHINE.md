@@ -177,7 +177,7 @@ A stale hash stops one command. No table says what else must be redone.
 | `partial` | A tool stops some paths. Other evidence, an approval, or a data file stays valid and should not. Or the stop comes late. |
 | `silent` | No tool stops the process and no tool records the change. |
 
-Count: 10 `stops`, 10 `partial`, 1 `silent`, of 21 rows.
+Count: 11 `stops`, 10 `partial`, 1 `silent`, of 22 rows.
 
 ### G.2 Facts that apply to all rows
 
@@ -195,6 +195,7 @@ Count: 10 `stops`, 10 `partial`, 1 `silent`, of 21 rows.
 "Today" holds the proof from the audit, before the machine. "Should" holds the change that the process needs.
 Rows T5, T6, T10, T12, T13, T14, T17 and T19 have no kind in `pcb-transitions.json`: a kind with no effect left the table. The reader of each evidence class finds these changes.
 T21 is the kind `defect_closed`: it ends a `fab_defect` or a `bringup_failure` with the decision `new_revision`, `use_as_is` or `reorder`.
+T22 is the kind `cad_moved`, role `move`. The event stays in its state, and only the paths change. A layout approval compares `schematic_sha256`, and that hash holds paths: `movedSince` accepts the old hash when only `cad_moved` events follow it and the log has no unrecorded change.
 The next four columns are the required result: the earliest state, the invalid states, the evidence that survives, and who approves again.
 "Person" means a person who is not the agent that made the change. Today only a hook enforces this (D1).
 
@@ -221,6 +222,7 @@ The next four columns are the required result: the earliest state, the invalid s
 | T19 | Requirement or spec change | A changed source stops the contract load (`lib/design-contract-load.ts:38`). `next` gives `design_assessment_stale` (`lib/pcb-next.ts:173`, `:218`). A run needs a pass of the earlier stage (`lib/pcb-candidate-screens.ts:63-66`). An exempt board has no such stop. | Keep the stops. | A1 | The stages whose checks name the requirement | Stages with no link to it | Person: review of the assessment | `stops` |
 | T20 | CAD changed after an order | `release-orders.jsonl` records the order (`lib/release-order.mjs`). The manifest keeps `ordered: false`. `pcb state` shows `cad_after_order` (`lib/board-release.ts`): it compares the CAD with the gate inputs of the sealed release run of the last order. With no such run it reads `unknown`. An open order refuses CAD moves and adopt. `cad_after_order` or `defect_closed` with `new_revision` ends the order and opens them. | Record the order. After it, adopt refuses until the revision increases. | A7 of the new revision | Nothing of the old revision: it stays as ordered | The old revision files and evidence | Person: new revision | `stops` |
 | T21 | A defect ends with a decision | `defect_closed` names the release hash and `new_revision`, `use_as_is` or `reorder`. `recordOrder` and readiness stop until then (`lib/change-log.ts`). | Keep the decision in the log. | A21 | Nothing | The ordered release and its order | Person: defect decision | `stops` |
+| T22 | CAD moved with the same bytes | `pcb change --kind cad_moved` compares the seal with the files (`movedFiles` in `lib/cad-seal.ts`). Each sealed path that is gone needs one new path with the same bytes. `gate.json` may change only in its project path. It runs before `seal --accept`, and it reseals. | Keep the old and new paths in `refs`. | none | Nothing | All evidence. A layout approval stays valid through `movedSince`. A gate result stays stale: its inputs hold paths. | Person: `--by` | `stops` |
 
 ## H. Input and output audit
 
