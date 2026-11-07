@@ -9,6 +9,8 @@ import { boardView, judgedEvidence, viewText, type Decide } from './board-view.t
 import { reseal } from './cad-seal.ts';
 import { recordChange } from './change-log.ts';
 import { layoutPlanPath } from './layout-plan.ts';
+import { orderCandidate, approveCandidate, releaseRun } from './release-run-fixture.ts';
+import { releaseOrdersPath } from './release-order.mjs';
 import { approveFixture } from './layout-plan-fixture.ts';
 import { loadTransitions } from './transitions.ts';
 
@@ -131,4 +133,88 @@ test('pcb state prints JSON and a text view, and an unknown board exits with a c
   assert.equal(text.status, 0, text.stderr);
   assert.match(text.stdout, /X is at A/);
   assert.notEqual(run('NOBOARD').status, 0);
+});
+
+const stateOf = (view: Awaited<ReturnType<typeof boardView>>, id: string) => view.states.find(state => state.id === id)!;
+const CREATED = '2026-11-06T10:00:00+00:00';
+async function ordered(t: TestContext) {
+  const f = fixture(t);
+  await approveFixture(f.root, 'X');
+  const candidate = releaseRun(f.root, f.base, 'run-rel', CREATED);
+  approveCandidate(f.root, candidate);
+  orderCandidate(f.root, candidate);
+  return { ...f, candidate };
+}
+const viewOf = (f: { root: string; base: string }) => boardView(f.root, 'X', f.base, decide('blocked', 'x'));
+
+test('a board with no release record has no claim about a release', async t => {
+  const f = fixture(t), view = await viewOf(f);
+  assert.deepEqual(view.release, { approval: { state: 'missing', path: join(f.folder, 'release-approval.json'), by: null, problems: [], stale: [] }, orders: [], cad_after_order: 'no_order', problems: [] });
+  assert.equal(stateOf(view, 'A22').freshness, 'unknown');
+  assert.equal(view.position.state, 'A8', 'a missing record does not move the position');
+});
+
+test('the view shows the release approval and the orders of the sealed release', async t => {
+  const f = await ordered(t), view = await viewOf(f);
+  assert.equal(view.release.approval.state, 'approved');
+  assert.equal(view.release.approval.by, 'Ana');
+  assert.deepEqual(view.release.orders.map(order => order.reference), ['JLC-1']);
+  assert.equal(view.release.cad_after_order, 'same');
+  assert.equal(stateOf(view, 'A22').freshness, 'current');
+  assert.equal(stateOf(view, 'A24').freshness, 'current');
+  assert.equal(view.position.state, 'A25');
+  assert.match(viewText(view), /Release approval: approved by Ana/);
+  assert.match(viewText(view), /Orders: 1, last JLC-1; CAD after the order: same/);
+});
+
+test('CAD that differs from the ordered release reads as stale, and the view says so', async t => {
+  const f = await ordered(t);
+  writeFileSync(join(f.folder, 'X.kicad_pcb'), BOARD.replace('(gr_line', '(gr_text "new" (at 1 1) (layer "F.SilkS"))(gr_line'));
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  const view = await viewOf(f);
+  assert.equal(view.release.cad_after_order, 'differs');
+  assert.equal(stateOf(view, 'A24').freshness, 'stale');
+  assert.equal(view.position.state, 'A24');
+  assert.match(viewText(view), /CAD after the order: differs/);
+});
+
+test('with no sealed run of the order the CAD compare is unknown and never reads as the same', async t => {
+  const f = await ordered(t);
+  rmSync(join(f.base, 'run-rel'), { recursive: true });
+  const view = await viewOf(f);
+  assert.equal(view.release.cad_after_order, 'unknown');
+  assert.equal(stateOf(view, 'A24').freshness, 'unknown');
+  assert.equal(view.release.approval.state, 'stale');
+});
+
+test('a run that fails its seal is no proof of the ordered CAD', async t => {
+  const f = await ordered(t);
+  writeFileSync(join(f.base, 'run-rel/run.json'), JSON.stringify({ run_id: 'run-rel', board: 'X', operation: 'release', created_at: CREATED, changed: true }));
+  assert.equal((await viewOf(f)).release.cad_after_order, 'unknown');
+});
+
+test('a newer sealed release makes the approval stale', async t => {
+  const f = await ordered(t);
+  releaseRun(f.root, f.base, 'run-new', '2026-11-06T11:00:00+00:00', '{"revision":"b"}');
+  const view = await viewOf(f);
+  assert.equal(view.release.approval.state, 'stale');
+  assert.equal(view.release.cad_after_order, 'same', 'the order keeps its own run');
+  assert.equal(stateOf(view, 'A22').freshness, 'stale');
+});
+
+test('a damaged order log is a problem in the view and proves nothing', async t => {
+  const f = await ordered(t);
+  writeFileSync(releaseOrdersPath(f.root, 'X'), 'not json\n');
+  const view = await viewOf(f);
+  assert.match(view.release.problems[0]!, /line 1 is not an order/);
+  assert.equal(view.release.cad_after_order, 'unknown');
+  assert.equal(stateOf(view, 'A24').freshness, 'unknown');
+});
+
+test('a damaged approval is a problem in the view and never reads as current', async t => {
+  const f = await ordered(t);
+  writeFileSync(join(f.folder, 'release-approval.json'), '{');
+  const view = await viewOf(f);
+  assert.equal(view.release.approval.state, 'invalid');
+  assert.equal(stateOf(view, 'A22').freshness, 'unknown');
 });

@@ -6,11 +6,13 @@ import { readChanges } from './change-log.ts';
 import { readObject } from './json-file.ts';
 import { verifySettled } from './pcb-evidence.ts';
 import { RUN_ID } from './pcb-runs.ts';
+import { releaseApprovalStatus } from './release-approval.mjs';
+import { releaseOrders, type ReleaseOrder } from './release-order.mjs';
 
 type Row = Record<string, unknown>;
 export interface HistoryItem { name: string; sha256?: string | null; path?: string }
 export interface HistoryEntry {
-  at: string | null; placed_by: 'time' | 'run' | 'log_order'; source: 'change' | 'seal' | 'layout' | 'run'; id: string; type: string; by: string | null; summary: string;
+  at: string | null; placed_by: 'time' | 'run' | 'log_order'; source: 'change' | 'seal' | 'layout' | 'run' | 'release'; id: string; type: string; by: string | null; summary: string;
   inputs: HistoryItem[]; outputs: HistoryItem[]; status?: string; sealed?: boolean; cause?: string;
 }
 export interface BoardHistory { schema: 'iot-lab.board-history.v1'; board: string; entries: HistoryEntry[]; problems: string[] }
@@ -82,10 +84,28 @@ function seals(root: string, board: string, known: Placed[], problems: string[])
   });
 }
 
+/** The committed release records have no time, and the local release log gives it. A record with no time takes the place after the record above it. */
+function releases(root: string, board: string, base: string, known: Placed[], problems: string[]): Placed[] {
+  const log = jsonLines(join(root, '.gate/release-approval', `${board}.jsonl`), 'release log', problems);
+  const timeIn = (type: string, key: string, value: string): string | null => text(log.findLast(row => row.type === type && row[key] === value)?.time);
+  let last = Math.max(-Infinity, ...known.map(entry => entry.order));
+  const placed = (at: string | null) => { const order = at ? timeOf(at) : last; last = Math.max(last, order); return { at, placed_by: at ? 'time' as const : 'log_order' as const, order, source: 'release' as const }; };
+  // `base` holds no manifest. The history shows the record, and `pcb state` judges its freshness.
+  const { approval, problems: bad } = releaseApprovalStatus(root, board, base);
+  problems.push(...bad);
+  const rows: Placed[] = approval ? [{ ...placed(timeIn('release_approval.approved', 'candidate_sha256', approval.candidate_sha256)), id: 'release-approval', type: 'release_approval.approved', by: approval.by, summary: approval.reason,
+    inputs: [{ name: 'candidate', sha256: approval.candidate_sha256 }, { name: 'report', path: approval.report, sha256: approval.report_sha256 }, { name: 'image', path: approval.image, sha256: approval.image_sha256 }],
+    outputs: [{ name: 'release-approval', path: join('hardware-design/boards', board, 'release-approval.json') }] }] : [];
+  let orders: ReleaseOrder[] = [];
+  try { orders = releaseOrders(root, board); } catch (error) { problems.push(messageOf(error)); }
+  return [...rows, ...orders.map((order): Placed => ({ ...placed(timeIn('release_order.recorded', 'reference', order.reference)), id: `order-${order.reference}`, type: 'release_order.recorded', by: order.by, summary: `${order.quantity} x ${order.what}`,
+    inputs: [{ name: 'candidate', sha256: order.candidate_sha256 }, { name: 'approval', sha256: order.approval_sha256 }], outputs: [{ name: `order ${order.reference}` }] }))];
+}
+
 /** The log of BOARD, oldest first. A source that cannot be read is a problem in the output, and the other sources stay. */
 export function boardHistory(root: string, board: string, base: string): BoardHistory {
   const problems: string[] = [], finished = runs(base, board, problems);
-  const placed = [...finished, ...seals(root, board, finished, problems), ...changes(root, board, problems), ...layouts(root, board, problems)];
+  const placed = [...finished, ...seals(root, board, finished, problems), ...changes(root, board, problems), ...layouts(root, board, problems), ...releases(root, board, base, finished, problems)];
   const entries = placed.map((entry, index) => ({ entry, index })).sort((a, b) => a.entry.order - b.entry.order || a.index - b.index).map(({ entry: { order: _, ...entry } }) => entry);
   return { schema: 'iot-lab.board-history.v1', board, entries, problems };
 }

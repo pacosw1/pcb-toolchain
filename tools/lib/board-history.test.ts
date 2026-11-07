@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -9,6 +9,8 @@ import { boardHistory, historyText } from './board-history.ts';
 import { reseal } from './cad-seal.ts';
 import { changePath, recordChange } from './change-log.ts';
 import { sha256File } from './json-file.ts';
+import { releaseOrdersPath } from './release-order.mjs';
+import { approveCandidate, orderCandidate, releaseRun } from './release-run-fixture.ts';
 
 const CLI = fileURLToPath(new URL('../pcb-state.ts', import.meta.url));
 const at = (text: string) => () => new Date(text);
@@ -132,4 +134,57 @@ test('pcb history prints JSON and text', t => {
   assert.equal(JSON.parse(json.stdout).entries.length, 1);
   assert.match(run('X').stdout, /run-a/);
   assert.notEqual(run().status, 0);
+});
+
+function released(t: TestContext) {
+  const f = fixture(t), candidate = releaseRun(f.root, f.base, 'run-rel', '2026-11-06T10:00:00+00:00');
+  approveCandidate(f.root, candidate);
+  orderCandidate(f.root, candidate, 'JLC-1');
+  orderCandidate(f.root, candidate, 'JLC-2');
+  return f;
+}
+const releaseRows = (f: { root: string; base: string }) => boardHistory(f.root, 'X', f.base).entries.filter(entry => entry.source === 'release');
+
+test('the log shows the release approval and each order with its inputs and outputs', t => {
+  const f = released(t), [approval, first, second] = releaseRows(f);
+  assert.deepEqual([approval!.id, first!.id, second!.id], ['release-approval', 'order-JLC-1', 'order-JLC-2']);
+  assert.equal(approval!.type, 'release_approval.approved');
+  assert.equal(approval!.by, 'Ana');
+  assert.equal(approval!.summary, 'checked');
+  assert.deepEqual(approval!.inputs.map(item => item.name), ['candidate', 'report', 'image']);
+  assert.equal(first!.type, 'release_order.recorded');
+  assert.deepEqual(first!.inputs.map(item => item.name), ['candidate', 'approval']);
+  assert.deepEqual(first!.outputs, [{ name: 'order JLC-1' }]);
+  assert.equal(first!.summary, '5 x 5 boards');
+});
+
+test('a record with no time keeps the order of the log, after the release run', t => {
+  const f = released(t), history = boardHistory(f.root, 'X', f.base);
+  assert.deepEqual(history.entries.map(entry => entry.id), ['run-rel', 'release-approval', 'order-JLC-1', 'order-JLC-2']);
+  assert.ok(releaseRows(f).every(entry => entry.at === null && entry.placed_by === 'log_order'));
+});
+
+test('the local release log gives the time of a record', t => {
+  const f = released(t), order = JSON.parse(readFileSync(releaseOrdersPath(f.root, 'X'), 'utf8').split('\n')[0]!);
+  mkdirSync(join(f.root, '.gate/release-approval'), { recursive: true });
+  writeFileSync(join(f.root, '.gate/release-approval/X.jsonl'), [
+    { time: '2026-11-06T12:00:00.000Z', type: 'release_approval.approved', candidate_sha256: order.candidate_sha256 },
+    { time: '2026-11-06T13:00:00.000Z', type: 'release_order.recorded', reference: 'JLC-1' }].map(row => JSON.stringify(row)).join('\n') + '\n');
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  recordChange(f.root, 'X', { kind: 'baseline', reason: 'start', by: 'Ana', refs: [], now: at('2026-11-06T12:30:00Z') });
+  const history = boardHistory(f.root, 'X', f.base);
+  assert.deepEqual(history.entries.filter(entry => entry.source !== 'seal').map(entry => entry.id), ['run-rel', 'release-approval', 'c-0001', 'order-JLC-1', 'order-JLC-2']);
+  const row = (id: string) => history.entries.find(entry => entry.id === id)!;
+  assert.equal(row('release-approval').at, '2026-11-06T12:00:00.000Z');
+  assert.equal(row('release-approval').placed_by, 'time');
+  assert.equal(row('order-JLC-2').placed_by, 'log_order');
+});
+
+test('a damaged release record is a problem and the other sources stay', t => {
+  const f = released(t);
+  writeFileSync(releaseOrdersPath(f.root, 'X'), 'not json\n');
+  writeFileSync(join(f.folder, 'release-approval.json'), '{');
+  const history = boardHistory(f.root, 'X', f.base);
+  assert.equal(history.problems.length, 2);
+  assert.deepEqual(history.entries.map(entry => entry.id), ['run-rel']);
 });
