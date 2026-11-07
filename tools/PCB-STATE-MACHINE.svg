@@ -1,0 +1,180 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 1772" width="640" height="1772" font-family="Helvetica, Arial, sans-serif">
+<title>PCB state machine: idea to assembled board</title>
+<defs>
+<marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#333"/></marker>
+<marker id="ahd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#a33"/></marker>
+</defs>
+<rect width="640" height="1772" fill="#ffffff"/>
+<text x="16" y="26" font-size="17" font-weight="700" fill="#111">PCB state machine: idea to assembled board</text>
+<rect x="16" y="40" width="22" height="14" rx="3" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.5"/><text x="44" y="51" font-size="10.5" fill="#222">enforced: a tool stops the run</text>
+<rect x="226" y="40" width="22" height="14" rx="3" fill="#fff0c2" stroke="#c98a00" stroke-width="1.5"/><text x="254" y="51" font-size="10.5" fill="#222">recorded: noted, no stop</text>
+<rect x="436" y="40" width="22" height="14" rx="3" fill="#fbd5d5" stroke="#c0392b" stroke-width="1.5"/><text x="464" y="51" font-size="10.5" fill="#222">implicit: habit or memory</text>
+<path d="M16,70 H38" stroke="#a33" stroke-width="1.6" stroke-dasharray="5 3" fill="none"/><text x="44" y="74" font-size="10.5" fill="#222">failure or loop</text>
+<rect x="226" y="63" width="22" height="14" rx="3" fill="#fff" stroke="#333" stroke-width="1.5"/><rect x="229" y="66" width="16" height="8" rx="2" fill="none" stroke="#333" stroke-width="1"/><text x="254" y="74" font-size="10.5" fill="#222">double border: person decides</text>
+<path d="M436,70 H458" stroke="#888" stroke-width="1.4" stroke-dasharray="1.5 3" fill="none"/><text x="464" y="74" font-size="10.5" fill="#222">input of the state</text>
+<text x="16" y="96" font-size="10" fill="#555">A = board process. B = other state in the code. Same ids as PCB-STATE-MACHINE.md.</text>
+<rect x="8" y="112" width="624" height="136" rx="8" fill="#f5f6f8" stroke="#b9bec7" stroke-width="1"/>
+<text x="620" y="130" text-anchor="end" font-size="12" font-weight="700" fill="#44505f">DESIGN</text>
+<rect x="8" y="262" width="624" height="252" rx="8" fill="#f5f6f8" stroke="#b9bec7" stroke-width="1"/>
+<text x="620" y="280" text-anchor="end" font-size="12" font-weight="700" fill="#44505f">PARTS</text>
+<rect x="8" y="528" width="624" height="310" rx="8" fill="#f5f6f8" stroke="#b9bec7" stroke-width="1"/>
+<text x="620" y="546" text-anchor="end" font-size="12" font-weight="700" fill="#44505f">LAYOUT</text>
+<rect x="8" y="852" width="624" height="310" rx="8" fill="#f5f6f8" stroke="#b9bec7" stroke-width="1"/>
+<text x="620" y="870" text-anchor="end" font-size="12" font-weight="700" fill="#44505f">ROUTE</text>
+<rect x="8" y="1176" width="624" height="252" rx="8" fill="#f5f6f8" stroke="#b9bec7" stroke-width="1"/>
+<text x="620" y="1194" text-anchor="end" font-size="12" font-weight="700" fill="#44505f">GATE AND ADOPT</text>
+<rect x="8" y="1442" width="624" height="310" rx="8" fill="#f5f6f8" stroke="#b9bec7" stroke-width="1"/>
+<text x="620" y="1460" text-anchor="end" font-size="12" font-weight="700" fill="#44505f">FABRICATION</text>
+<path d="M235,180 V198" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M235,238 V290" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M235,330 V348" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M235,388 V406" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M235,446 V464" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M235,504 V556" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M235,596 V614" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M235,654 V672" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M235,712 V730" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M235,770 V788" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M235,920 V938" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M235,978 V996" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M235,1036 V1054" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M235,1244 V1262" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M235,1302 V1320" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M235,1360 V1378" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M235,1418 V1470" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M235,1510 V1528" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M235,1568 V1586" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M235,1626 V1644" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M235,1684 V1702" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<text transform="translate(99,1041) rotate(-90)" text-anchor="middle" font-size="9.5" fill="#333" paint-order="stroke" stroke="#f5f6f8" stroke-width="3">candidate</text>
+<path d="M120,808 H102 V1274 H120" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M120,1074 H102" stroke="#333" stroke-width="1.5" fill="none"/>
+<path d="M120,1132 H102" stroke="#333" stroke-width="1.5" fill="none"/>
+<text transform="translate(83,1117) rotate(-90)" text-anchor="middle" font-size="9.5" fill="#333" paint-order="stroke" stroke="#f5f6f8" stroke-width="3">adopt</text>
+<path d="M120,1340 H86 V894 H120" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<text x="303" y="608" font-size="9.5" fill="#a33" paint-order="stroke" stroke="#f5f6f8" stroke-width="3">stale</text>
+<path d="M295,614 V596" stroke="#a33" stroke-width="1.5" stroke-dasharray="5 3" fill="none" marker-end="url(#ahd)"/>
+<text x="303" y="1314" font-size="9.5" fill="#a33" paint-order="stroke" stroke="#f5f6f8" stroke-width="3">refuse</text>
+<path d="M295,1320 V1302" stroke="#a33" stroke-width="1.5" stroke-dasharray="5 3" fill="none" marker-end="url(#ahd)"/>
+<text transform="translate(51,631) rotate(-90)" text-anchor="middle" font-size="9.5" fill="#a33" paint-order="stroke" stroke="#f5f6f8" stroke-width="3">no seed</text>
+<path d="M120,686 H54 V576 H120" stroke="#a33" stroke-width="1.5" stroke-dasharray="5 3" fill="none" marker-end="url(#ahd)"/>
+<text transform="translate(67,802) rotate(-90)" text-anchor="middle" font-size="9.5" fill="#a33" paint-order="stroke" stroke="#f5f6f8" stroke-width="3">unplaced</text>
+<path d="M120,906 H70 V698 H120" stroke="#a33" stroke-width="1.5" stroke-dasharray="5 3" fill="none" marker-end="url(#ahd)"/>
+<text transform="translate(33,1155) rotate(-90)" text-anchor="middle" font-size="9.5" fill="#a33" paint-order="stroke" stroke="#f5f6f8" stroke-width="3">fail</text>
+<path d="M120,1294 H22 V1016 H120" stroke="#a33" stroke-width="1.5" stroke-dasharray="5 3" fill="none" marker-end="url(#ahd)"/>
+<text transform="translate(35,1387) rotate(-90)" text-anchor="middle" font-size="9.5" fill="#a33" paint-order="stroke" stroke="#f5f6f8" stroke-width="3">fail</text>
+<path d="M120,1490 H38 V1284 H120" stroke="#a33" stroke-width="1.5" stroke-dasharray="5 3" fill="none" marker-end="url(#ahd)"/>
+<path d="M350,1004 H388" stroke="#a33" stroke-width="1.5" stroke-dasharray="5 3" fill="none" marker-end="url(#ahd)"/>
+<path d="M388,1012 H350" stroke="#a33" stroke-width="1.5" stroke-dasharray="5 3" fill="none" marker-end="url(#ahd)"/>
+<path d="M388,1028 H369 V1132 H350" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<text x="374" y="1609" font-size="9.5" fill="#a33" paint-order="stroke" stroke="#f5f6f8" stroke-width="3">stock expired</text>
+<path d="M350,1598 H368 V1614 H350" stroke="#a33" stroke-width="1.5" stroke-dasharray="5 3" fill="none" marker-end="url(#ahd)"/>
+<path d="M350,1391 H388" stroke="#a33" stroke-width="1.5" stroke-dasharray="5 3" fill="none" marker-end="url(#ahd)"/>
+<path d="M388,1405 H350" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<path d="M350,160 H388" stroke="#888" stroke-width="1.4" stroke-dasharray="1.5 3" fill="none"/>
+<path d="M350,634 H388" stroke="#888" stroke-width="1.4" stroke-dasharray="1.5 3" fill="none"/>
+<path d="M350,1282 H388" stroke="#888" stroke-width="1.4" stroke-dasharray="1.5 3" fill="none"/>
+<path d="M350,1340 H388" stroke="#888" stroke-width="1.4" stroke-dasharray="1.5 3" fill="none"/>
+<rect x="120" y="140" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
+<text x="235" y="157" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A1 Requirements + spec</text>
+<text x="235" y="171" text-anchor="middle" font-size="10" fill="#333">enforced · contract or exemption</text>
+<rect x="388" y="140" width="232" height="40" rx="6" fill="#fff0c2" stroke="#c98a00" stroke-width="1.6"/>
+<text x="504" y="157" text-anchor="middle" font-size="12" font-weight="700" fill="#111">B1 Exemption</text>
+<text x="504" y="171" text-anchor="middle" font-size="10" fill="#333">recorded · skips contract or plan</text>
+<rect x="120" y="198" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
+<text x="235" y="215" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A2 Architecture</text>
+<text x="235" y="229" text-anchor="middle" font-size="10" fill="#333">enforced · build needs it</text>
+<rect x="120" y="290" width="230" height="40" rx="6" fill="#fff0c2" stroke="#c98a00" stroke-width="1.6"/>
+<text x="235" y="307" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A3 Part choice + records</text>
+<text x="235" y="321" text-anchor="middle" font-size="10" fill="#333">recorded · stops only with manifest</text>
+<rect x="120" y="348" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
+<text x="235" y="365" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A4 Schematic</text>
+<text x="235" y="379" text-anchor="middle" font-size="10" fill="#333">enforced · ERC + seal</text>
+<rect x="120" y="406" width="230" height="40" rx="6" fill="#fff0c2" stroke="#c98a00" stroke-width="1.6"/>
+<text x="235" y="423" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A5 BOM</text>
+<text x="235" y="437" text-anchor="middle" font-size="10" fill="#333">recorded · coverage in lab checks</text>
+<rect x="120" y="464" width="230" height="40" rx="6" fill="#fbd5d5" stroke="#c0392b" stroke-width="1.6"/>
+<text x="235" y="481" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A6 Stackup</text>
+<text x="235" y="495" text-anchor="middle" font-size="10" fill="#333">implicit · planned #1554</text>
+<rect x="120" y="556" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
+<text x="235" y="573" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A7 Layout plan written</text>
+<text x="235" y="587" text-anchor="middle" font-size="10" fill="#333">enforced · valid plan + seal</text>
+<rect x="120" y="614" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
+<rect x="123.5" y="617.5" width="223" height="33" rx="4" fill="none" stroke="#1f7a45" stroke-width="1.2"/>
+<text x="235" y="631" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A8 Layout plan approved</text>
+<text x="235" y="645" text-anchor="middle" font-size="10" fill="#333">enforced · person gate; stale on change</text>
+<rect x="388" y="614" width="232" height="40" rx="6" fill="#fbd5d5" stroke="#c0392b" stroke-width="1.6"/>
+<text x="504" y="631" text-anchor="middle" font-size="12" font-weight="700" fill="#111">B15 Approver identity</text>
+<text x="504" y="645" text-anchor="middle" font-size="10" fill="#333">implicit · any --by name; hook only</text>
+<rect x="120" y="672" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
+<text x="235" y="689" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A9 Placement seeds</text>
+<text x="235" y="703" text-anchor="middle" font-size="10" fill="#333">enforced · no legal seed: exit 3</text>
+<rect x="120" y="730" width="230" height="40" rx="6" fill="#fbd5d5" stroke="#c0392b" stroke-width="1.6"/>
+<text x="235" y="747" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A10 Seed choice</text>
+<text x="235" y="761" text-anchor="middle" font-size="10" fill="#333">implicit · no record of the choice</text>
+<rect x="120" y="788" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
+<text x="235" y="805" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A11 Place edit</text>
+<text x="235" y="819" text-anchor="middle" font-size="10" fill="#333">enforced · candidate run</text>
+<rect x="120" y="880" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
+<text x="235" y="897" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A12 Placed check</text>
+<text x="235" y="911" text-anchor="middle" font-size="10" fill="#333">enforced · else needs_place</text>
+<rect x="120" y="938" width="230" height="40" rx="6" fill="#fff0c2" stroke="#c98a00" stroke-width="1.6"/>
+<text x="235" y="955" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A13 RF route</text>
+<text x="235" y="969" text-anchor="middle" font-size="10" fill="#333">recorded · rf check is optional</text>
+<rect x="120" y="996" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
+<text x="235" y="1013" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A14 Staged route</text>
+<text x="235" y="1027" text-anchor="middle" font-size="10" fill="#333">enforced · no repeat when stuck</text>
+<rect x="388" y="996" width="232" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
+<text x="504" y="1013" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A15 Stuck + decision</text>
+<text x="504" y="1027" text-anchor="middle" font-size="10" fill="#333">enforced · move from a fixed list</text>
+<rect x="120" y="1054" width="230" height="40" rx="6" fill="#fff0c2" stroke="#c98a00" stroke-width="1.6"/>
+<text x="235" y="1071" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A17 Finishing edits</text>
+<text x="235" y="1085" text-anchor="middle" font-size="10" fill="#333">recorded · stitch, silk, test points</text>
+<rect x="388" y="1054" width="232" height="40" rx="6" fill="#fbd5d5" stroke="#c0392b" stroke-width="1.6"/>
+<text x="504" y="1071" text-anchor="middle" font-size="12" font-weight="700" fill="#111">B17 Route env</text>
+<text x="504" y="1085" text-anchor="middle" font-size="10" fill="#333">implicit · process.env not recorded</text>
+<rect x="120" y="1112" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
+<text x="235" y="1129" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A16 Diagnose + repair</text>
+<text x="235" y="1143" text-anchor="middle" font-size="10" fill="#333">enforced · bounded repair</text>
+<rect x="388" y="1112" width="232" height="40" rx="6" fill="#fbd5d5" stroke="#c0392b" stroke-width="1.6"/>
+<text x="504" y="1129" text-anchor="middle" font-size="12" font-weight="700" fill="#111">B18 Dispatch fallback</text>
+<text x="504" y="1143" text-anchor="middle" font-size="10" fill="#333">implicit · stderr text match</text>
+<rect x="120" y="1204" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
+<text x="235" y="1221" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A20 Build (pipeline)</text>
+<text x="235" y="1235" text-anchor="middle" font-size="10" fill="#333">enforced · alternative to place + route</text>
+<rect x="120" y="1262" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
+<text x="235" y="1279" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A18 Gate G3 / G4 / G5</text>
+<text x="235" y="1293" text-anchor="middle" font-size="10" fill="#333">enforced · checks of gate.json</text>
+<rect x="388" y="1262" width="232" height="40" rx="6" fill="#fbd5d5" stroke="#c0392b" stroke-width="1.6"/>
+<text x="504" y="1279" text-anchor="middle" font-size="12" font-weight="700" fill="#111">B16 Gate config</text>
+<text x="504" y="1293" text-anchor="middle" font-size="10" fill="#333">implicit · gate.json not sealed</text>
+<rect x="120" y="1320" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
+<text x="235" y="1337" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A19 Adopt</text>
+<text x="235" y="1351" text-anchor="middle" font-size="10" fill="#333">enforced · journal + new seal</text>
+<rect x="388" y="1320" width="232" height="40" rx="6" fill="#fbd5d5" stroke="#c0392b" stroke-width="1.6"/>
+<text x="504" y="1337" text-anchor="middle" font-size="12" font-weight="700" fill="#111">B14 Frozen board</text>
+<text x="504" y="1351" text-anchor="middle" font-size="10" fill="#333">implicit · FOCUS.md heading</text>
+<rect x="120" y="1378" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
+<text x="235" y="1395" text-anchor="middle" font-size="12" font-weight="700" fill="#111">B3 CAD seal</text>
+<text x="235" y="1409" text-anchor="middle" font-size="10" fill="#333">enforced · sealed / changed</text>
+<rect x="388" y="1378" width="232" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
+<rect x="391.5" y="1381.5" width="225" height="33" rx="4" fill="none" stroke="#1f7a45" stroke-width="1.2"/>
+<text x="504" y="1395" text-anchor="middle" font-size="12" font-weight="700" fill="#111">B4 Seal accept</text>
+<text x="504" y="1409" text-anchor="middle" font-size="10" fill="#333">enforced · person gate; hook only</text>
+<rect x="120" y="1470" width="230" height="40" rx="6" fill="#d7f0e0" stroke="#1f7a45" stroke-width="1.6"/>
+<text x="235" y="1487" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A21 Release candidate</text>
+<text x="235" y="1501" text-anchor="middle" font-size="10" fill="#333">enforced · fresh gate + release checks</text>
+<rect x="120" y="1528" width="230" height="40" rx="6" fill="#fbd5d5" stroke="#c0392b" stroke-width="1.6"/>
+<rect x="123.5" y="1531.5" width="223" height="33" rx="4" fill="none" stroke="#c0392b" stroke-width="1.2"/>
+<text x="235" y="1545" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A22 Release approval G5</text>
+<text x="235" y="1559" text-anchor="middle" font-size="10" fill="#333">implicit · person gate; no record</text>
+<rect x="120" y="1586" width="230" height="40" rx="6" fill="#fff0c2" stroke="#c98a00" stroke-width="1.6"/>
+<text x="235" y="1603" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A23 Readiness</text>
+<text x="235" y="1617" text-anchor="middle" font-size="10" fill="#333">recorded · stock receipt of the day</text>
+<rect x="120" y="1644" width="230" height="40" rx="6" fill="#fbd5d5" stroke="#c0392b" stroke-width="1.6"/>
+<text x="235" y="1661" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A24 Order + assembly</text>
+<text x="235" y="1675" text-anchor="middle" font-size="10" fill="#333">implicit · no record</text>
+<rect x="120" y="1702" width="230" height="40" rx="6" fill="#fff0c2" stroke="#c98a00" stroke-width="1.6"/>
+<text x="235" y="1719" text-anchor="middle" font-size="12" font-weight="700" fill="#111">A25 Bring-up</text>
+<text x="235" y="1733" text-anchor="middle" font-size="10" fill="#333">recorded · bench evidence</text>
+</svg>

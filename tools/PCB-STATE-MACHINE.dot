@@ -1,0 +1,99 @@
+// PCB state machine: idea to assembled board. Same spec as PCB-STATE-MACHINE.svg. Render: dot -Tsvg PCB-STATE-MACHINE.dot -o PCB-STATE-MACHINE.svg
+digraph pcb_state_machine {
+  rankdir=TB; nodesep=0.35; ranksep=0.35; fontname="Helvetica"; labelloc=t; label="PCB state machine: idea to assembled board";
+  node [shape=box style="rounded,filled" fontname="Helvetica" fontsize=11 margin="0.12,0.06"];
+  edge [fontname="Helvetica" fontsize=9 color="#333333"];
+  subgraph cluster_legend { label="Legend"; style=rounded; color="#b9bec7";
+    lg_e [label="enforced: a tool stops the run" fillcolor="#d7f0e0" color="#1f7a45"];
+    lg_r [label="recorded: noted, no stop" fillcolor="#fff0c2" color="#c98a00"];
+    lg_i [label="implicit: habit or memory" fillcolor="#fbd5d5" color="#c0392b"];
+    lg_p [label="double border: person decides" fillcolor="#ffffff" color="#333333" peripheries=2];
+    lg_e -> lg_r -> lg_i -> lg_p [style=invis]; }
+  subgraph cluster_design { label="Design"; style=rounded; color="#b9bec7"; bgcolor="#f5f6f8";
+    A1 [label="A1 Requirements + spec\nenforced · contract or exemption" fillcolor="#d7f0e0" color="#1f7a45"];
+    B1 [label="B1 Exemption\nrecorded · skips contract or plan" fillcolor="#fff0c2" color="#c98a00"];
+    A2 [label="A2 Architecture\nenforced · build needs it" fillcolor="#d7f0e0" color="#1f7a45"];
+  }
+  subgraph cluster_parts { label="Parts"; style=rounded; color="#b9bec7"; bgcolor="#f5f6f8";
+    A3 [label="A3 Part choice + records\nrecorded · stops only with manifest" fillcolor="#fff0c2" color="#c98a00"];
+    A4 [label="A4 Schematic\nenforced · ERC + seal" fillcolor="#d7f0e0" color="#1f7a45"];
+    A5 [label="A5 BOM\nrecorded · coverage in lab checks" fillcolor="#fff0c2" color="#c98a00"];
+    A6 [label="A6 Stackup\nimplicit · planned #1554" fillcolor="#fbd5d5" color="#c0392b"];
+  }
+  subgraph cluster_layout { label="Layout"; style=rounded; color="#b9bec7"; bgcolor="#f5f6f8";
+    A7 [label="A7 Layout plan written\nenforced · valid plan + seal" fillcolor="#d7f0e0" color="#1f7a45"];
+    A8 [label="A8 Layout plan approved\nenforced · person gate; stale on change" fillcolor="#d7f0e0" color="#1f7a45" peripheries=2];
+    B15 [label="B15 Approver identity\nimplicit · any --by name; hook only" fillcolor="#fbd5d5" color="#c0392b"];
+    A9 [label="A9 Placement seeds\nenforced · no legal seed: exit 3" fillcolor="#d7f0e0" color="#1f7a45"];
+    A10 [label="A10 Seed choice\nimplicit · no record of the choice" fillcolor="#fbd5d5" color="#c0392b"];
+    A11 [label="A11 Place edit\nenforced · candidate run" fillcolor="#d7f0e0" color="#1f7a45"];
+  }
+  subgraph cluster_route { label="Route"; style=rounded; color="#b9bec7"; bgcolor="#f5f6f8";
+    A12 [label="A12 Placed check\nenforced · else needs_place" fillcolor="#d7f0e0" color="#1f7a45"];
+    A13 [label="A13 RF route\nrecorded · rf check is optional" fillcolor="#fff0c2" color="#c98a00"];
+    A14 [label="A14 Staged route\nenforced · no repeat when stuck" fillcolor="#d7f0e0" color="#1f7a45"];
+    A15 [label="A15 Stuck + decision\nenforced · move from a fixed list" fillcolor="#d7f0e0" color="#1f7a45"];
+    A17 [label="A17 Finishing edits\nrecorded · stitch, silk, test points" fillcolor="#fff0c2" color="#c98a00"];
+    B17 [label="B17 Route env\nimplicit · process.env not recorded" fillcolor="#fbd5d5" color="#c0392b"];
+    A16 [label="A16 Diagnose + repair\nenforced · bounded repair" fillcolor="#d7f0e0" color="#1f7a45"];
+    B18 [label="B18 Dispatch fallback\nimplicit · stderr text match" fillcolor="#fbd5d5" color="#c0392b"];
+  }
+  subgraph cluster_gate { label="Gate and adopt"; style=rounded; color="#b9bec7"; bgcolor="#f5f6f8";
+    A20 [label="A20 Build (pipeline)\nenforced · alternative to place + route" fillcolor="#d7f0e0" color="#1f7a45"];
+    A18 [label="A18 Gate G3 / G4 / G5\nenforced · checks of gate.json" fillcolor="#d7f0e0" color="#1f7a45"];
+    B16 [label="B16 Gate config\nimplicit · gate.json not sealed" fillcolor="#fbd5d5" color="#c0392b"];
+    A19 [label="A19 Adopt\nenforced · journal + new seal" fillcolor="#d7f0e0" color="#1f7a45"];
+    B14 [label="B14 Frozen board\nimplicit · FOCUS.md heading" fillcolor="#fbd5d5" color="#c0392b"];
+    B3 [label="B3 CAD seal\nenforced · sealed / changed" fillcolor="#d7f0e0" color="#1f7a45"];
+    B4 [label="B4 Seal accept\nenforced · person gate; hook only" fillcolor="#d7f0e0" color="#1f7a45" peripheries=2];
+  }
+  subgraph cluster_fab { label="Fabrication"; style=rounded; color="#b9bec7"; bgcolor="#f5f6f8";
+    A21 [label="A21 Release candidate\nenforced · fresh gate + release checks" fillcolor="#d7f0e0" color="#1f7a45"];
+    A22 [label="A22 Release approval G5\nimplicit · person gate; no record" fillcolor="#fbd5d5" color="#c0392b" peripheries=2];
+    A23 [label="A23 Readiness\nrecorded · stock receipt of the day" fillcolor="#fff0c2" color="#c98a00"];
+    A24 [label="A24 Order + assembly\nimplicit · no record" fillcolor="#fbd5d5" color="#c0392b"];
+    A25 [label="A25 Bring-up\nrecorded · bench evidence" fillcolor="#fff0c2" color="#c98a00"];
+  }
+  A1 -> A2;
+  A2 -> A3;
+  A3 -> A4;
+  A4 -> A5;
+  A5 -> A6;
+  A6 -> A7;
+  A7 -> A8;
+  A8 -> A9;
+  A9 -> A10;
+  A10 -> A11;
+  A12 -> A13;
+  A13 -> A14;
+  A14 -> A17;
+  A20 -> A18;
+  A18 -> A19;
+  A19 -> B3;
+  B3 -> A21;
+  A21 -> A22;
+  A22 -> A23;
+  A23 -> A24;
+  A24 -> A25;
+  A11 -> A18 [label="candidate"];
+  A17 -> A18;
+  A16 -> A18;
+  A15 -> A16;
+  A19 -> A12 [label="adopt" constraint=false];
+  A14 -> A17;
+  A8 -> A7 [style=dashed color="#aa3333" fontcolor="#aa3333" label="stale" constraint=false];
+  A19 -> A18 [style=dashed color="#aa3333" fontcolor="#aa3333" label="refuse" constraint=false];
+  A9 -> A7 [style=dashed color="#aa3333" fontcolor="#aa3333" label="no seed" constraint=false];
+  A12 -> A9 [style=dashed color="#aa3333" fontcolor="#aa3333" label="unplaced" constraint=false];
+  A18 -> A14 [style=dashed color="#aa3333" fontcolor="#aa3333" label="fail" constraint=false];
+  A21 -> A18 [style=dashed color="#aa3333" fontcolor="#aa3333" label="fail" constraint=false];
+  A14 -> A15 [style=dashed color="#aa3333" fontcolor="#aa3333" label="stuck" constraint=false];
+  A15 -> A14 [style=dashed color="#aa3333" fontcolor="#aa3333" label="new inputs" constraint=false];
+  A23 -> A23 [style=dashed color="#aa3333" fontcolor="#aa3333" label="stock expired" constraint=false];
+  B3 -> B4 [style=dashed color="#aa3333" fontcolor="#aa3333" label="changed" constraint=false];
+  B4 -> B3 [label="accept" constraint=false];
+  B1 -> A1 [style=dotted arrowhead=none color="#888888" constraint=false];
+  B15 -> A8 [style=dotted arrowhead=none color="#888888" constraint=false];
+  B16 -> A18 [style=dotted arrowhead=none color="#888888" constraint=false];
+  B14 -> A19 [style=dotted arrowhead=none color="#888888" constraint=false];
+}
