@@ -224,8 +224,21 @@ export async function nextAction(rootPath: string, board: string, options: NextO
   if (options.designContract || isFile(defaultDesign)) {
     const path = options.designContract ?? defaultDesign, identifier = readObject<{ identity: { design_id: string } }>(path).identity.design_id;
     if (options.designContract && identifier !== board) stale('explicit design next subject must be its design_id');
-    return designNext(root, identifier, path, base, options);
+    const decision = await designNext(root, identifier, path, base, options);
+    return { ...decision, board_state: await boardState(root, identifier, base, options) };
   }
+  return boardNext(root, board, base, options, false);
+}
+
+/** The board facts of a board with a design contract. They do not replace the design decision. A design with no board has a state that says why. */
+async function boardState(root: string, board: string, base: string, options: NextOptions): Promise<Fields> {
+  try {
+    const { state, blocker, next_action, observed_run, evidence, readiness_verified } = await boardNext(root, board, base, options, true);
+    return { state, blocker, next_action, observed_run, evidence, readiness_verified };
+  } catch (error) { return { state: 'unavailable', cause: messageOf(error) }; }
+}
+
+async function boardNext(root: string, board: string, base: string, options: NextOptions, contract: boolean): Promise<Decision> {
   const context = plain<Context>(boardContext(root, board)), { cfg, pending } = observedConfig(root, board), checkMode = cfg.get('stage') === 'G5' ? '--fresh' : '--changed';
   const { selected, rejected } = latestRun(root, board, cfg.get('project') as string, base, options.readers);
   const missing = context.blockers.find(row => ['missing_native_input', 'missing_context_source'].includes(row.rule));
@@ -238,7 +251,7 @@ export async function nextAction(rootPath: string, board: string, options: NextO
   };
   const check = (code: string, message: string, details: Fields = {}) => finish('needs_check', code, message, 'check', ['check', board, checkMode, '--follow', '--json'], details);
   if (pending) return finish('blocked', 'pending_gate', 'Board has only a pending gate' + (missing ? '; required board input is missing: ' + missing.path : ''), 'inspect_required_source', ['context', board, '--json']);
-  if (designExemption(root, board) === null) return finish('blocked', 'design_contract_missing', 'Board has no design contract. A person must decide how this board continues', 'inspect_required_source', ['context', board, '--json']);
+  if (!contract && designExemption(root, board) === null) return finish('blocked', 'design_contract_missing', 'Board has no design contract. A person must decide how this board continues', 'inspect_required_source', ['context', board, '--json']);
   let selectedState: RunState | null = null;
   if (selected) {
     const { folder, manifest } = selected;

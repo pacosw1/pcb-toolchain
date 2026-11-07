@@ -11,7 +11,8 @@ import { evidenceFiles } from './pcb-evidence.ts';
 import { context as boardContext } from './pcb-workflow.ts';
 import { jsonDumps, PyError } from './py-compat.mjs';
 import { nextAction, verifyCurrentInputs } from './pcb-next.ts';
-import type { NextOptions } from './pcb-next.ts';
+import { STUCK_FILE } from './route-stuck.ts';
+import type { Decision, NextOptions } from './pcb-next.ts';
 
 function fixture(t: { after: (fn: () => void) => void }) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'pcb-next-'))), board = join(root, 'hardware-design/boards/X');
@@ -64,6 +65,46 @@ function fixture(t: { after: (fn: () => void) => void }) {
   }
   return { root, board, project, base, options, config, fingerprint, run, seal, engineering, probes: () => probes, next: () => nextAction(root, 'X', options) };
 }
+
+test('a board with a design contract also shows the seal, layout, stuck, adopt and release state', async t => {
+  const f = fixture(t);
+  atomicJson(join(f.root, 'hardware-design/registry/design-contracts/X.json'), { identity: { design_id: 'X' }, current_stage: 'requirements' });
+  const board = async () => { const decision = await f.next(); assert.equal(decision.blocker?.code, 'design_assessment_missing'); return decision.board_state as Decision; };
+  f.run('run-check');
+  const passed = await board();
+  assert.equal(passed.blocker?.code, 'release_evidence_missing');
+  assert.equal(passed.next_action?.kind, 'generate_release_candidate');
+  const candidate = f.run('run-edit', 'edit', 'passed', '2026-10-15T14:00:00Z');
+  const seen = await board();
+  assert.equal(seen.blocker?.code, 'candidate_not_adopted');
+  assert.equal(seen.next_action?.argv[1], 'adopt');
+  assert.equal((seen.observed_run as { evidence_dir: string }).evidence_dir, candidate);
+  const route = f.run('run-route', 'route', 'passed', '2026-10-15T15:00:00Z');
+  atomicJson(join(route, STUCK_FILE), { summary: ['stuck'], open_nets: ['N1'], blockers: { parts: ['U1'], rules: [], layers: [] }, failed_stage: null, repeat: 0 }); f.seal(route);
+  assert.equal((await board()).state, 'stuck');
+  rmSync(route, { recursive: true });
+  exemptBoard(f.root, 'X', 'no design contract needed in this fixture', {}, false);
+  assert.equal((await board()).blocker?.code, 'layout_plan_missing');
+  writeFileSync(f.project + '.kicad_sch', 'changed outside our tools');
+  assert.equal((await board()).blocker?.code, 'cad_changed');
+});
+
+test('a board with a contract and no exemption does not stop at design_contract_missing in the board state', async t => {
+  const f = fixture(t);
+  atomicJson(join(f.root, 'hardware-design/registry/design-contracts/X.json'), { identity: { design_id: 'X' }, current_stage: 'requirements' });
+  rmSync(join(f.root, 'hardware-design/registry/boards.json'));
+  assert.notEqual(((await f.next()).board_state as Decision).blocker?.code, 'design_contract_missing');
+});
+
+test('a contract with no board folder keeps its design decision and names why the board state is absent', async t => {
+  const f = fixture(t);
+  atomicJson(join(f.root, 'hardware-design/registry/design-contracts/X.json'), { identity: { design_id: 'X' }, current_stage: 'requirements' });
+  rmSync(join(f.board, 'gate.json'));
+  const decision = await f.next(), board = decision.board_state as { state: string; cause: string };
+  assert.equal(decision.blocker?.code, 'design_assessment_missing');
+  assert.equal(board.state, 'unavailable');
+  assert.ok(board.cause);
+});
 
 test('a board with no design contract and no exemption is blocked; a contract or an exemption is not', async t => {
   const f = fixture(t);

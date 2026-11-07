@@ -5,7 +5,7 @@ import { parseArgs, type ParseArgsOptionsConfig } from 'node:util';
 import { projectRoot } from './lib/project-root.mjs';
 import { compactTerminal, eventLine, events, explain, requestCancel, runDir, stageStatus, status, TERMINAL, RUN_ID, type Dict } from './lib/pcb-runs.ts';
 import { catalog, context } from './lib/pcb-workflow.ts';
-import { nextAction } from './lib/pcb-next.ts';
+import { nextAction, type Decision } from './lib/pcb-next.ts';
 import { nextReaders } from './lib/pcb-next-readers.ts';
 import { note, NOTE_KINDS, type NoteKind } from './lib/pcb-note.ts';
 import { summarize } from './lib/pcb-benchmark.ts';
@@ -14,6 +14,7 @@ import { acceptSeal, sealStatus, verifySeal } from './lib/cad-seal.ts';
 import { cycleCommand, CYCLE_OPTIONS } from './lib/pcb-cycle-cli.ts';
 import { get, item, jsonDumps, pyStr } from './lib/py-compat.mjs';
 
+const boardLine = (board: Decision | undefined): string => board ? `\nBoard: ${pyStr(board.state)}: ${pyStr(board.blocker?.message ?? board.cause)}${board.next_action ? `\nBoard next: ${board.next_action.command}` : ''}` : '';
 const usage = 'usage: pcb [--project DIR] {list,context,next,status,events,explain,cancel,note,benchmark,cycle,adopt,seal} [BOARD_OR_RUN_ID] [options]';
 
 export async function main(argv: string[]): Promise<number> {
@@ -75,7 +76,7 @@ export async function main(argv: string[]): Promise<number> {
       through: values.through as string | undefined,
     });
     if (values.json) console.log(jsonDumps(decision));
-    else console.log(`${pyStr(decision.blocker?.message)}\nNext: ${decision.next_action?.command}`);
+    else console.log(`${pyStr(decision.blocker?.message)}\nNext: ${decision.next_action?.command}${boardLine(decision.board_state as Decision | undefined)}`);
     return 0;
   }
   const folder = runDir(base, positionals[0]!);
