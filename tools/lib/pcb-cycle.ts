@@ -132,6 +132,17 @@ export async function attach(folder: string, runPath: string, options: Pick<Cycl
   }, options);
 }
 
+/** Unlink a run whose start failed. A run that has a result is evidence and stays: without this, a run that never
+ *  started has no result.json and blocks finish forever. */
+export async function detach(folder: string, runId: string, options: Pick<CycleOptions, 'withLock'>): Promise<void> {
+  await mutate(folder, data => {
+    const at = data.runs.findIndex(row => row.run_id === runId);
+    if (at < 0) throw new Error('run is not linked to this cycle');
+    if (existsSync(join(data.runs[at]!.folder, 'result.json'))) throw new Error('run has a result and stays in its cycle');
+    data.runs.splice(at, 1);
+  }, options);
+}
+
 function observeRun(link: RunLink, data: CycleRecord, options: CycleOptions): RunObservation {
   const folder = link.folder, row: RunObservation = { ...link, status: 'unobserved', elapsed_s: null, evidence_verified: false };
   if (!matchesHash(join(folder, 'run.json'), link.manifest_sha256)) throw new Error('linked run manifest changed');

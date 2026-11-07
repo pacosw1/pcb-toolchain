@@ -60,6 +60,18 @@ test('open reviews and wrong-board jobs prevent closure', async t => {
   assert.equal((await cycle.finish(f.folder, f.options)).stages.schematic.rework, 1);
 });
 
+test('detach removes a run that never got a result, and keeps one that did', async t => {
+  const f = fixture(t), stuck = f.run('stuck', 0, 1), sealed = f.run('sealed', 2, 1);
+  rmSync(join(stuck, 'result.json')); atomicJson(join(stuck, 'state.json'), { status: 'starting' });
+  await cycle.attach(f.folder, stuck, f.options); await cycle.attach(f.folder, sealed, f.options);
+  await assert.rejects(cycle.finish(f.folder, f.options), /verified terminal/);
+  await assert.rejects(cycle.detach(f.folder, 'run-sealed', f.options), /has a result/);
+  await assert.rejects(cycle.detach(f.folder, 'run-other', f.options), /not linked/);
+  await cycle.detach(f.folder, 'run-stuck', f.options);
+  assert.deepEqual(cycle.read(join(f.folder, 'cycle.json')).runs.map(row => row.run_id), ['run-sealed']);
+  assert.equal((await cycle.finish(f.folder, f.options)).status, 'recorded');
+});
+
 test('changed manifests and incomplete cleanup cannot be hidden by closure', async t => {
   const f = fixture(t), folder = f.run('changed', 0, 2);
   await cycle.attach(f.folder, folder, f.options);
