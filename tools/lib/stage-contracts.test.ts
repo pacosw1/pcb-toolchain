@@ -20,21 +20,24 @@ function run(t: TestContext, skip: string[] = []): { folder: string; evidence: R
   return { folder, evidence };
 }
 
-test('place, edit and route have a contract; a place edit is the place stage; other operations have none', () => {
+test('place, edit, route, build and repair have a contract; a place edit is the place stage; other operations have none', () => {
   assert.equal(contractKey({ operation: 'edit', kind: 'place' }), 'place');
   assert.equal(contractKey({ operation: 'edit', kind: 'route' }), 'edit');
   assert.equal(contractKey({ operation: 'edit' }), 'edit');
   assert.equal(contractKey({ operation: 'route' }), 'route');
-  for (const operation of ['build', 'repair', 'release', 'check']) assert.equal(contractKey({ operation }), null, operation);
+  assert.equal(contractKey({ operation: 'build' }), 'build');
+  assert.equal(contractKey({ operation: 'repair' }), 'repair');
+  for (const operation of ['release', 'check']) assert.equal(contractKey({ operation }), null, operation);
   assert.deepEqual(STAGE_CONTRACTS.route.outputs, ['images/top.svg', 'images/bottom.svg']);
-  assert.deepEqual(Object.keys(STAGE_CONTRACTS).sort(), ['edit', 'layout', 'place', 'route']);
+  assert.deepEqual(Object.keys(STAGE_CONTRACTS).sort(), ['build', 'edit', 'layout', 'place', 'repair', 'route']);
 });
 
 test('a run passes the contract when each declared file exists and its hash is in the sealed record', t => {
   const { folder, evidence } = run(t);
   for (const operation of ['route', 'edit']) assert.equal(contractProblem({ operation }, folder, evidence), null);
   assert.equal(contractProblem({ operation: 'edit', kind: 'place' }, folder, evidence), null);
-  assert.equal(contractProblem({ operation: 'build' }, folder, {}), null, 'no contract, no problem');
+  for (const operation of ['build', 'repair']) assert.equal(contractProblem({ operation }, folder, evidence), null, operation);
+  assert.equal(contractProblem({ operation: 'release' }, folder, {}), null, 'no contract, no problem');
 });
 
 test('a missing output, an output not in the sealed record and a changed output each fail and name the file', t => {
@@ -46,6 +49,8 @@ test('a missing output, an output not in the sealed record and a changed output 
   const changed = run(t);
   writeFileSync(join(changed.folder, 'images/top.svg'), 'other');
   assert.match(contractProblem({ operation: 'route' }, changed.folder, changed.evidence)!, /images\/top\.svg is not in the sealed run record/);
+  const noImages = run(t, ['images/top.svg', 'images/bottom.svg']);
+  for (const operation of ['build', 'repair']) assert.match(contractProblem({ operation }, noImages.folder, noImages.evidence)!, new RegExp(`${operation} stage output images/top\\.svg is missing`));
   const noInput = run(t, ['operation/source.json']);
   assert.match(contractProblem({ operation: 'route' }, noInput.folder, noInput.evidence)!, /route stage input operation\/source\.json is missing/);
 });

@@ -72,9 +72,9 @@ export async function designAdmission(root: string, folder: string, manifest: Op
   return report;
 }
 
-/** A run that places or routes needs an approved layout plan, or an exemption that writes one event. True when this stopped the run. */
+/** A run that builds, places or routes needs an approved layout plan, or an exemption that writes one event. True when this stopped the run. */
 export function layoutAdmission(root: string, folder: string, manifest: OperationManifest, emit: Emit): boolean {
-  if (!routesCopper(manifest) && !(manifest.operation === 'edit' && manifest.kind === 'place')) return false;
+  if (!routesCopper(manifest) && manifest.operation !== 'build' && !(manifest.operation === 'edit' && manifest.kind === 'place')) return false;
   const block = layoutGate(root, manifest.board, emit);
   if (!block) return false;
   atomicJson(join(folder, 'operation/result.json'), { status: 'failed', exit_code: 1, scope: 'layout_plan', operation: manifest.operation, blocker: block.code,

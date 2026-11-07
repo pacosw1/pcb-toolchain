@@ -307,7 +307,7 @@ when it does not agree with the staged or committed `cad-seal.json`.
 ## Layout plan
 
 Rule: a person approves a layout plan before `place` or `route` runs. The commands that stop without an approved
-plan are `tools/pcb place`, `route`, `repair` and `edit --kind place`. `check`, `build` and `release` do not stop.
+plan are `tools/pcb place`, `build`, `route`, `repair` and `edit --kind place`. `check` and `release` do not stop.
 
 `hardware-design/boards/BOARD/layout-plan.json` (schema `iot-lab.layout-plan.v1`) holds the `intents`
 (`{id, statement, rule_ids}`; each rule id exists in `placement-constraints.json`), the `route_plan` path (checked
@@ -340,8 +340,8 @@ decides it.
 
 ## Stage contracts
 
-`tools/lib/stage-contracts.ts` is the one table of what the stages `place` (an `edit --kind place`), `edit` and
-`route` need and write. A passed run of these stages draws its candidate: `images/top.svg` and `images/bottom.svg`
+`tools/lib/stage-contracts.ts` is the one table of what the stages `place` (an `edit --kind place`), `edit`,
+`route`, `build` and `repair` need and write. A passed run of these stages draws its candidate: `images/top.svg` and `images/bottom.svg`
 in the run folder (`kicad-cli pcb export svg`, with a white background rectangle added). No other program is used. The
 program comes from `KICAD_CLI`, or else the KiCad of the machine. If `kicad-cli` is missing or fails, the run fails and
 the cause names it. A run that failed before it had a board keeps its own cause.

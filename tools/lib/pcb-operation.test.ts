@@ -608,7 +608,7 @@ function layoutStop(root: string, operation: string, kind?: string) {
 test('layout admission stops a place or route run with no approved plan, and names the board and the command', t => {
   const root = project(t);
   exemptBoard(root, 'X', undefined, {}, false);
-  for (const [operation, kind] of [['edit', 'place'], ['edit', 'route'], ['route', undefined], ['repair', undefined]] as const) {
+  for (const [operation, kind] of [['edit', 'place'], ['edit', 'route'], ['route', undefined], ['repair', undefined], ['build', undefined]] as const) {
     const { stopped, events, result } = layoutStop(root, operation, kind);
     assert.equal(stopped, true, `${operation} ${kind}`);
     assert.deepEqual(events, []);
@@ -618,10 +618,10 @@ test('layout admission stops a place or route run with no approved plan, and nam
   }
 });
 
-test('layout admission does not gate a run that neither places nor routes', t => {
+test('layout admission does not gate a run that neither builds, places nor routes', t => {
   const root = project(t);
   exemptBoard(root, 'X', undefined, {}, false);
-  for (const [operation, kind] of [['build', undefined], ['release', undefined], ['check', undefined]] as const) {
+  for (const [operation, kind] of [['release', undefined], ['check', undefined]] as const) {
     assert.deepEqual(layoutStop(root, operation, kind), { stopped: false, events: [], result: null }, operation);
   }
 });
