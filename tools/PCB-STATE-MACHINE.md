@@ -195,6 +195,7 @@ Count: 11 `stops`, 10 `partial`, 1 `silent`, of 22 rows.
 "Today" holds the proof from the audit, before the machine. "Should" holds the change that the process needs.
 Rows T5, T6, T10, T12, T13, T14, T17 and T19 have no kind in `pcb-transitions.json`: a kind with no effect left the table. The reader of each evidence class finds these changes.
 T21 is the kind `defect_closed`: it ends a `fab_defect` or a `bringup_failure` with the decision `new_revision`, `use_as_is` or `reorder`.
+A layout approval holds `change_event`, the last event at the approval. A later `rule_change` makes it stale (`rulesChangedSince`). The rules group has no hash in the approval: a change of any rule file or of `gate.json`, an `about` text too, is a rule change.
 T22 is the kind `cad_moved`, role `move`. The event stays in its state, and only the paths change. A layout approval compares `schematic_sha256`, and that hash holds paths: `movedSince` accepts the old hash when only `cad_moved` events follow it and the log has no unrecorded change.
 The next four columns are the required result: the earliest state, the invalid states, the evidence that survives, and who approves again.
 "Person" means a person who is not the agent that made the change. Today only a hook enforces this (D1).

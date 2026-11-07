@@ -137,6 +137,14 @@ export function withdrawnBy(root: string, board: string, target: 'layout' | 'rel
   } catch (error) { return `the change log cannot be read: ${(error as Error).message}`; }
 }
 
+/** A stale line when an event of the rules group that redoes the layout approval comes after the event AFTER. An approval from before that key has no event, so each such event counts. */
+export function rulesChangedSince(root: string, board: string, after: string | undefined, table: TransitionTable = TABLE): string | null {
+  try {
+    const event = readChanges(root, board, table).findLast(row => 'rules' in row.groups && row.id > (after ?? '') && table.kinds.find(kind => kind.id === row.kind)!.redo.includes('layout_approval'));
+    return event ? `the rules changed by ${event.id} after the approval: ${event.reason}` : null;
+  } catch (error) { return `the change log cannot be read: ${(error as Error).message}`; }
+}
+
 /** The hash that names the current approval of TARGET. */
 function approvalSha256(root: string, board: string, target: string): string {
   if (target === 'release' && existsSync(releaseApprovalPath(root, board))) return sha256File(releaseApprovalPath(root, board));

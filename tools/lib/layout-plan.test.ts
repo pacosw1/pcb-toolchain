@@ -105,7 +105,7 @@ test('a plan without approval is not approved, and approval records the person, 
   assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved');
   assert.equal(layoutGate(f.root, 'X', () => {}), null);
   const saved = JSON.parse(readFileSync(f.path, 'utf8')) as { approval: Row; intents: unknown };
-  assert.deepEqual(saved.approval, { by: 'Ana', reason: 'reviewed the edge intents', rules_sha256: sha256File(f.rules), route_plan_sha256: sha256File(f.route),
+  assert.deepEqual(saved.approval, { by: 'Ana', reason: 'reviewed the edge intents', change_event: 'c-0001', rules_sha256: sha256File(f.rules), route_plan_sha256: sha256File(f.route),
     schematic_sha256: schematicSha256(f.root, 'X'), board_shape_sha256: boardShapeSha256(f.root, 'X'), image: COPY_PNG, image_sha256: sha256File(imageOf(f.root)) });
   assert.equal(layoutPlanStatus(f.root, 'X').image, COPY_PNG);
   assert.equal(sha256File(join(f.root, COPY_PNG)), sha256File(imageOf(f.root)), 'the board folder holds a copy of the image');
@@ -182,6 +182,22 @@ test('cad_moved keeps the approval of the same bytes, and a later edit makes it 
   assert.deepEqual(layoutPlanStatus(f.root, 'X').stale, ['the schematic changed since the approval']);
   recordChange(f.root, 'X', { kind: 'net_change', reason: 'edit', by: 'Ana', refs: [] });
   assert.deepEqual(layoutPlanStatus(f.root, 'X').stale, ['the schematic changed since the approval']);
+});
+
+test('a recorded rule change leaves the approval stale until a person approves again', async t => {
+  const f = fixture(t);
+  await approve(f.root);
+  writeFileSync(join(f.folder, 'gate.json'), JSON.stringify({ project: 'X', checks: { erc: true } }));
+  reseal(f.root, 'X', { tool: 'fixture', run_id: null });
+  recordChange(f.root, 'X', { kind: 'rule_change', reason: 'erc on', by: 'Ana', refs: [] });
+  assert.deepEqual(layoutPlanStatus(f.root, 'X').stale, ['the rules changed by c-0002 after the approval: erc on']);
+  assert.equal(layoutGate(f.root, 'X', () => {})!.code, 'layout_plan_stale');
+  await approve(f.root);
+  assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved', 'the same person and reason may approve again');
+  const plan = JSON.parse(readFileSync(f.path, 'utf8'));
+  delete plan.approval.change_event;
+  writeFileSync(f.path, JSON.stringify(plan));
+  assert.equal(layoutPlanStatus(f.root, 'X').state, 'stale', 'an approval with no event comes before each rule change');
 });
 
 test('a change of the board layout alone keeps the approval', async t => {

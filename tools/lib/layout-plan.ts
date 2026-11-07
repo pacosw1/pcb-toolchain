@@ -6,7 +6,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { boardShapeSha256 } from './board-shape.ts';
 import { isCanonicalRoot, schematicSha256, verifySeal, withSealLock } from './cad-seal.ts';
-import { changeBlock, movedSince, withdrawnBy, type ChangeBlock } from './change-log.ts';
+import { changeBlock, movedSince, readChanges, rulesChangedSince, withdrawnBy, type ChangeBlock } from './change-log.ts';
 import { sha256Text } from './fingerprint.ts';
 import { registryExemption } from './design-exemption.ts';
 import { atomicJson, readObject, sha256File } from './json-file.ts';
@@ -22,6 +22,8 @@ const INTENT_KEYS = ['id', 'statement', 'rule_ids'];
 const APPROVAL_KEYS = ['by', 'reason', 'rules_sha256', 'route_plan_sha256', 'schematic_sha256', 'image', 'image_sha256'];
 // An approval from before this key has no binding of the board. It is stale, not invalid: a person approves it again.
 const SHAPE_KEY = 'board_shape_sha256';
+// The last event of the change log at the approval. The rules group has no hash here: a later rule event makes the approval stale.
+const EVENT_KEY = 'change_event';
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 // An SVG may start with a BOM, an XML declaration, comments and a doctype. The first element must be svg.
 const SVG_START = /^﻿?\s*(?:<\?xml[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!DOCTYPE[^>]*>\s*)?<svg[\s/>]/;
@@ -29,7 +31,7 @@ const IMAGE_TYPES = ['png', 'svg'];
 const FEATURES = new Set(Object.keys((readObject<{ features?: object }>(fileURLToPath(new URL('../route-features.json', import.meta.url))).features) ?? {}));
 
 type Row = Record<string, unknown>;
-export interface Approval { by: string; reason: string; rules_sha256: string; route_plan_sha256: string; schematic_sha256: string; board_shape_sha256?: string; image: string; image_sha256: string }
+export interface Approval { by: string; reason: string; rules_sha256: string; route_plan_sha256: string; schematic_sha256: string; board_shape_sha256?: string; change_event?: string; image: string; image_sha256: string }
 export interface LayoutStatus {
   board: string; state: 'approved' | 'exempt' | 'missing' | 'invalid' | 'unapproved' | 'stale'; path: string;
   problems: string[]; stale: string[]; approval: Approval | null; image: string | null; exempt_reason?: string;
@@ -109,7 +111,7 @@ function inspect(root: string, board: string, plan: Row, boardNets: NetSource | 
 
   const approval = plan.approval;
   if (approval !== null && approval !== undefined) {
-    if (!isObject(approval) || Object.keys(approval).filter(key => key !== SHAPE_KEY).length !== APPROVAL_KEYS.length || APPROVAL_KEYS.some(key => !text(approval[key])) || (SHAPE_KEY in approval && !text(approval[SHAPE_KEY]))) problems.push('approval needs by, reason, rules_sha256, route_plan_sha256, schematic_sha256, board_shape_sha256, image and image_sha256');
+    if (!isObject(approval) || Object.keys(approval).filter(key => key !== SHAPE_KEY && key !== EVENT_KEY).length !== APPROVAL_KEYS.length || APPROVAL_KEYS.some(key => !text(approval[key])) || [SHAPE_KEY, EVENT_KEY].some(key => key in approval && !text(approval[key]))) problems.push('approval needs by, reason, rules_sha256, route_plan_sha256, schematic_sha256, board_shape_sha256, image and image_sha256');
     else { out.approval = approval as unknown as Approval; out.imageSha = imageHash(root, out.approval.image); }
   }
   return out;
@@ -142,7 +144,7 @@ export function layoutPlanStatus(root: string, board: string): LayoutStatus {
     ...(found.approval.route_plan_sha256 === found.routeSha ? [] : ['the route plan changed since the approval']),
     ...(found.approval.schematic_sha256 === schematicSha256(root, board) || movedSince(root, board, 'schematic', found.approval.schematic_sha256) ? [] : ['the schematic changed since the approval']),
     ...shapeProblems(root, board, found.approval.board_shape_sha256),
-    ...[withdrawnBy(root, board, 'layout', sha256Text(JSON.stringify(found.approval)))].filter(line => line !== null),
+    ...[withdrawnBy(root, board, 'layout', sha256Text(JSON.stringify(found.approval))), rulesChangedSince(root, board, found.approval.change_event)].filter(line => line !== null),
     ...(found.imageSha === null ? ['the approved image is missing'] : found.approval.image_sha256 === found.imageSha ? [] : ['the approved image changed since the approval']),
   ];
   return status(stale.length ? 'stale' : 'approved', { stale, approval: found.approval });
@@ -200,7 +202,8 @@ export async function approveLayoutPlan(root: string, board: string, by: string,
     const plan = readPlan(path), found = inspect(root, board, plan, boardNets);
     if (found.problems.length) throw new Error(`The layout plan of ${board} is not valid:\n  ${found.problems.join('\n  ')}`);
     const seen = approvedImage(root, board, imageFile);
-    const approval: Approval = { by: by.trim(), reason: reason.trim(), rules_sha256: found.rulesSha!, route_plan_sha256: found.routeSha!, schematic_sha256: schematicSha256(root, board), board_shape_sha256: boardShapeSha256(root, board), image: seen.image, image_sha256: seen.sha256 };
+    const event = readChanges(root, board).at(-1)?.id;
+    const approval: Approval = { by: by.trim(), reason: reason.trim(), rules_sha256: found.rulesSha!, route_plan_sha256: found.routeSha!, schematic_sha256: schematicSha256(root, board), board_shape_sha256: boardShapeSha256(root, board), ...(event ? { [EVENT_KEY]: event } : {}), image: seen.image, image_sha256: seen.sha256 };
     atomicJson(path, { ...plan, approval });
     // One copy only: the copy of the other type belonged to an earlier approval.
     for (const extension of IMAGE_TYPES) if (join(root, seen.image) !== imageCopyPath(root, board, extension)) rmSync(imageCopyPath(root, board, extension), { force: true });
