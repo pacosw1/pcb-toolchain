@@ -354,6 +354,8 @@ program comes from `KICAD_CLI`, or else the KiCad of the machine. If `kicad-cli`
 the cause names it. A run that failed before it had a board keeps its own cause.
 The sealed run record (`evidence_sha256`) binds the images. A passed run whose declared file is missing, or is not in
 that record, is sealed as `error` with the file named.
+`pcb adopt` and `pcb next` read the same table. `adopt` refuses a run whose contract files are missing or unsealed. `next` marks
+such a run as not current, and for a run that waits for adoption it shows the image paths in `blocker.images`.
 
 ## Release, blocks and measurement
 

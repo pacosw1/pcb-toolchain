@@ -46,7 +46,7 @@ Build (A20) is another path to a candidate: a pipeline script can make the whole
 | A16 Diagnose and repair | Native evidence supports one bounded repair. | Diagnosis, repair plan, optional `--from-run`. | Repair candidate with images. | A18 gate. [`repair guard` failure; state `needs_diagnosis`] | `lib/pcb-candidate-run.ts:132-138`. `lib/pcb-next.ts:294-298`, `:336`. `lib/pcb-candidate-screens.ts:76-83`. | `enforced` |
 | A17 Finishing edits (stitching, silk, test points, courtyards) | The seal is intact. | Routed board, options such as `--skip`, `--via`, `--through-pours`. | Edited board. Seal log line. Stitch report with the options. | A18. [a failed net names `FAILED` and exits 1; `NOROOM` nets are listed] | `stitch_all.ts:34`, `:69`. `lib/cad-seal.ts:157-169` (`sealedWrite`). `lib/pcbtool-write.ts:187`, `:447`. No stage and no run record. | `recorded` |
 | A18 Gate (G3, G4, G5) | The seal is intact. The checks of `gate.json` are valid. | Board CAD, `gate.json`, check data files. | `gate/result.json`, `findings.json`, ERC and DRC reports with hashes. | A19, A20 or A21. [`gate_finding`; `operation_failed`; `evidence_not_current`] | `lib/gate-core.mjs:35-39`, `:47-58`. `lib/pcb-candidate-run.ts:244-258`. `lib/pcb-next.ts:316-319`, `:329-341`. The gate configuration is not sealed (D2). | `enforced` |
-| A19 Adopt | A passed, settled candidate from this checkout. Seal intact. | Candidate run, `--baseline` and `--defect` for a frozen board. | Canonical PCB replaced. Backup. `adoption.json`. New seal. | A12 or A21. [refuse: stale inputs, changed identity, no defect; interrupted adoption keeps a journal] | `lib/pcb-candidate.ts:151-165`, `:195-213`, `:215-255`, `:257-270`. `lib/pcb-next.ts:344-345`. It does not read the stage contract (D6). | `enforced` |
+| A19 Adopt | A passed, settled candidate from this checkout. Seal intact. | Candidate run, `--baseline` and `--defect` for a frozen board. | Canonical PCB replaced. Backup. `adoption.json`. New seal. | A12 or A21. [refuse: stale inputs, changed identity, no defect; interrupted adoption keeps a journal] | `lib/pcb-candidate.ts:151-165`, `:195-213`, `:215-255`, `:257-270`. `lib/pcb-next.ts:344-345`. `checkAdoptable` calls `contractProblem`; `next` shows the image paths. | `enforced` |
 | A20 Build (pipeline) | Design stage `architecture`. Approved plan. Seal intact. | The `pipeline` script of `gate.json`. | Candidate with images. | A18 gate. [failed run] | `lib/pcb-workflow.ts:236-240`. `lib/pcb-action.ts:31`. `lib/pcb-candidate-screens.ts:76-83`. `lib/stage-contracts.ts:17`. | `enforced` |
 | A21 Release candidate | Design stage `routing`. Fresh gate. Board checks pass. | Board, release recipe in `gate.json`. | Staged Gerber, BOM, CPL. `release-manifest.json`. File `VERIFIED`. | A23. [`FAIL: release stopped`, evidence kept; destination exists] | `fab-workflow.sh:16-71`. `lib/pcb-action.ts:30`. `check-release-gate.mjs:21-24`. `check-release-fab.mjs:12-26`. `publish-release.mjs:32-46`. | `enforced` |
 | A22 Release approval G5 (person gate) | None. | A person reviews the candidate. | None. The manifest says `g5_ready: false`. | A23. [none] | None. `check-release-fab.mjs:23` and `lib/release-readiness.mjs:122` write `false` always. | `implicit` |
@@ -121,7 +121,7 @@ A run that is not finished gives the state `observe` first.
 
 The list is sorted by the possible loss. The task numbers are the findings of CIP task #1555.
 Finding 1 (frozen board) is skipped on purpose: the lab removed `FOCUS.md`, so no board can be frozen.
-Findings 3, 4, 6, 7 and 11 are fixed in the code and are not listed.
+Findings 3, 4, 6, 7, 10 and 11 are fixed in the code and are not listed.
 
 | No. | Implicit state | Loss it can cause | Smallest enforcement |
 |---|---|---|---|
@@ -130,13 +130,12 @@ Findings 3, 4, 6, 7 and 11 are fixed in the code and are not listed.
 | D3 | A22 Release approval G5 and A24 Order | A person orders boards without a recorded approval. Nobody can show what the person saw. The manifest always says `g5_ready: false`. | Add a release approval record, like the layout approval: name, reason, hash of the release manifest. `readiness` checks it. |
 | D4 | A6 Stackup (planned, #1554) | The layer count and the layer roles are chosen by habit. A wrong choice shows only after fabrication, as a wrong impedance or as false plane gaps. | Add the stage of #1554: a data file with layers and roles. The layout plan and the route plan must agree with it. |
 | D5 | B17 Route environment settings | Two runs with the same recorded inputs give different routes. A trial cannot be repeated. (#1555 finding 8) | Remove these keys in `workEnvironment`. Take features only from `gate.json` `route_features` or the route plan. |
-| D6 | Adopt and `next` skip the stage contract | A run sealed by an older toolchain, with no images, can be adopted. `next` shows no image path to the person. (#1555 finding 10) | Call `contractProblem` in `checkAdoptable` and in the candidate branch of `next`. Print the image paths in `next`. |
 | D7 | B18 Route dispatch fallback | An error after the daemon took the job matches the rule. A local route runs while the daemon job also runs. Two results exist. (#1555 finding 9) | The client uses a distinct exit code only when it proved that nothing was sent. The dispatch matches only that code. |
 | D8 | A10 Placement seed choice | The reason for the chosen seed and the rejected seeds is lost. A new call replaces the specs. (#1555 finding 12) | Write `.gate/place/BOARD-candidates.json` with the table and the spec hashes. The place edit records whether its spec hash is in the table. |
 | D9 | A13 RF route order | RF nets route after other nets and lose their clear paths. The gate finds the loss late. | A check in the layout plan approval: the first route stage holds all nets of `rf-lines.json`. |
 | D10 | B14 Frozen board (skipped on purpose) | `pcb adopt` overwrites a frozen board with no baseline run. No board can be frozen now. (#1555 finding 1) | A `frozen` field in the registry with a reason. Fail closed when `FOCUS.md` has a Frozen heading that the registry does not list. |
 
-Top five by possible loss: D1, D2, D3, D4, D6.
+Top four by possible loss: D1, D2, D3, D4.
 
 ## E. Count of states
 

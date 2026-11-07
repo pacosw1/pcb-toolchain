@@ -21,6 +21,7 @@ import { boardConfig, context, sha } from './pcb-workflow.ts';
 import { PyError } from './py-compat.mjs';
 import { isFile, isRelativeTo, joinPath, pathExists, relativeTo, resolvePath, withSuffix } from './py-path.ts';
 import { type Dict, sameValue } from './py-values.ts';
+import { contractProblem } from './stage-contracts.ts';
 
 const VERIFY_S = 90;
 const CLAIM_WAIT_S = 5;   // settling and claiming a journal takes milliseconds: a longer wait means something is wrong
@@ -153,6 +154,8 @@ function checkAdoptable(root: string, folder: string, manifest: RunManifest, ope
   const cleanup = (result.cleanup ?? {}) as Dict;
   if (resolvePath(manifest.root) !== root || result.status !== 'passed' || cleanup.complete !== true) fail('only a successful, settled candidate from this checkout can be adopted');
   requireBound(result, ['operation/result.json', 'operation/source.json', 'gate/result.json', 'gate/findings.json']);
+  const broken = contractProblem({ operation: manifest.operation ?? '', kind: manifest.kind as string | undefined }, folder, result.evidence_sha256 as Record<string, string>);
+  if (broken) fail(`stage contract not met: ${broken}`);
   if (operation.candidate_verified !== true || operation.identity_preserved !== true || !noProtectedChanges(operation)) fail('candidate changes protected design identity or lacks full gate verification');
   const candidate = resolvePath(operation.candidate as string);
   if (candidate !== nativeBoard(joinPath(folder, 'workspace'), manifest.board) || operation.candidate_sha256 !== sha(candidate)) fail('candidate does not match the verified native board');

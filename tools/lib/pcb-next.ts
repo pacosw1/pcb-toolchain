@@ -18,6 +18,7 @@ import { moveArgs, nextMove, NOTHING_REVIEWED, reviewedFrom } from './route-move
 import type { Move, Reviewed } from './route-moves.ts';
 import { STUCK_FILE } from './route-stuck.ts';
 import type { StuckReport } from './route-stuck.ts';
+import { STAGE_CONTRACTS, contractKey, contractProblem } from './stage-contracts.ts';
 import { timestamp } from './timing.ts';
 import type { ObservationReport, RunState } from './pcb-cycle.ts';
 
@@ -30,7 +31,7 @@ const ENGINEERING = new Set(['parts', 'placement', 'routing', 'schematic']);
 export interface Manifest {
   run_id: string; root: string; board?: string; operation?: string; project?: string | null; created_at: string;
   arguments?: string[]; from_run?: { folder: string; result_sha256: string }; gate_config_sha256?: string; router?: string;
-  design_contract?: { path: string; sha256: string }; design_stage?: string;
+  design_contract?: { path: string; sha256: string }; design_stage?: string; kind?: string;
 }
 export interface Receipt extends Fields {
   status: string; evidence_sha256: Record<string, string>; cause?: string; input_sha256?: string;
@@ -341,8 +342,11 @@ export async function nextAction(rootPath: string, board: string, options: NextO
     if (raw.exit !== 0 || result.status !== 'passed') return finish('blocked', 'operation_failed', result.cause ?? 'Operation did not pass after its native gate', 'inspect', explain, { evidence: { path: join(folder, 'operation', operation + '.log') } });
     if (CANDIDATE.has(operation)) {
       if (!result.candidate_verified || !result.identity_preserved) stale('candidate lacks verified design identity and gate evidence');
-      if (context.frozen) return finish('review', 'frozen_candidate_needs_named_defect', 'Frozen-board adoption requires a current failed baseline and exact defect ID', 'inspect_candidate', explain, { evidence: { path: join(folder, 'operation/result.json') }, required_inputs: ['baseline_run_id', 'finding_id'] });
-      return finish('review', 'candidate_not_adopted', 'Verified isolated candidate has not changed canonical CAD', 'explicit_adoption', ['adopt', basename(folder), '--json'], { evidence: { path: join(folder, 'operation/result.json') }, mutates_cad: true });
+      const stage = { operation, kind: manifest.kind }, broken = contractProblem(stage, folder, result.evidence_sha256);
+      if (broken) stale(`stage contract not met: ${broken}`);
+      const images = STAGE_CONTRACTS[contractKey(stage)!].outputs.map(name => join(folder, name));   // the person looks at these before adoption
+      if (context.frozen) return finish('review', 'frozen_candidate_needs_named_defect', 'Frozen-board adoption requires a current failed baseline and exact defect ID', 'inspect_candidate', explain, { evidence: { path: join(folder, 'operation/result.json') }, required_inputs: ['baseline_run_id', 'finding_id'], images });
+      return finish('review', 'candidate_not_adopted', 'Verified isolated candidate has not changed canonical CAD', 'explicit_adoption', ['adopt', basename(folder), '--json'], { evidence: { path: join(folder, 'operation/result.json') }, mutates_cad: true, images });
     }
     if (operation === 'release') return finish('needs_review', 'assembly_readiness_unverified', 'Fabrication candidate does not establish stock, assembly orientation or order readiness', 'readiness', ['readiness', '--json', board, join(folder, 'candidate')], { evidence: { path: join(folder, 'candidate/release-manifest.json') } });
     if (verified.release_supported) return finish('needs_release', 'release_evidence_missing', 'Configured checks passed; fabrication and assembly evidence remain separate', 'generate_release_candidate', ['release', board, '--follow', '--json'], { evidence: { path: join(gateDir, 'result.json') } });
