@@ -369,3 +369,30 @@ test("a complete last frame without its newline is read once the attempt has end
     f.cleanup();
   }
 });
+test("a failed verdict append after an unterminated last frame is retried on the next poll", async () => {
+  const f = fixture();
+  try {
+    f.write([progress(110)]);
+    fs.appendFileSync(path.join(f.out, f.stem + ".ndjson"), JSON.stringify(progress(120)));
+    Object.assign(f.jobs[0].attempts[0], { endedAt: new Date(200).toISOString() });
+    let failVerdict = true;
+    const reader = new LiveJobs(() => f.jobs, {
+      importBoard: (b, s) => f.live.importBoard(b, s),
+      append: (events) => {
+        if (failVerdict && events.some((e) => e.kind === "run.finished")) {
+          failVerdict = false;
+          throw Error("temporary transport failure");
+        }
+        return f.live.journal.append(events);
+      },
+    });
+    await reader.poll();
+    await reader.poll();
+    await reader.poll();
+    assert.equal(reader.settled(), true);
+    const state = f.live.journal.stateAt(f.live.journal.list()[0].runId);
+    assert.equal(state.seq, 5, "started, snapshot, two progress frames, finished");
+  } finally {
+    f.cleanup();
+  }
+});

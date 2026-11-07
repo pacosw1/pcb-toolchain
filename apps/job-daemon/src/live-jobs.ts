@@ -286,7 +286,8 @@ export class LiveJobs {
           if (!this.stopped) await this.sink.append(batch);
           c.line = lineNumber;
           c.time = time;
-          c.offset = offset;
+          // A last frame without its newline has no byte to skip: stop at the bytes that were read.
+          c.offset = Math.min(offset, c.offset + count);
         }
         if (c.offset < stat.size && !(attempt.endedAt && end < 0)) return;
       } finally {
