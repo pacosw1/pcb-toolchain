@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,readdirSync} from 'node:fs';
+import {existsSync,mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,readdirSync,utimesSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {checkInputs,checkKey,restoreCheck,storeCheck} from './check-cache.mjs';
@@ -16,6 +16,14 @@ function fixture(t) {
  const metrics={erc_errors:0,erc_warnings:0};const cache=join(root,'cache'),evidence=join(root,'evidence');
  return {root,put,key,metrics,cache,evidence};
 }
+test('old transient cache directories are swept, a recent one is kept',t=>{
+ const {key,metrics,cache,evidence}=fixture(t);const parent=join(cache,'erc');mkdirSync(parent,{recursive:true});
+ const old=join(parent,'.pending-old'),recent=join(parent,'.pending-new'),stale=join(parent,'.stale-old');
+ for(const p of [old,recent,stale]) mkdirSync(p);
+ const past=new Date(Date.now()-60*60*1000);utimesSync(old,past,past);utimesSync(stale,past,past);
+ assert.equal(storeCheck(cache,'erc',key(),metrics,evidence).stored,true);
+ assert.equal(existsSync(old),false);assert.equal(existsSync(stale),false);assert.equal(existsSync(recent),true);
+});
 test('cache restores completed findings, with matching artifact hashes and inputs',t=>{
  const {root,put,key,metrics,cache,evidence}=fixture(t);const first=key();
  assert.equal(storeCheck(cache,'erc',first,metrics,evidence).stored,true);

@@ -12,7 +12,7 @@
 // reader needs release-manifest.json, so it is blocked there. A crash between the steps leaves that empty directory and
 // the whole stage: nothing is lost and publishing stays refused until a person runs rmdir DESTINATION, which
 // cannot remove a published candidate.
-import {lstatSync, mkdirSync, renameSync, rmdirSync} from 'node:fs';
+import {lstatSync, mkdirSync, readdirSync, renameSync, rmdirSync, statSync} from 'node:fs';
 import {eprint, pyRepr} from './lib/py-compat.mjs';
 
 const TEXT = {ENOENT: 'No such file or directory', EEXIST: 'File exists', ENOTDIR: 'Not a directory', EISDIR: 'Is a directory',
@@ -20,9 +20,26 @@ const TEXT = {ENOENT: 'No such file or directory', EEXIST: 'File exists', ENOTDI
   EPERM: 'Operation not permitted', EROFS: 'Read-only file system', ENOSPC: 'No space left on device'};
 const failure = (e, path) => `[Errno ${-e.errno}] ${TEXT[e.code] ?? e.code}: ${pyRepr(path)}`;
 
+// A crash between mkdir and rename leaves an empty destination that is not a published candidate. Only an
+// empty directory old enough that no publisher can still be between its two steps is reclaimed.
+const STALE_PUBLISH_MS = 5000;
+function reclaimStaleEmpty(destination) {
+  try {
+    const state = lstatSync(destination);
+    if (!state.isDirectory() || Date.now() - state.mtimeMs < STALE_PUBLISH_MS) return false;
+    if (readdirSync(destination).length) return false;
+    rmdirSync(destination);
+    return true;
+  } catch { return false; }
+}
+
 function publish(source, destination) {
   if (!lstatSync(source).isDirectory()) throw new Error(failure({errno: -20, code: 'ENOTDIR'}, source));
-  mkdirSync(destination);
+  try { mkdirSync(destination); }
+  catch (error) {
+    if (error.code !== 'EEXIST' || !reclaimStaleEmpty(destination)) throw error;
+    mkdirSync(destination);
+  }
   try { renameSync(source, destination); } catch (error) {
     try { rmdirSync(destination); } catch { /* no longer an empty claim of ours: it stays */ }
     throw error;

@@ -97,14 +97,22 @@ export async function runPortfolio(policy: Policy, maxPasses: number, backend: B
           // Verification occupies this worker slot and is serialized across variants.
           if (slice.kind === 'complete') await verify(v);
         } catch (error) {
-          v.state = search.signal.aborted ? 'stopped' : 'failed';
+          const stopped = search.signal.aborted;
+          v.state = stopped ? 'stopped' : 'failed';
           v.cpu_s = null;
           v.reason = String(error);
+          // A real failure is not a candidate. Only a deadline keeps an earlier valid checkpoint usable.
+          if (!stopped) { delete v.checkpoint; delete v.route; }
           event('sprint.slice.end', { variant: v.id, state: v.state, reason: v.reason });
         }
       }
     };
     await Promise.all(Array.from({ length: policy.parallelism }, worker));
+    // A stopped search leaves queued variants pending forever unless they are told so.
+    if (search.signal.aborted) {
+      const why = String(search.signal.reason ?? 'search stopped');
+      for (const v of variants) if (v.state === 'pending') { v.state = 'stopped'; v.reason = `not started: ${why}`; }
+    }
     clearTimeout(searchTimer);
     // An earlier valid checkpoint remains useful even if a later slice hit its deadline.
     const eligible = variants.filter(v => v.route || v.checkpoint);
@@ -123,7 +131,8 @@ export async function runPortfolio(policy: Policy, maxPasses: number, backend: B
   }
   candidates.sort((a,b) => a.wire_mm-b.wire_mm || a.vias-b.vias || a.variant.localeCompare(b.variant));
   const winner = !problem && all.signal.reason !== 'cancelled' ? candidates[0] ?? null : null;
-  const status = winner ? 'PASS' : problem || all.signal.aborted || search.signal.aborted ? 'ERROR' : 'FAIL';
+  // A spent budget is a FAIL (no verified candidate); only a real problem or a cancelled parent is an ERROR.
+  const status = winner ? 'PASS' : problem || all.signal.reason === 'cancelled' ? 'ERROR' : 'FAIL';
   const reason = winner ? 'winner passed native checks and configured gate' : problem ?? String(all.signal.reason ?? 'no verified candidate within the budget');
   event('sprint.end', { status, reason, winner: winner?.variant ?? null });
   return { schema: 'iot-lab.route-sprints.v1', status, reason, elapsed_s: elapsed(), cpu_s: variants.some(v=>v.cpu_s===null) ? null : variants.reduce((n,v)=>n+v.cpu_s!,0),

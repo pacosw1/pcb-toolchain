@@ -49,7 +49,7 @@ use lock::{LockStage, lock_nets, make_locked_input, split_crystals};
 use measure::{copper_counts, run_drc};
 use planes::{FeedbackReuse, ModelFile, RefGate, Round, ROUNDS, fail_lines, planes_spec};
 use project::{board_project, place_sidecars, restore_pro, sha_file};
-use record::{AttemptStages, BinaryStage, CoreStage, DrcCounts, ModelStage, Record};
+use record::{AttemptStages, BinaryStage, CoreStage, DrcCounts, ModelStage, Record, Status};
 use reuse::{Attempt, reuse_seed};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -501,7 +501,7 @@ fn finish(rec: &mut Record, out: &Path, work: &Path) -> Result<DrcCounts, String
     rec.drc_by_type = Some(drc.by_type.clone());
     (rec.tracks, rec.vias, rec.track_length_mm) = (Some(counts.tracks), Some(counts.vias), Some(counts.length_mm));
     rec.board_sha256 = Some(sha_file(out)?);
-    rec.status = if drc.clean() { "PASS" } else { "FAIL" };
+    rec.status = if drc.clean() { Status::Pass } else { Status::Fail };
     Ok(drc)
 }
 
@@ -689,9 +689,9 @@ pub fn cli(args: &[String]) -> i32 {
     let work = PathBuf::from(format!("{}.iotroute", out.display()));
     let mut rec = Record::new(out.display().to_string(), work.display().to_string());
     let code = match run(&a, &mut rec, &out, &work) {
-        Ok(()) => i32::from(rec.status != "PASS"),
+        Ok(()) => i32::from(rec.status != Status::Pass),
         Err(e) => {
-            rec.status = "ERROR";
+            rec.status = Status::Error;
             rec.cause = Some(e);
             2
         }

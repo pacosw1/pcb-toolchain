@@ -7,6 +7,23 @@ use std::collections::BTreeMap;
 
 pub const SCHEMA: &str = "iot-lab.iotroute-run.v1";
 
+/// A run's terminal state. Typed so a default or a typo cannot masquerade as a verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum Status {
+    #[serde(rename = "PASS")]
+    Pass,
+    #[serde(rename = "FAIL")]
+    Fail,
+    #[serde(rename = "ERROR")]
+    Error,
+}
+
+impl Status {
+    pub fn as_str(self) -> &'static str {
+        match self { Status::Pass => "PASS", Status::Fail => "FAIL", Status::Error => "ERROR" }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RouteClaim {
     pub status: String,
@@ -114,7 +131,7 @@ impl DrcCounts {
 #[derive(Debug, Clone, Serialize)]
 pub struct Record {
     pub schema: &'static str,
-    pub status: &'static str,
+    pub status: Status,
     pub board_file: String,
     pub work: Option<String>,
     pub stages: Stages,
@@ -154,7 +171,7 @@ pub struct Record {
 impl Record {
     pub fn new(board_file: String, work: String) -> Record {
         Record {
-            schema: SCHEMA, status: "ERROR", board_file, work: Some(work), stages: Stages::default(), drc_errors: None, unconnected: None, parity: None, tracks: None, vias: None,
+            schema: SCHEMA, status: Status::Error, board_file, work: Some(work), stages: Stages::default(), drc_errors: None, unconnected: None, parity: None, tracks: None, vias: None,
             board: None, input: None, input_sha256: None, iters: None, seed: None, reuse: None, pro_restored: None, drc_by_type: None, track_length_mm: None, board_sha256: None, diagnosis: None, cause: None, seconds: None,
         }
     }
@@ -166,11 +183,11 @@ impl Record {
     /// `PASS|FAIL <drc errors> <unconnected> <parity> <tracks> <vias> <seconds>`, or `ERROR <seconds> <cause>`.
     pub fn summary_line(&self) -> String {
         let seconds = self.seconds.unwrap_or(0.0);
-        if self.status == "ERROR" {
+        if self.status == Status::Error {
             return format!("ERROR {seconds:.0} {}", self.cause.as_deref().unwrap_or(""));
         }
         let c = Record::count;
-        format!("{} {} {} {} {} {} {seconds:.0}", self.status, c(self.drc_errors), c(self.unconnected), c(self.parity), c(self.tracks), c(self.vias))
+        format!("{} {} {} {} {} {} {seconds:.0}", self.status.as_str(), c(self.drc_errors), c(self.unconnected), c(self.parity), c(self.tracks), c(self.vias))
     }
 }
 
@@ -181,7 +198,7 @@ mod tests {
     #[test]
     fn the_summary_line_has_the_counts_or_the_cause() {
         let mut r = Record::new("o".to_string(), "w".to_string());
-        (r.status, r.drc_errors, r.unconnected, r.parity, r.tracks, r.vias, r.seconds) = ("FAIL", Some(1), Some(0), Some(0), Some(10), Some(2), Some(61.4));
+        (r.status, r.drc_errors, r.unconnected, r.parity, r.tracks, r.vias, r.seconds) = (Status::Fail, Some(1), Some(0), Some(0), Some(10), Some(2), Some(61.4));
         assert_eq!(r.summary_line(), "FAIL 1 0 0 10 2 61");
         let mut e = Record::new("o".to_string(), "w".to_string());
         e.seconds = Some(0.2);

@@ -5,6 +5,15 @@ use serde::{Deserialize, Serialize};
 
 const SCHEMA: &str = "iot-lab.route-prepared.v1";
 
+/// A reader never sees a half-written result: write a sibling, then rename over the target.
+fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+    fs::write(&temp, bytes)?;
+    let moved = fs::rename(&temp, path);
+    if moved.is_err() { let _ = fs::remove_file(&temp); }
+    moved
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Prepared {
@@ -114,7 +123,7 @@ fn finish_job_using(prepared: &Prepared, route: &Path, out: &Path, work: &Path, 
     let result: serde_json::Value = serde_json::from_slice(&fs::read(&local_route).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     // Core failures may describe rules not reducible to a native connectivity count.
     if !result["failed"].as_array().is_some_and(|failed| failed.is_empty()) {
-        rec.status = "FAIL"; rec.cause = Some("finalized core result still has failed nets".into());
+        rec.status = Status::Fail; rec.cause = Some("finalized core result still has failed nets".into());
     }
     Ok(())
 }
@@ -131,11 +140,11 @@ pub fn finish_cli(args: &[String]) -> i32 {
     let start = Instant::now();
     let mut rec = Record::new(out.display().to_string(), work.display().to_string());
     let code = match finish_job(&prepared, Path::new(route), &out, &work, seed, via_cost, Path::new(route_log), &mut rec) {
-        Ok(()) => i32::from(rec.status != "PASS"),
-        Err(e) => { rec.status = "ERROR"; rec.cause = Some(e); 2 }
+        Ok(()) => i32::from(rec.status != Status::Pass),
+        Err(e) => { rec.status = Status::Error; rec.cause = Some(e); 2 }
     };
     rec.seconds = Some(start.elapsed().as_secs_f64());
-    if rec.work.is_some() && work.is_dir() { let _ = fs::write(work.join("result.json"), serde_json::to_vec_pretty(&rec).unwrap()); }
+    if rec.work.is_some() && work.is_dir() { let _ = write_atomic(&work.join("result.json"), &serde_json::to_vec_pretty(&rec).unwrap()); }
     println!("{}\n{}", rec.summary_line(), sorted_json(&rec).unwrap());
     code
 }
@@ -186,7 +195,7 @@ esac
         let initial = root.0.join("initial.json");
         fs::write(&initial, r#"{"schema":"iot-lab.route-result.v0","tracks":[],"vias":[],"failed":[]}"#).unwrap();
         let log = root.0.join("initial.log"); fs::write(&log, "actual initial core log\n").unwrap();
-        for (index, failed, expected) in [(0, "[]", "PASS"), (1, "[\"A\"]", "FAIL"), (2, "null", "FAIL")] {
+        for (index, failed, expected) in [(0, "[]", Status::Pass), (1, "[\"A\"]", Status::Fail), (2, "null", Status::Fail)] {
             fs::write(root.0.join("failed"), failed).unwrap();
             let out = root.0.join(format!("variant-{index}.kicad_pcb"));
             let work = PathBuf::from(format!("{}.iotroute", out.display()));
@@ -196,7 +205,7 @@ esac
                 // The final native check must run after feedback has selected its board.
                 assert!(work.join("ref-r2/route.json").is_file());
                 assert_eq!(fs::read(board).unwrap(), fs::read(&src).unwrap());
-                rec.status = "PASS"; Ok(DrcCounts::default())
+                rec.status = Status::Pass; Ok(DrcCounts::default())
             }).unwrap();
             assert_eq!(rec.status, expected);
             assert_eq!(rec.stages.ref_gate.unwrap().rounds.len(), 2);

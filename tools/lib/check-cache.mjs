@@ -1,5 +1,5 @@
 import {createHash, randomUUID} from 'node:crypto';
-import {existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync} from 'node:fs';
+import {existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync} from 'node:fs';
 import {basename, delimiter, dirname, isAbsolute, join, resolve} from 'node:path';
 import {CHECK_METRICS, countFrom, pathFailures} from './gate-core.mjs';
 import {fingerprint, gateTools} from './gate-inputs.mjs';
@@ -11,6 +11,18 @@ const counts = (stage, metrics) => metrics && Object.keys(metrics).length === CH
   CHECK_METRICS[stage].every(name => Number.isSafeInteger(metrics[name]) && metrics[name] >= 0);
 const safeName = name => typeof name === 'string' && name === basename(name) && /^[A-Za-z0-9_.-]+$/.test(name);
 const requiredArtifacts = stage => [`${stage}.log`, ...(['erc','drc','kicad_happy'].includes(stage) ? [`${stage}.json`] : [])];
+
+// A crashed writer leaves .pending-*/.stale-* dirs behind; they are not evidence and must not accumulate.
+const TRANSIENT_MS = 10 * 60 * 1000;
+function sweepTransient(parent) {
+  let names; try { names = readdirSync(parent); } catch { return; }
+  const at = Date.now();
+  for (const name of names) {
+    if (!name.startsWith('.pending-') && !name.startsWith('.stale-')) continue;
+    const path = join(parent, name);
+    try { if (at - statSync(path).mtimeMs > TRANSIENT_MS) rmSync(path, {recursive:true,force:true}); } catch { /* raced with its owner */ }
+  }
+}
 
 function artifactMetrics(folder, stage) {
   const log=readFileSync(join(folder,`${stage}.log`),'utf8');
@@ -107,7 +119,9 @@ function receiptAt(folder, stage, key) {
 }
 
 export function restoreCheck(cacheDir, stage, key, evidenceDir) {
-  const folder = join(cacheDir,stage,key);
+  const parent = join(cacheDir,stage);
+  sweepTransient(parent);
+  const folder = join(parent,key);
   if (!existsSync(folder)) return {hit:false,reason:'no completed receipt'};
   // Concurrent hooks (boards in parallel, other worktrees) share the cache. Write the verified bytes, not a second
   // read of the cache folder; a failed restore removes what it wrote, so the check can run fresh in the same folder.
@@ -126,7 +140,7 @@ export function restoreCheck(cacheDir, stage, key, evidenceDir) {
 // A nonzero findings count is completed evidence; null/blocked metrics are not.
 export function storeCheck(cacheDir, stage, {key,descriptor}, metrics, evidenceDir) {
   if (!counts(stage,metrics)) return {stored:false,reason:'check did not complete'};
-  const parent = join(cacheDir,stage);mkdirSync(parent,{recursive:true});
+  const parent = join(cacheDir,stage);mkdirSync(parent,{recursive:true});sweepTransient(parent);
   const pending = join(parent,`.pending-${randomUUID()}`);mkdirSync(pending);
   const target = join(parent,key);
   try {
