@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,7 +32,10 @@ function fixture(t: TestContext, plan: Row = {}) {
   writeFileSync(path, JSON.stringify({ schema: 'iot-lab.layout-plan.v1', intents: INTENTS, route_plan: 'hardware-design/boards/X/route.json', approval: null, ...plan }));
   return { root, folder, path, rules: placementRulesPath(root, 'X'), route: join(folder, 'route.json') };
 }
+const SVG = '<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M0 0h10"/></svg>\n';
 const imageOf = (root: string): string => join(root, 'layout-image.png');
+/** The copy that the approval keeps in the board folder. */
+const COPY_PNG = 'hardware-design/boards/X/layout-plan.png', COPY_SVG = 'hardware-design/boards/X/layout-plan.svg';
 const approve = (root: string) => { writeFileSync(imageOf(root), PNG); return approveLayoutPlan(root, 'X', 'Ana', 'reviewed the edge intents', imageOf(root)); };
 const events = (): { log: Row[]; emit: (kind: string, data?: Row) => void } => { const log: Row[] = []; return { log, emit: (kind, data) => { log.push({ kind, ...data }); } }; };
 
@@ -45,8 +48,9 @@ test('a plan without approval is not approved, and approval records the person, 
   assert.equal(layoutGate(f.root, 'X', () => {}), null);
   const saved = JSON.parse(readFileSync(f.path, 'utf8')) as { approval: Row; intents: unknown };
   assert.deepEqual(saved.approval, { by: 'Ana', reason: 'reviewed the edge intents', rules_sha256: sha256File(f.rules), route_plan_sha256: sha256File(f.route),
-    image: 'layout-image.png', image_sha256: sha256File(imageOf(f.root)) });
-  assert.equal(layoutPlanStatus(f.root, 'X').image, 'layout-image.png');
+    image: COPY_PNG, image_sha256: sha256File(imageOf(f.root)) });
+  assert.equal(layoutPlanStatus(f.root, 'X').image, COPY_PNG);
+  assert.equal(sha256File(join(f.root, COPY_PNG)), sha256File(imageOf(f.root)), 'the board folder holds a copy of the image');
   assert.deepEqual(saved.intents, INTENTS);
 });
 
@@ -83,25 +87,58 @@ test('a changed route plan makes the approval stale', async t => {
   assert.equal(layoutGate(f.root, 'X', () => {})!.code, 'layout_plan_stale');
 });
 
-test('a changed or missing approved image makes the approval stale', async t => {
+test('the approval stays approved after the original image is deleted, because the board folder keeps a copy', async t => {
   const f = fixture(t);
   await approve(f.root);
-  writeFileSync(imageOf(f.root), Buffer.concat([PNG, Buffer.from('redrawn')]));
+  rmSync(imageOf(f.root));
+  const status = layoutPlanStatus(f.root, 'X');
+  assert.equal(status.state, 'approved');
+  assert.equal(status.image, COPY_PNG);
+  assert.equal(layoutGate(f.root, 'X', () => {}), null);
+});
+
+test('a changed or missing copy of the approved image makes the approval stale', async t => {
+  const f = fixture(t), copy = join(f.root, COPY_PNG);
+  await approve(f.root);
+  writeFileSync(imageOf(f.root), Buffer.concat([PNG, Buffer.from('redrawn original')]));
+  assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved', 'the original is not read after the approval');
+  writeFileSync(copy, Buffer.concat([PNG, Buffer.from('redrawn')]));
   const status = layoutPlanStatus(f.root, 'X');
   assert.equal(status.state, 'stale');
   assert.deepEqual(status.stale, ['the approved image changed since the approval']);
   assert.equal(layoutGate(f.root, 'X', () => {})!.code, 'layout_plan_stale');
-  rmSync(imageOf(f.root));
+  rmSync(copy);
   assert.deepEqual(layoutPlanStatus(f.root, 'X').stale, ['the approved image is missing']);
   await approve(f.root);
   assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved');
 });
 
-test('the approved image must be a PNG file inside the project', async t => {
+test('an SVG image is accepted and kept as layout-plan.svg; a new approval with another type removes the old copy', async t => {
+  const f = fixture(t), svg = join(f.root, 'layout-image.svg');
+  writeFileSync(svg, SVG);
+  await approveLayoutPlan(f.root, 'X', 'Ana', 'ok', svg);
+  assert.equal(layoutPlanStatus(f.root, 'X').image, COPY_SVG);
+  assert.equal(readFileSync(join(f.root, COPY_SVG), 'utf8'), SVG);
+  rmSync(svg);
+  assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved');
+  await approve(f.root);
+  assert.equal(layoutPlanStatus(f.root, 'X').image, COPY_PNG);
+  assert.equal(existsSync(join(f.root, COPY_SVG)), false, 'one copy only');
+  assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved');
+  // The kept copy can be the given file: the approval of the same copy again works and keeps the file.
+  await approveLayoutPlan(f.root, 'X', 'Bob', 'again', join(f.root, COPY_PNG));
+  assert.equal(layoutPlanStatus(f.root, 'X').state, 'approved');
+  assert.equal(sha256File(join(f.root, COPY_PNG)), sha256File(imageOf(f.root)));
+});
+
+test('the approved image must be a PNG or SVG file inside the project', async t => {
   const f = fixture(t), by = (image: string) => approveLayoutPlan(f.root, 'X', 'Ana', 'ok', image);
   await assert.rejects(by(join(f.root, 'none.png')), /image .* is not a file/);
   writeFileSync(join(f.root, 'text.png'), 'not a png');
-  await assert.rejects(by(join(f.root, 'text.png')), /is not a PNG file/);
+  await assert.rejects(by(join(f.root, 'text.png')), /is not a PNG or SVG file/);
+  writeFileSync(join(f.root, 'fake.svg'), '<html><svg></svg></html>');
+  await assert.rejects(by(join(f.root, 'fake.svg')), /is not a PNG or SVG file/);
+  assert.equal(existsSync(join(f.root, COPY_PNG)) || existsSync(join(f.root, COPY_SVG)), false, 'a refused image leaves no copy');
   const outside = mkdtempSync(join(tmpdir(), 'layout-outside-'));
   t.after(() => rmSync(outside, { recursive: true, force: true }));
   writeFileSync(join(outside, 'a.png'), PNG);
@@ -180,8 +217,8 @@ test('the dispatcher shows the status, exits 1 until the plan is approved, and a
   const done = layout('--approve', '--by', 'Ana', '--reason', 'reviewed', '--image', imageOf(f.root), '--json');
   assert.equal(done.status, 0, done.stderr);
   assert.equal(JSON.parse(done.stdout).state, 'approved');
-  assert.equal(JSON.parse(done.stdout).image, 'layout-image.png');
-  assert.match(layout().stdout, /^PASS: X layout plan approved by Ana\nimage: layout-image\.png/);
+  assert.equal(JSON.parse(done.stdout).image, COPY_PNG);
+  assert.match(layout().stdout, /^PASS: X layout plan approved by Ana\nimage: hardware-design\/boards\/X\/layout-plan\.png/);
   writeFileSync(f.route, JSON.stringify({ ...ROUTE, stages: [{ name: 'other' }] }));
   const stale = layout();
   assert.equal(stale.status, 1);

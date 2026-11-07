@@ -1,7 +1,7 @@
 // The layout plan: a person approves the placement intents and the route plan of a board before `place` or `route` runs.
 // hardware-design/boards/BOARD/layout-plan.json (schema iot-lab.layout-plan.v1) holds the intents, the route plan path, and the
 // approval with the sha256 of the placement rules and of the route plan at approval time. Rules are data, this file is the check.
-import { mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isCanonicalRoot, verifySeal, withSealLock } from './cad-seal.ts';
@@ -17,7 +17,10 @@ const KEYS = ['schema', 'intents', 'route_plan', 'approval'];
 const INTENT_KEYS = ['id', 'statement', 'rule_ids'];
 const APPROVAL_KEYS = ['by', 'reason', 'rules_sha256', 'route_plan_sha256', 'image', 'image_sha256'];
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-const FEATURES = new Set(Object.keys((readObject<{ features?: object }>(fileURLToPath(new URL('../route-features.json', import.meta.url))).features) ?? {}));
+// An SVG may start with a BOM, an XML declaration, comments and a doctype. The first element must be svg.
+const SVG_START = /^﻿?\s*(?:<\?xml[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!DOCTYPE[^>]*>\s*)?<svg[\s/>]/;
+const IMAGE_TYPES = ['png', 'svg'];
+const FEATURES =new Set(Object.keys((readObject<{ features?: object }>(fileURLToPath(new URL('../route-features.json', import.meta.url))).features) ?? {}));
 
 type Row = Record<string, unknown>;
 export interface Approval { by: string; reason: string; rules_sha256: string; route_plan_sha256: string; image: string; image_sha256: string }
@@ -29,7 +32,8 @@ export interface LayoutBlock { code: 'layout_plan_missing' | 'layout_plan_stale'
 export type LayoutEmit = (kind: string, data?: Row) => void;
 
 export const layoutPlanPath = (root: string, board: string): string => join(root, 'hardware-design/boards', board, 'layout-plan.json');
-const logPath = (root: string, board: string): string => join(root, '.gate/layout-plan', `${board}.jsonl`);
+const imageCopyPath = (root: string, board: string, extension: string): string => join(root, 'hardware-design/boards', board, `layout-plan.${extension}`);
+const logPath =(root: string, board: string): string => join(root, '.gate/layout-plan', `${board}.jsonl`);
 const isObject = (value: unknown): value is Row => !!value && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown): value is string => typeof value === 'string' && value.trim() !== '';
 const approveCommand = (board: string): string => `tools/pcb layout ${board} --approve --by NAME --reason TEXT --image FILE`;
@@ -139,13 +143,20 @@ export const layoutLog = (root: string, board: string): LayoutEmit => (kind, dat
   durableAppend(logPath(root, board), JSON.stringify({ time: new Date().toISOString(), type: kind, ...data }) + '\n');
 };
 
-/** The image file that a person saw, as a path inside the project, and its hash. Fail closed: no file, no PNG or a path outside the project stops. */
-function approvedImage(root: string, given: string): { image: string; sha256: string } {
+/**
+ * Keeps the image that a person saw as hardware-design/boards/BOARD/layout-plan.png or .svg and returns that path and its hash.
+ * The run folders are not committed, so the approval must not point at one. The type comes from the content, not the name.
+ * Fail closed: no file, a file that is neither PNG nor SVG, or a path outside the project stops before anything is written.
+ */
+function approvedImage(root: string, board: string, given: string): { image: string; sha256: string } {
   if (!isFile(given)) throw new Error(`image ${given} is not a file`);
   const base = realpathSync(root), path = realpathSync(given);
   if (!isRelativeTo(path, base) || path === base) throw new Error(`image must be inside the project: ${given}`);
-  if (!readFileSync(path).subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) throw new Error(`image ${given} is not a PNG file`);
-  return { image: relative(base, path).split(sep).join('/'), sha256: sha256File(path) };
+  const data = readFileSync(path), extension = data.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE) ? 'png' : SVG_START.test(data.toString('utf8')) ? 'svg' : null;
+  if (!extension) throw new Error(`image ${given} is not a PNG or SVG file`);
+  const copy = imageCopyPath(root, board, extension);
+  if (!existsSync(copy) || realpathSync(copy) !== path) copyFileSync(path, copy);
+  return { image: relative(root, copy).split(sep).join('/'), sha256: sha256File(copy) };
 }
 
 /** `tools/pcb layout BOARD --approve --by NAME --reason TEXT --image FILE`: records the person, the reason, the image that the person saw and the hashes of the inputs. */
@@ -160,9 +171,11 @@ export async function approveLayoutPlan(root: string, board: string, by: string,
     if (!isFile(path)) throw new Error(`${board} has no layout plan (${path})`);
     const plan = readPlan(path), found = inspect(root, board, plan);
     if (found.problems.length) throw new Error(`The layout plan of ${board} is not valid:\n  ${found.problems.join('\n  ')}`);
-    const seen = approvedImage(root, imageFile);
+    const seen = approvedImage(root, board, imageFile);
     const approval: Approval = { by: by.trim(), reason: reason.trim(), rules_sha256: found.rulesSha!, route_plan_sha256: found.routeSha!, image: seen.image, image_sha256: seen.sha256 };
     atomicJson(path, { ...plan, approval });
+    // One copy only: the copy of the other type belonged to an earlier approval.
+    for (const extension of IMAGE_TYPES) if (join(root, seen.image) !== imageCopyPath(root, board, extension)) rmSync(imageCopyPath(root, board, extension), { force: true });
     layoutLog(root, board)('layout_plan.approved', { board, ...approval });
   });
   return layoutPlanStatus(root, board);
