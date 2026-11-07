@@ -1,0 +1,332 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1788" height="898" viewBox="0 0 1788 898" font-family="Helvetica, Arial, sans-serif">
+<rect width="1788" height="898" fill="#ffffff"/>
+<text x="24" y="40" font-size="26" font-weight="700" fill="#111827">PCB state machine: going back after a change</text>
+<text x="24" y="68" font-size="15" fill="#4b5563">Each row is one kind of change. A filled box is a state where the work starts again. Rows come from tools/pcb-transitions.json.</text>
+<text x="24" y="90" font-size="15" fill="#4b5563">The tool stops work on a board until a change has an event: tools/pcb change BOARD --kind KIND --reason TEXT --by NAME</text>
+<text x="34" y="144" font-size="14" font-weight="700" fill="#111827" text-anchor="start">Change</text>
+<text transform="translate(315,144) rotate(-28)" font-size="13" font-weight="700" fill="#111827">A1 Spec</text>
+<text transform="translate(389,144) rotate(-28)" font-size="13" font-weight="700" fill="#111827">A3 Parts</text>
+<text transform="translate(463,144) rotate(-28)" font-size="13" font-weight="700" fill="#111827">A4 Schematic</text>
+<text transform="translate(537,144) rotate(-28)" font-size="13" font-weight="700" fill="#111827">A6 Stackup</text>
+<text transform="translate(611,144) rotate(-28)" font-size="13" font-weight="700" fill="#111827">A7 Plan</text>
+<text transform="translate(685,144) rotate(-28)" font-size="13" font-weight="700" fill="#111827">A8 Approve</text>
+<text transform="translate(759,144) rotate(-28)" font-size="13" font-weight="700" fill="#111827">A9 Place</text>
+<text transform="translate(833,144) rotate(-28)" font-size="13" font-weight="700" fill="#111827">A14 Route</text>
+<text transform="translate(907,144) rotate(-28)" font-size="13" font-weight="700" fill="#111827">A15 Stuck</text>
+<text transform="translate(981,144) rotate(-28)" font-size="13" font-weight="700" fill="#111827">A16 Repair</text>
+<text transform="translate(1055,144) rotate(-28)" font-size="13" font-weight="700" fill="#111827">A18 Gate</text>
+<text transform="translate(1129,144) rotate(-28)" font-size="13" font-weight="700" fill="#111827">A21 Release</text>
+<text x="1178" y="144" font-size="14" font-weight="700" fill="#111827" text-anchor="start">Redo</text>
+<text x="1558" y="144" font-size="14" font-weight="700" fill="#111827" text-anchor="start">A person approves</text>
+<rect x="24" y="158" width="1740" height="34" fill="#f3f4f6"/>
+<text x="34" y="180" font-size="14" fill="#111827">part swap new footprint</text>
+<rect x="282" y="165" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="356" y="165" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="430" y="165" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="504" y="165" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="578" y="165" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="652" y="165" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="726" y="165" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="800" y="165" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="874" y="165" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="948" y="165" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1022" y="165" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1096" y="165" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<text x="1178" y="180" font-size="12" fill="#374151">part review, schematic, bom, rules, route plan, layout, and later</text>
+<text x="1558" y="180" font-size="13" fill="#374151">part review, layout plan</text>
+<text x="34" y="214" font-size="14" fill="#111827">part swap same footprint</text>
+<rect x="282" y="199" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="356" y="199" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="430" y="199" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="504" y="199" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="578" y="199" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="652" y="199" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="726" y="199" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="800" y="199" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="874" y="199" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="948" y="199" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1022" y="199" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1096" y="199" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<text x="1178" y="214" font-size="12" fill="#374151">part review, bom, layout approval, gate, release, readiness</text>
+<text x="1558" y="214" font-size="13" fill="#374151">part review, layout plan</text>
+<rect x="24" y="226" width="1740" height="34" fill="#f3f4f6"/>
+<text x="34" y="248" font-size="14" fill="#111827">part value change</text>
+<rect x="282" y="233" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="356" y="233" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="430" y="233" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="504" y="233" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="578" y="233" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="652" y="233" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="726" y="233" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="800" y="233" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="874" y="233" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="948" y="233" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1022" y="233" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1096" y="233" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<text x="1178" y="248" font-size="12" fill="#374151">part review, bom, layout approval, gate, release, readiness</text>
+<text x="1558" y="248" font-size="13" fill="#374151">part review</text>
+<text x="34" y="282" font-size="14" fill="#111827">net change</text>
+<rect x="282" y="267" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="356" y="267" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="430" y="267" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="504" y="267" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="578" y="267" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="652" y="267" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="726" y="267" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="800" y="267" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="874" y="267" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="948" y="267" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1022" y="267" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1096" y="267" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<text x="1178" y="282" font-size="12" fill="#374151">schematic, route plan, layout approval, copper, gate, and later</text>
+<text x="1558" y="282" font-size="13" fill="#374151">layout plan</text>
+<rect x="24" y="294" width="1740" height="34" fill="#f3f4f6"/>
+<text x="34" y="316" font-size="14" fill="#111827">stackup change</text>
+<rect x="282" y="301" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="356" y="301" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="430" y="301" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="504" y="301" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="578" y="301" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="652" y="301" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="726" y="301" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="800" y="301" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="874" y="301" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="948" y="301" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1022" y="301" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1096" y="301" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<text x="1178" y="316" font-size="12" fill="#374151">stackup, route plan, layout approval, placement, copper, and later</text>
+<text x="1558" y="316" font-size="13" fill="#374151">layout plan</text>
+<text x="34" y="350" font-size="14" fill="#111827">outline change</text>
+<rect x="282" y="335" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="356" y="335" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="430" y="335" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="504" y="335" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="578" y="335" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="652" y="335" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="726" y="335" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="800" y="335" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="874" y="335" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="948" y="335" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1022" y="335" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1096" y="335" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<text x="1178" y="350" font-size="12" fill="#374151">layout approval, placement, copper, gate, release, readiness</text>
+<text x="1558" y="350" font-size="13" fill="#374151">layout plan</text>
+<rect x="24" y="362" width="1740" height="34" fill="#f3f4f6"/>
+<text x="34" y="384" font-size="14" fill="#111827">design rule change</text>
+<rect x="282" y="369" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="356" y="369" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="430" y="369" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="504" y="369" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="578" y="369" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="652" y="369" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="726" y="369" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="800" y="369" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="874" y="369" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="948" y="369" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1022" y="369" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1096" y="369" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<text x="1178" y="384" font-size="12" fill="#374151">layout approval, placement, copper, gate, release, readiness</text>
+<text x="1558" y="384" font-size="13" fill="#374151">layout plan</text>
+<text x="34" y="418" font-size="14" fill="#111827">rule change</text>
+<rect x="282" y="403" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="356" y="403" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="430" y="403" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="504" y="403" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="578" y="403" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="652" y="403" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="726" y="403" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="800" y="403" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="874" y="403" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="948" y="403" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1022" y="403" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1096" y="403" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<text x="1178" y="418" font-size="12" fill="#374151">rules, layout approval, placement, copper, gate, release, and later</text>
+<text x="1558" y="418" font-size="13" fill="#374151">layout plan</text>
+<rect x="24" y="430" width="1740" height="34" fill="#f3f4f6"/>
+<text x="34" y="452" font-size="14" fill="#111827">route plan change</text>
+<rect x="282" y="437" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="356" y="437" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="430" y="437" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="504" y="437" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="578" y="437" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="652" y="437" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="726" y="437" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="800" y="437" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="874" y="437" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="948" y="437" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1022" y="437" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1096" y="437" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<text x="1178" y="452" font-size="12" fill="#374151">route plan, layout approval, copper, gate, release, readiness</text>
+<text x="1558" y="452" font-size="13" fill="#374151">layout plan</text>
+<text x="34" y="486" font-size="14" fill="#111827">datasheet change</text>
+<rect x="282" y="471" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="356" y="471" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="430" y="471" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="504" y="471" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="578" y="471" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="652" y="471" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="726" y="471" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="800" y="471" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="874" y="471" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="948" y="471" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1022" y="471" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1096" y="471" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<text x="1178" y="486" font-size="12" fill="#374151">part review</text>
+<text x="1558" y="486" font-size="13" fill="#374151">part review</text>
+<rect x="24" y="498" width="1740" height="34" fill="#f3f4f6"/>
+<text x="34" y="520" font-size="14" fill="#111827">out of stock</text>
+<rect x="282" y="505" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="356" y="505" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="430" y="505" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="504" y="505" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="578" y="505" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="652" y="505" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="726" y="505" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="800" y="505" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="874" y="505" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="948" y="505" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1022" y="505" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1096" y="505" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<text x="1178" y="520" font-size="12" fill="#374151">readiness</text>
+<text x="1558" y="520" font-size="13" fill="#374151">substitute</text>
+<text x="34" y="554" font-size="14" fill="#111827">approval withdrawn</text>
+<rect x="282" y="539" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="356" y="539" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="430" y="539" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="504" y="539" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="578" y="539" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="652" y="539" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="726" y="539" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="800" y="539" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="874" y="539" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="948" y="539" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1022" y="539" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1096" y="539" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<text x="1178" y="554" font-size="12" fill="#374151">layout approval, placement, copper, gate, release, readiness</text>
+<text x="1558" y="554" font-size="13" fill="#374151">layout plan</text>
+<rect x="24" y="566" width="1740" height="34" fill="#f3f4f6"/>
+<text x="34" y="588" font-size="14" fill="#111827">route stuck</text>
+<rect x="282" y="573" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="356" y="573" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="430" y="573" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="504" y="573" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="578" y="573" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="652" y="573" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="726" y="573" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="800" y="573" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="874" y="573" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="948" y="573" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1022" y="573" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1096" y="573" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<text x="1178" y="588" font-size="12" fill="#374151">copper</text>
+<text x="1558" y="588" font-size="13" fill="#374151">route move</text>
+<text x="34" y="622" font-size="14" fill="#111827">gate failed</text>
+<rect x="282" y="607" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="356" y="607" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="430" y="607" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="504" y="607" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="578" y="607" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="652" y="607" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="726" y="607" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="800" y="607" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="874" y="607" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="948" y="607" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1022" y="607" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1096" y="607" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<text x="1178" y="622" font-size="12" fill="#374151">gate, release, readiness</text>
+<text x="1558" y="622" font-size="13" fill="#374151">none</text>
+<rect x="24" y="634" width="1740" height="34" fill="#f3f4f6"/>
+<text x="34" y="656" font-size="14" fill="#111827">drc failed</text>
+<rect x="282" y="641" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="356" y="641" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="430" y="641" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="504" y="641" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="578" y="641" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="652" y="641" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="726" y="641" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="800" y="641" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="874" y="641" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="948" y="641" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="1022" y="641" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1096" y="641" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<text x="1178" y="656" font-size="12" fill="#374151">gate, release, readiness</text>
+<text x="1558" y="656" font-size="13" fill="#374151">none</text>
+<text x="34" y="690" font-size="14" fill="#111827">fab defect</text>
+<rect x="282" y="675" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="356" y="675" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="430" y="675" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="504" y="675" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="578" y="675" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="652" y="675" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="726" y="675" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="800" y="675" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="874" y="675" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="948" y="675" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1022" y="675" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1096" y="675" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<text x="1178" y="690" font-size="12" fill="#374151">release, order</text>
+<text x="1558" y="690" font-size="13" fill="#374151">defect decision</text>
+<rect x="24" y="702" width="1740" height="34" fill="#f3f4f6"/>
+<text x="34" y="724" font-size="14" fill="#111827">bringup failure</text>
+<rect x="282" y="709" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="356" y="709" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="430" y="709" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="504" y="709" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="578" y="709" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="652" y="709" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="726" y="709" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="800" y="709" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="874" y="709" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="948" y="709" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1022" y="709" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1096" y="709" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<text x="1178" y="724" font-size="12" fill="#374151">bringup</text>
+<text x="1558" y="724" font-size="13" fill="#374151">defect decision</text>
+<text x="34" y="758" font-size="14" fill="#111827">toolchain change</text>
+<rect x="282" y="743" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="356" y="743" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="430" y="743" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="504" y="743" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="578" y="743" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="652" y="743" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="726" y="743" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="800" y="743" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="874" y="743" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="948" y="743" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1022" y="743" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="1096" y="743" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<text x="1178" y="758" font-size="12" fill="#374151">gate, release, readiness</text>
+<text x="1558" y="758" font-size="13" fill="#374151">none</text>
+<rect x="24" y="770" width="1740" height="34" fill="#f3f4f6"/>
+<text x="34" y="792" font-size="14" fill="#111827">requirement change</text>
+<rect x="282" y="777" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="356" y="777" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="430" y="777" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="504" y="777" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="578" y="777" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="652" y="777" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="726" y="777" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="800" y="777" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="874" y="777" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="948" y="777" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1022" y="777" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1096" y="777" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<text x="1178" y="792" font-size="12" fill="#374151">design assessment</text>
+<text x="1558" y="792" font-size="13" fill="#374151">assessment</text>
+<text x="34" y="826" font-size="14" fill="#111827">cad after order</text>
+<rect x="282" y="811" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="356" y="811" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="430" y="811" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="504" y="811" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="578" y="811" width="58" height="20" rx="4" fill="#b91c1c" stroke="#b91c1c"/>
+<rect x="652" y="811" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="726" y="811" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="800" y="811" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="874" y="811" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="948" y="811" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1022" y="811" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<rect x="1096" y="811" width="58" height="20" rx="4" fill="none" stroke="#d1d5db"/>
+<text x="1178" y="826" font-size="12" fill="#374151">new revision of the board</text>
+<text x="1558" y="826" font-size="13" fill="#374151">new revision</text>
+<text x="24" y="876" font-size="13" fill="#4b5563">Two or more boxes in a row: the possible starts. The machine uses the earliest one. A kind with no file group is named by a person, and no tool finds it alone.</text>
+</svg>

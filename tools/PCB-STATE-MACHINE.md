@@ -161,6 +161,8 @@ The other B states are in the tables only.
 Colors: green is `enforced`, amber is `recorded`, red is `implicit`.
 A dashed edge is a failure path or a loop. A double border is a gate where a person decides.
 
+The moves back after a change are in `PCB-STATE-CHANGES.svg`, one row for each kind of `pcb-transitions.json`.
+
 ## G. Backward transitions
 
 A backward transition is a return to an earlier state, after a change or a failure.
